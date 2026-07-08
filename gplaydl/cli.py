@@ -31,6 +31,7 @@ from gplaydl.auth import (
     DEFAULT_PROBES,
     ensure_auth,
     ensure_pool,
+    fetch_token,
     pick_pool_token,
     replace_pool_token,
     save_auth,
