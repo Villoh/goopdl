@@ -7,16 +7,26 @@ validated against gpapi's googleplay.proto definitions.
 
 from __future__ import annotations
 
+import random
 import re
 import struct
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
 
 import httpx
 
-from gplaydl.auth import build_headers, _build_httpx_proxy
+from gplaydl.auth import (
+    build_headers,
+    _build_httpx_proxy,
+    pick_pool_token,
+    replace_pool_token,
+)
+from gplaydl.download import DownloadSpec, download_batch
+from gplaydl.profiles import get_latest_probe_profiles
 from gplaydl.protobuf import ProtoDecoder, extract_strings, proto_to_dict
 
 SEARCH_URL = f"https://android.clients.google.com/fdfe/search"
@@ -30,6 +40,7 @@ DELIVERY_URL = f"{FDFE_URL}/delivery"
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class AppDetails:
@@ -88,12 +99,14 @@ class PlayAPIError(Exception):
 
 class AuthExpiredError(PlayAPIError):
     """Raised when the API returns 401 — token needs refresh."""
+
     pass
 
 
 # ---------------------------------------------------------------------------
 # Protobuf helpers
 # ---------------------------------------------------------------------------
+
 
 def _first_bytes(fields: list[tuple[int, int, Any]], num: int) -> Optional[bytes]:
     """Return raw bytes of the first length-delimited field with number *num*."""
@@ -120,7 +133,8 @@ def _first_int(fields: list[tuple[int, int, Any]], num: int) -> Optional[int]:
 def _all_bytes(fields: list[tuple[int, int, Any]], num: int) -> list[bytes]:
     """Return all length-delimited occurrences of field *num*."""
     return [
-        bytes(v) for fn, wt, v in fields
+        bytes(v)
+        for fn, wt, v in fields
         if fn == num and wt == 2 and isinstance(v, (bytes, bytearray))
     ]
 
@@ -141,6 +155,7 @@ def _navigate(raw: bytes, *path: int) -> list[tuple[int, int, Any]]:
 # Headers
 # ---------------------------------------------------------------------------
 
+
 def _proto_headers(auth: dict, country: Optional[str] = None) -> dict:
     headers = build_headers(auth, country=country)
     headers["Content-Type"] = "application/x-protobuf"
@@ -154,6 +169,7 @@ def _proto_headers(auth: dict, country: Optional[str] = None) -> dict:
 # ResponseWrapper(1) -> Payload(2) -> DetailsResponse(4) -> DocV2
 # DocV2: 1=docid, 5=title, 6=creator, 13=DocDetails
 # DocDetails(1) -> AppDetails: 3=versionCode, 4=versionString
+
 
 def _first_float(fields: list[tuple[int, int, Any]], num: int) -> Optional[float]:
     for fn, wt, v in fields:
@@ -210,8 +226,10 @@ def _parse_details_proto(raw: bytes) -> _ParsedDetails:
 
 
 def _fetch_details_raw(
-    package: str, auth: dict,
-    country: Optional[str] = None, proxy: Optional[str] = None,
+    package: str,
+    auth: dict,
+    country: Optional[str] = None,
+    proxy: Optional[str] = None,
 ) -> bytes:
     """Fetch raw protobuf details response."""
     headers = _proto_headers(auth, country=country)
@@ -229,11 +247,15 @@ def _fetch_details_raw(
 
 
 def get_details_raw(
-    package: str, auth: dict,
-    country: Optional[str] = None, proxy: Optional[str] = None,
+    package: str,
+    auth: dict,
+    country: Optional[str] = None,
+    proxy: Optional[str] = None,
 ) -> dict:
     """Return the full protobuf response decoded as a nested dict."""
-    raw = _fetch_details_raw(package, auth, country=country, proxy=_build_httpx_proxy(proxy))
+    raw = _fetch_details_raw(
+        package, auth, country=country, proxy=_build_httpx_proxy(proxy)
+    )
     return proto_to_dict(raw)
 
 
@@ -254,17 +276,28 @@ def fetch_app_item(
         from gplaydl.api import fetch_app_item
         item = fetch_app_item("com.whatsapp", country="US", proxy="http://user:pass@host:port/")
     """
-    from gplaydl.auth import pick_pool_token, replace_pool_token
-    auth = pick_pool_token(arch=arch, country=country, proxy=proxy,
-                           dispenser_url=dispenser_url, profile=profile)
+    auth = pick_pool_token(
+        arch=arch,
+        country=country,
+        proxy=proxy,
+        dispenser_url=dispenser_url,
+        profile=profile,
+    )
     if not auth:
         raise PlayAPIError("Could not obtain auth token — run: gplaydl auth")
     try:
         raw = get_details_raw(package, auth, country=country, proxy=proxy)
     except AuthExpiredError:
-        replace_pool_token(auth, arch=arch, country=country, proxy=proxy, dispenser_url=dispenser_url)
-        auth = pick_pool_token(arch=arch, country=country, proxy=proxy,
-                               dispenser_url=dispenser_url, profile=profile)
+        replace_pool_token(
+            auth, arch=arch, country=country, proxy=proxy, dispenser_url=dispenser_url
+        )
+        auth = pick_pool_token(
+            arch=arch,
+            country=country,
+            proxy=proxy,
+            dispenser_url=dispenser_url,
+            profile=profile,
+        )
         if not auth:
             raise PlayAPIError("Token expired and replacement failed.")
         raw = get_details_raw(package, auth, country=country, proxy=proxy)
@@ -281,6 +314,7 @@ def parse_app_item(raw: dict, region: str = "") -> dict:
       imgs = doc[10]               image list (type 1=screenshot, 2=feature, 4=icon)
       cats = doc[66][9][1]         category list
     """
+
     def _g(d: Any, *keys: Any) -> Any:
         for k in keys:
             if not isinstance(d, dict):
@@ -293,7 +327,7 @@ def parse_app_item(raw: dict, region: str = "") -> dict:
     except (KeyError, TypeError):
         return {}
 
-    ad: dict  = _g(doc, 13, 1) or {}
+    ad: dict = _g(doc, 13, 1) or {}
     rtg: dict = doc.get("14") or {}
     imgs = doc.get("10") or []
     if not isinstance(imgs, list):
@@ -301,9 +335,17 @@ def parse_app_item(raw: dict, region: str = "") -> dict:
 
     pkg = doc.get("1") or doc.get("2", "")
 
-    icon_url         = next((i["5"] for i in imgs if isinstance(i, dict) and i.get("1") == 4  and "5" in i), None)
-    feature_gfx_url  = next((i["5"] for i in imgs if isinstance(i, dict) and i.get("1") == 2  and "5" in i), None)
-    screenshots      = [i["5"] for i in imgs if isinstance(i, dict) and i.get("1") == 1 and "5" in i]
+    icon_url = next(
+        (i["5"] for i in imgs if isinstance(i, dict) and i.get("1") == 4 and "5" in i),
+        None,
+    )
+    feature_gfx_url = next(
+        (i["5"] for i in imgs if isinstance(i, dict) and i.get("1") == 2 and "5" in i),
+        None,
+    )
+    screenshots = [
+        i["5"] for i in imgs if isinstance(i, dict) and i.get("1") == 1 and "5" in i
+    ]
 
     cats = _g(ad, 66, 9, 1) or []
     if not isinstance(cats, list):
@@ -314,7 +356,11 @@ def parse_app_item(raw: dict, region: str = "") -> dict:
         if not isinstance(s, str):
             return None
         try:
-            return datetime.strptime(s, "%b %d, %Y").replace(tzinfo=timezone.utc).isoformat()
+            return (
+                datetime.strptime(s, "%b %d, %Y")
+                .replace(tzinfo=timezone.utc)
+                .isoformat()
+            )
         except ValueError:
             return s
 
@@ -333,7 +379,9 @@ def parse_app_item(raw: dict, region: str = "") -> dict:
     exact_downloads = ad.get("70") or ad.get("53")
     # field 13 = "10,000,000,000+ downloads" → strip suffix for bucket
     bucket_raw: str = ad.get("13") or ad.get("61") or ""
-    downloads_bucket = bucket_raw.replace(" downloads", "").replace(" installs", "").strip()
+    downloads_bucket = (
+        bucket_raw.replace(" downloads", "").replace(" installs", "").strip()
+    )
 
     return {
         "id": f"{pkg}_playstore_{region.lower()}" if region else f"{pkg}_playstore",
@@ -373,11 +421,17 @@ def parse_app_item(raw: dict, region: str = "") -> dict:
 
 
 def get_details(
-    package: str, auth: dict,
-    country: Optional[str] = None, proxy: Optional[str] = None,
+    package: str,
+    auth: dict,
+    country: Optional[str] = None,
+    proxy: Optional[str] = None,
 ) -> AppDetails:
     """Return structured app details."""
-    parsed = _parse_details_proto(_fetch_details_raw(package, auth, country=country, proxy=_build_httpx_proxy(proxy)))
+    parsed = _parse_details_proto(
+        _fetch_details_raw(
+            package, auth, country=country, proxy=_build_httpx_proxy(proxy)
+        )
+    )
     if not parsed.docid:
         raise PlayAPIError("App not found or unavailable for this device profile.")
     return AppDetails(
@@ -396,15 +450,25 @@ def get_details(
 # Purchase
 # ---------------------------------------------------------------------------
 
+
 def purchase(
-    package: str, version_code: int, auth: dict,
-    country: Optional[str] = None, proxy: Optional[str] = None,
+    package: str,
+    version_code: int,
+    auth: dict,
+    country: Optional[str] = None,
+    proxy: Optional[str] = None,
 ) -> None:
     """Acquire a free app (equivalent of clicking 'Install')."""
     headers = build_headers(auth, country=country)
     headers["Content-Type"] = "application/x-www-form-urlencoded"
     body = f"doc={package}&ot=1&vc={version_code}"
-    resp = httpx.post(PURCHASE_URL, headers=headers, content=body, timeout=30, proxy=_build_httpx_proxy(proxy))
+    resp = httpx.post(
+        PURCHASE_URL,
+        headers=headers,
+        content=body,
+        timeout=30,
+        proxy=_build_httpx_proxy(proxy),
+    )
     if resp.status_code not in (200, 204):
         pass  # non-fatal — may already be "purchased"
 
@@ -423,7 +487,10 @@ def purchase(
 #   29 = versionCode          (varint)
 
 _GOOGLE_CDN_SUFFIXES = (
-    ".google.com", ".googleapis.com", ".ggpht.com", ".googleusercontent.com",
+    ".google.com",
+    ".googleapis.com",
+    ".ggpht.com",
+    ".googleusercontent.com",
 )
 
 
@@ -432,7 +499,9 @@ def _safe_cdn_url(url: str) -> str:
     if not url.startswith("https://"):
         return ""
     host = urlparse(url).hostname or ""
-    if host == "android.clients.google.com" or any(host.endswith(s) for s in _GOOGLE_CDN_SUFFIXES):
+    if host == "android.clients.google.com" or any(
+        host.endswith(s) for s in _GOOGLE_CDN_SUFFIXES
+    ):
         return url
     return ""
 
@@ -473,13 +542,15 @@ def _extract_delivery_from_fields(fields: list[tuple[int, int, Any]]) -> Deliver
             url = _safe_cdn_url(_first_string(cf, 4))
             if url:
                 ft = _first_int(cf, 1) or 0
-                result.additional_files.append(AdditionalFile(
-                    file_type=ft,
-                    version_code=_first_int(cf, 2) or app_vc,
-                    size=_first_int(cf, 3) or 0,
-                    url=url,
-                    gzipped=False,
-                ))
+                result.additional_files.append(
+                    AdditionalFile(
+                        file_type=ft,
+                        version_code=_first_int(cf, 2) or app_vc,
+                        size=_first_int(cf, 3) or 0,
+                        url=url,
+                        gzipped=False,
+                    )
+                )
 
     # Splits (field 15, repeated: 1=name, 2=size, 5=downloadUrl)
     for split_b in _all_bytes(fields, 15):
@@ -487,11 +558,13 @@ def _extract_delivery_from_fields(fields: list[tuple[int, int, Any]]) -> Deliver
         name = _first_string(sf, 1)
         url = _safe_cdn_url(_first_string(sf, 5))
         if url:
-            result.splits.append(SplitInfo(
-                name=name or f"split{len(result.splits)}",
-                url=url,
-                size=_first_int(sf, 2) or 0,
-            ))
+            result.splits.append(
+                SplitInfo(
+                    name=name or f"split{len(result.splits)}",
+                    url=url,
+                    size=_first_int(sf, 2) or 0,
+                )
+            )
 
     # Field 18 (repeated) — asset pack APKs (fileType=2, gzip-compressed).
     for af_b in _all_bytes(fields, 18):
@@ -499,12 +572,14 @@ def _extract_delivery_from_fields(fields: list[tuple[int, int, Any]]) -> Deliver
         url = _safe_cdn_url(_first_string(af, 3))
         if url:
             ft = _first_int(af, 1) or 0
-            result.additional_files.append(AdditionalFile(
-                file_type=ft,
-                size=_first_int(af, 2) or 0,
-                url=url,
-                gzipped=ft == 2,
-            ))
+            result.additional_files.append(
+                AdditionalFile(
+                    file_type=ft,
+                    size=_first_int(af, 2) or 0,
+                    url=url,
+                    gzipped=ft == 2,
+                )
+            )
 
     return result
 
@@ -520,8 +595,11 @@ def _extract_delivery_from_tree(raw: bytes) -> DeliveryResult:
 
 
 def get_delivery(
-    package: str, version_code: int, auth: dict,
-    country: Optional[str] = None, proxy: Optional[str] = None,
+    package: str,
+    version_code: int,
+    auth: dict,
+    country: Optional[str] = None,
+    proxy: Optional[str] = None,
 ) -> DeliveryResult:
     """Fetch download URLs for base APK, splits, and OBB files."""
     headers = _proto_headers(auth, country=country)
@@ -549,9 +627,12 @@ def get_delivery(
 # List splits (from details metadata)
 # ---------------------------------------------------------------------------
 
+
 def list_splits(
-    package: str, auth: dict,
-    country: Optional[str] = None, proxy: Optional[str] = None,
+    package: str,
+    auth: dict,
+    country: Optional[str] = None,
+    proxy: Optional[str] = None,
 ) -> list[str]:
     """Return split names from app details metadata."""
     headers = _proto_headers(auth, country=country)
@@ -601,6 +682,7 @@ def list_splits(
 # Search (FDFE protobuf API)
 # ---------------------------------------------------------------------------
 
+
 def _find_docv2(data: bytes, depth: int = 0, max_depth: int = 10) -> list[dict]:
     """Recursively find DocV2 entries (docid at f1, title at f5) in protobuf."""
     results: list[dict] = []
@@ -614,7 +696,9 @@ def _find_docv2(data: bytes, depth: int = 0, max_depth: int = 10) -> list[dict]:
     f1_str = _first_string(fields, 1)
     f5_str = _first_string(fields, 5)
     if f1_str and "." in f1_str and " " not in f1_str and f5_str:
-        return [{"package": f1_str, "title": f5_str, "creator": _first_string(fields, 6)}]
+        return [
+            {"package": f1_str, "title": f5_str, "creator": _first_string(fields, 6)}
+        ]
 
     for _fn, wt, v in fields:
         if wt == 2 and isinstance(v, (bytes, bytearray)) and len(v) > 20:
@@ -623,8 +707,11 @@ def _find_docv2(data: bytes, depth: int = 0, max_depth: int = 10) -> list[dict]:
 
 
 def search_apps(
-    query: str, auth: dict, limit: int = 10,
-    country: Optional[str] = None, proxy: Optional[str] = None,
+    query: str,
+    auth: dict,
+    limit: int = 10,
+    country: Optional[str] = None,
+    proxy: Optional[str] = None,
 ) -> list[dict]:
     """Search Google Play via FDFE protobuf API. Returns list of {package, title, creator}."""
     headers = _proto_headers(auth, country=country)
@@ -647,3 +734,149 @@ def search_apps(
             seen.add(pkg)
             results.append(doc)
     return results
+
+
+# ---------------------------------------------------------------------------
+# Lightweight download (single pooled/cached token, no multi-profile probing)
+# ---------------------------------------------------------------------------
+
+_TOKEN_FETCH_ATTEMPTS = 3
+_TOKEN_FETCH_COOLDOWN = 5  # seconds — dispenser 5xx/429s are usually transient
+
+
+def _acquire_single_token(
+    arch: str,
+    country: Optional[str],
+    proxy: Optional[str],
+    dispenser_url: Optional[str],
+    profile: str,
+) -> Optional[dict]:
+    """pick_pool_token(size=1), retrying a few times if the dispenser hiccups."""
+    for attempt in range(_TOKEN_FETCH_ATTEMPTS):
+        auth = pick_pool_token(
+            arch=arch,
+            country=country,
+            proxy=proxy,
+            dispenser_url=dispenser_url,
+            profile=profile,
+            size=1,
+        )
+        if auth:
+            return auth
+        if attempt < _TOKEN_FETCH_ATTEMPTS - 1:
+            time.sleep(_TOKEN_FETCH_COOLDOWN)
+    return None
+
+
+def _fetch_latest_delivery(
+    package: str,
+    auth: dict,
+    country: Optional[str],
+    proxy: Optional[str],
+) -> tuple[AppDetails, DeliveryResult]:
+    """Fetch details for whatever version *auth*'s GSF ID sees, then acquire + deliver it."""
+    details = get_details(package, auth, country=country, proxy=proxy)
+    purchase(package, details.version_code, auth, country=country, proxy=proxy)
+    delivery = get_delivery(
+        package, details.version_code, auth, country=country, proxy=proxy
+    )
+    return details, delivery
+
+
+def _build_specs(
+    package: str,
+    vc: int,
+    output: Path,
+    delivery: DeliveryResult,
+    no_splits: bool,
+    no_extras: bool,
+) -> list[DownloadSpec]:
+    """Turn a DeliveryResult into the DownloadSpec list download_batch expects."""
+    base_name = f"{package}-{vc}.apk"
+    specs = [
+        DownloadSpec(
+            url=delivery.download_url,
+            dest=output / base_name,
+            cookies=delivery.cookies,
+            label=base_name,
+        )
+    ]
+    if delivery.splits and not no_splits:
+        for split in delivery.splits:
+            name = f"{package}-{vc}-{split.name}.apk"
+            specs.append(DownloadSpec(url=split.url, dest=output / name, label=name))
+    if not no_extras and delivery.additional_files:
+        for af in delivery.additional_files:
+            name = (
+                f"{package}-{vc}-{af.type_label}{af.extension}"
+                if af.is_asset_pack
+                else f"{af.type_label}.{af.version_code}.{package}{af.extension}"
+            )
+            specs.append(
+                DownloadSpec(
+                    url=af.url,
+                    dest=output / name,
+                    cookies=af.cookies,
+                    label=name,
+                    gzipped=af.gzipped,
+                )
+            )
+    return specs
+
+
+def download_app(
+    package: str,
+    output: Path,
+    arch: str = "arm64",
+    country: Optional[str] = None,
+    proxy: Optional[str] = None,
+    dispenser_url: Optional[str] = None,
+    profile: Optional[str] = None,
+    no_splits: bool = True,
+    no_extras: bool = True,
+) -> tuple[Path, str]:
+    """Download the latest APK a token can see, using one reused-or-fresh token.
+
+    Reuses a valid token from the country's pool if one exists; otherwise
+    fetches exactly one fresh token via *profile*, or — if *profile* is
+    unset — a random pick from the two newest device profiles. The fresh
+    dispenser call rotates proxy regions automatically (see fetch_token);
+    *proxy* itself is passed through unpatched to the Google FDFE calls.
+    Returns (apk_path, dotted version string) — not the numeric version code.
+    """
+    output.mkdir(parents=True, exist_ok=True)
+
+    if profile:
+        chosen_profile = profile
+    else:
+        candidates = get_latest_probe_profiles(arch, n=2)
+        if not candidates:
+            raise PlayAPIError("No device profiles available.")
+        chosen_profile = random.choice(candidates)[0]
+
+    auth = _acquire_single_token(arch, country, proxy, dispenser_url, chosen_profile)
+    if not auth:
+        raise PlayAPIError(
+            "Could not obtain an auth token — dispenser may be rate-limiting."
+        )
+
+    try:
+        details, delivery = _fetch_latest_delivery(package, auth, country, proxy)
+    except AuthExpiredError:
+        auth = replace_pool_token(
+            auth,
+            arch=arch,
+            country=country,
+            proxy=proxy,
+            dispenser_url=dispenser_url,
+            profile=chosen_profile,
+        )
+        if not auth:
+            raise PlayAPIError("Token expired and replacement failed.")
+        details, delivery = _fetch_latest_delivery(package, auth, country, proxy)
+
+    specs = _build_specs(
+        package, details.version_code, output, delivery, no_splits, no_extras
+    )
+    download_batch(specs)
+    return specs[0].dest, details.version_string

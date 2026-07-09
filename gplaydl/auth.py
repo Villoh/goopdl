@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 import re
 import time
 from pathlib import Path
@@ -12,15 +13,50 @@ import httpx
 from urllib.parse import urlparse, urlunparse
 from rich.console import Console
 
-from gplaydl.profiles import FALLBACK_PROFILE, find_profile, get_priority_profiles, patch_profile_country
+from gplaydl.profiles import (
+    FALLBACK_PROFILE,
+    find_profile,
+    get_priority_profiles,
+    patch_profile_country,
+)
 
 DEFAULT_DISPENSER_URL = "https://auroraoss.com/api/auth"
 
 DISPENSER_PROXY_REGIONS = [
-    "US", "CA", "MX", "BR", "AR", "CO", "CL",
-    "GB", "DE", "FR", "IT", "ES", "NL", "PL", "SE", "TR", "RU",
-    "JP", "IN", "CN", "KR", "SG", "AU", "ID", "TH", "VN", "PH",
-    "AE", "SA", "IL", "ZA", "NG", "EG", "KE",
+    "US",
+    "CA",
+    "MX",
+    "BR",
+    "AR",
+    "CO",
+    "CL",
+    "GB",
+    "DE",
+    "FR",
+    "IT",
+    "ES",
+    "NL",
+    "PL",
+    "SE",
+    "TR",
+    "RU",
+    "JP",
+    "IN",
+    "CN",
+    "KR",
+    "SG",
+    "AU",
+    "ID",
+    "TH",
+    "VN",
+    "PH",
+    "AE",
+    "SA",
+    "IL",
+    "ZA",
+    "NG",
+    "EG",
+    "KE",
 ]
 
 _CONFIG_DIR = Path.home() / ".config" / "gplaydl"
@@ -47,7 +83,9 @@ def save_auth(data: dict, arch: str = "arm64", country: Optional[str] = None) ->
     return path
 
 
-def load_cached_auth(arch: str = "arm64", country: Optional[str] = None) -> Optional[dict]:
+def load_cached_auth(
+    arch: str = "arm64", country: Optional[str] = None
+) -> Optional[dict]:
     """Return cached auth dict or None."""
     path = _auth_path(arch, country)
     if not path.exists():
@@ -130,23 +168,36 @@ def fetch_token(
     else:
         profiles = get_priority_profiles(arch) or [("fallback", FALLBACK_PROFILE)]
 
+    # ponytail: random start so single-profile callers don't always land on
+    # the same region (index 0) and pile all their requests on one exit IP
+    region_start = random.randrange(len(DISPENSER_PROXY_REGIONS))
     for idx, (profile_name, profile) in enumerate(profiles):
         device = profile.get("UserReadableName", profile_name)
         payload = patch_profile_country(profile, country) if country else profile
         try:
-            region = DISPENSER_PROXY_REGIONS[idx % len(DISPENSER_PROXY_REGIONS)]
+            region = DISPENSER_PROXY_REGIONS[
+                (region_start + idx) % len(DISPENSER_PROXY_REGIONS)
+            ]
             proxy_url = _interpolate_region(proxy, region)
             httpx_proxy = _build_httpx_proxy(proxy_url)
-            resp = httpx.post(url, json=payload, headers=headers, timeout=30, proxy=httpx_proxy)
+            resp = httpx.post(
+                url, json=payload, headers=headers, timeout=30, proxy=httpx_proxy
+            )
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("authToken"):
-                    console.print(f"  Authenticated with profile: [bold]{device}[/bold]")
+                    console.print(
+                        f"  Authenticated with profile: [bold]{device}[/bold]"
+                    )
                     data["_device_profile"] = device
                     return data
-                console.print(f"  [yellow]No authToken in response for {device}: {data}[/yellow]")
+                console.print(
+                    f"  [yellow]No authToken in response for {device}: {data}[/yellow]"
+                )
             else:
-                console.print(f"  [yellow]Dispenser returned HTTP {resp.status_code} for {device}[/yellow]")
+                console.print(
+                    f"  [yellow]Dispenser returned HTTP {resp.status_code} for {device}[/yellow]"
+                )
         except Exception as exc:
             console.print(f"  [red]Dispenser request failed for {device}: {exc}[/red]")
             continue
@@ -208,8 +259,11 @@ def ensure_pool(
         )
         for _ in range(deficit):
             t = fetch_token(
-                dispenser_url=dispenser_url, arch=arch,
-                proxy=proxy, profile=profile, country=country,
+                dispenser_url=dispenser_url,
+                arch=arch,
+                proxy=proxy,
+                profile=profile,
+                country=country,
             )
             if t is None:
                 break
@@ -249,8 +303,14 @@ def pick_pool_token(
     Expired tokens are pruned and refetched by ensure_pool before picking.
     The round-robin index is persisted to disk so it survives across invocations.
     """
-    pool = ensure_pool(arch=arch, country=country, proxy=proxy,
-                       dispenser_url=dispenser_url, profile=profile, size=size)
+    pool = ensure_pool(
+        arch=arch,
+        country=country,
+        proxy=proxy,
+        dispenser_url=dispenser_url,
+        profile=profile,
+        size=size,
+    )
     if not pool:
         return None
     i = _read_index(arch, country)
@@ -276,8 +336,11 @@ def replace_pool_token(
     failed_gsf = failed_token.get("gsfId")
     pool = [t for t in pool if t.get("gsfId") != failed_gsf]
     new_token = fetch_token(
-        dispenser_url=dispenser_url, arch=arch,
-        proxy=proxy, profile=profile, country=country,
+        dispenser_url=dispenser_url,
+        arch=arch,
+        proxy=proxy,
+        profile=profile,
+        country=country,
     )
     if new_token:
         new_token["_cached_at"] = time.time()
@@ -310,21 +373,42 @@ def ensure_auth(
     else:
         console.print("[dim]Refreshing token...[/dim]")
 
-    data = fetch_token(dispenser_url=dispenser_url, arch=arch, proxy=proxy, country=country, profile=profile)
+    data = fetch_token(
+        dispenser_url=dispenser_url,
+        arch=arch,
+        proxy=proxy,
+        country=country,
+        profile=profile,
+    )
     if data:
         save_auth(data, arch, country)
     return data
 
 
 _COUNTRY_LOCALE: dict[str, str] = {
-    "CN": "zh_CN", "TW": "zh_TW", "HK": "zh_HK",
-    "JP": "ja_JP", "KR": "ko_KR",
-    "RU": "ru_RU", "DE": "de_DE", "FR": "fr_FR",
-    "ES": "es_ES", "IT": "it_IT", "PT": "pt_BR",
-    "BR": "pt_BR", "AR": "es_AR", "MX": "es_MX",
-    "SA": "ar_SA", "TR": "tr_TR", "PL": "pl_PL",
-    "NL": "nl_NL", "SE": "sv_SE", "NO": "nb_NO",
-    "TH": "th_TH", "VN": "vi_VN", "ID": "in_ID",
+    "CN": "zh_CN",
+    "TW": "zh_TW",
+    "HK": "zh_HK",
+    "JP": "ja_JP",
+    "KR": "ko_KR",
+    "RU": "ru_RU",
+    "DE": "de_DE",
+    "FR": "fr_FR",
+    "ES": "es_ES",
+    "IT": "it_IT",
+    "PT": "pt_BR",
+    "BR": "pt_BR",
+    "AR": "es_AR",
+    "MX": "es_MX",
+    "SA": "ar_SA",
+    "TR": "tr_TR",
+    "PL": "pl_PL",
+    "NL": "nl_NL",
+    "SE": "sv_SE",
+    "NO": "nb_NO",
+    "TH": "th_TH",
+    "VN": "vi_VN",
+    "ID": "in_ID",
 }
 
 
