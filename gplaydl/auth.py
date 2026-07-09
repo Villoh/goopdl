@@ -9,12 +9,19 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 from rich.console import Console
 
 from gplaydl.profiles import FALLBACK_PROFILE, find_profile, get_priority_profiles, patch_profile_country
 
 DEFAULT_DISPENSER_URL = "https://auroraoss.com/api/auth"
+
+DISPENSER_PROXY_REGIONS = [
+    "US", "CA", "MX", "BR", "AR", "CO", "CL",
+    "GB", "DE", "FR", "IT", "ES", "NL", "PL", "SE", "TR", "RU",
+    "JP", "IN", "CN", "KR", "SG", "AU", "ID", "TH", "VN", "PH",
+    "AE", "SA", "IL", "ZA", "NG", "EG", "KE",
+]
 
 _CONFIG_DIR = Path.home() / ".config" / "gplaydl"
 
@@ -71,6 +78,29 @@ def _build_httpx_proxy(proxy: Optional[str | httpx.Proxy]) -> Optional[httpx.Pro
     return httpx.Proxy(url=proxy)
 
 
+def _interpolate_region(proxy: Optional[str], region: str) -> Optional[str]:
+    """Swap the country code in a proxy URL for round-robin rotation.
+
+    Supports an explicit {region} placeholder. When absent, detects a
+    country code inside the password (SOAX-style, e.g. wifi;us;) and
+    replaces it with the selected region.
+    """
+    if not proxy:
+        return None
+    if "{region}" in proxy:
+        return proxy.replace("{region}", region)
+    parsed = urlparse(proxy)
+    if parsed.password:
+        password = parsed.password
+        for code in DISPENSER_PROXY_REGIONS:
+            lower_code = code.lower()
+            if lower_code in password.lower():
+                new_password = password.lower().replace(lower_code, region.lower())
+                new_netloc = parsed.netloc.replace(parsed.password, new_password, 1)
+                return urlunparse(parsed._replace(netloc=new_netloc))
+    return proxy
+
+
 def fetch_token(
     dispenser_url: Optional[str] = None,
     arch: str = "arm64",
@@ -100,11 +130,13 @@ def fetch_token(
     else:
         profiles = get_priority_profiles(arch) or [("fallback", FALLBACK_PROFILE)]
 
-    for profile_name, profile in profiles:
+    for idx, (profile_name, profile) in enumerate(profiles):
         device = profile.get("UserReadableName", profile_name)
         payload = patch_profile_country(profile, country) if country else profile
         try:
-            httpx_proxy = _build_httpx_proxy(proxy)
+            region = DISPENSER_PROXY_REGIONS[idx % len(DISPENSER_PROXY_REGIONS)]
+            proxy_url = _interpolate_region(proxy, region)
+            httpx_proxy = _build_httpx_proxy(proxy_url)
             resp = httpx.post(url, json=payload, headers=headers, timeout=30, proxy=httpx_proxy)
             if resp.status_code == 200:
                 data = resp.json()

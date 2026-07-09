@@ -552,7 +552,7 @@ def _resolve_version_string(
     """
     rprint(f"[dim]Resolving [bold]{version_str}[/bold] — probing fresh tokens...[/dim]")
     for attempt in range(1, 21):
-        token = fetch_token(arch=arch, profile=profile, dispenser_url=dispenser)
+        token = fetch_token(arch=arch, profile=profile, dispenser_url=dispenser, proxy=proxy)
         if token is None:
             err.print(f"[yellow]  attempt {attempt}: rate-limited, sleeping 5s...[/yellow]")
             time.sleep(5)
