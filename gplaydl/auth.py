@@ -132,8 +132,9 @@ def _interpolate_region(proxy: Optional[str], region: str) -> Optional[str]:
         password = parsed.password
         for code in DISPENSER_PROXY_REGIONS:
             lower_code = code.lower()
-            if lower_code in password.lower():
-                new_password = password.lower().replace(lower_code, region.lower())
+            idx = password.lower().find(lower_code)
+            if idx != -1:
+                new_password = password[:idx] + region.lower() + password[idx + len(lower_code):]
                 new_netloc = parsed.netloc.replace(parsed.password, new_password, 1)
                 return urlunparse(parsed._replace(netloc=new_netloc))
     return proxy
