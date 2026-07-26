@@ -193,14 +193,17 @@ def fetch_token(
                     data["_device_profile"] = device
                     return data
                 console.print(
-                    f"  [yellow]No authToken in response for {device}: {data}[/yellow]"
+                    f"  [yellow]No authToken in dispenser response for {device}[/yellow]"
                 )
             else:
                 console.print(
                     f"  [yellow]Dispenser returned HTTP {resp.status_code} for {device}[/yellow]"
                 )
         except Exception as exc:
-            console.print(f"  [red]Dispenser request failed for {device}: {exc}[/red]")
+            console.print(
+                f"  [red]Dispenser request failed for {device}: "
+                f"{type(exc).__name__}[/red]"
+            )
             continue
 
     return None
