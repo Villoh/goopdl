@@ -546,6 +546,11 @@ def download(
     profile: Optional[str] = typer.Option(
         None, "--profile", help="Device profile key or name substring."
     ),
+    integrity_manifest: Optional[Path] = typer.Option(
+        None,
+        "--integrity-manifest",
+        help="Write verified file metadata as JSON after all downloads pass.",
+    ),
 ) -> None:
     """Download an APK (with splits + additional files) from Google Play."""
     output.mkdir(parents=True, exist_ok=True)
@@ -627,13 +632,27 @@ def download(
         dest=base_path,
         cookies=delivery.cookies,
         label=base_name,
+        integrity_required=True,
+        expected_size=delivery.download_size,
+        sha1=delivery.sha1,
+        sha256=delivery.sha256,
     )
 
     extras: list[DownloadSpec] = []
     if delivery.splits and not no_splits:
         for split in delivery.splits:
             name = f"{package}-{vc}-{split.name}.apk"
-            extras.append(DownloadSpec(url=split.url, dest=output / name, label=name))
+            extras.append(
+                DownloadSpec(
+                    url=split.url,
+                    dest=output / name,
+                    label=name,
+                    integrity_required=True,
+                    expected_size=split.size,
+                    sha1=split.sha1,
+                    sha256=split.sha256,
+                )
+            )
     if not no_extras and delivery.additional_files:
         for af in delivery.additional_files:
             if af.is_asset_pack:
@@ -659,7 +678,7 @@ def download(
         total_size += sum(af.size for af in delivery.additional_files)
     file_label = f"{total_files} file{'s' if total_files > 1 else ''}"
     rprint(f"\n[bold]Downloading {file_label}[/bold]  [dim]({_fmt(total_size)})[/dim]")
-    download_batch(all_specs)
+    download_batch(all_specs, integrity_manifest=integrity_manifest)
 
     # ── summary ──────────────────────────────────────────────────────────
     rprint()
