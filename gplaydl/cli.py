@@ -48,6 +48,10 @@ from gplaydl.download import DownloadSpec, download_batch
 console = Console()
 err = Console(stderr=True)
 
+# Distinct exit code so callers can tell "Google Play is unreachable right now"
+# from "this artifact cannot be trusted" without parsing human-readable output.
+AUTH_UNAVAILABLE_EXIT_CODE = 3
+
 app = typer.Typer(
     name="gplaydl",
     help="Download APKs from Google Play Store with anonymous authentication.",
@@ -129,7 +133,7 @@ def auth(
 
     if not data:
         err.print("[red]Authentication failed — all profiles rejected.[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=AUTH_UNAVAILABLE_EXIT_CODE)
 
     path = save_auth(data, arch, country)
     rprint(
@@ -565,7 +569,7 @@ def download(
         err.print(
             "[red]Could not obtain an auth token — dispenser may be rate-limiting.[/red]"
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=AUTH_UNAVAILABLE_EXIT_CODE)
 
     # ── resolve --version to an int version code ─────────────────────────
     resolved_vc: Optional[int] = None
@@ -603,7 +607,7 @@ def download(
             )
             if not new_token:
                 err.print("[red]Token expired and replacement failed.[/red]")
-                raise typer.Exit(code=1)
+                raise typer.Exit(code=AUTH_UNAVAILABLE_EXIT_CODE)
             auth_data = new_token
             with console.status(f"Fetching details for [bold]{package}[/bold]..."):
                 details = get_details(package, auth_data, country=country, proxy=proxy)
