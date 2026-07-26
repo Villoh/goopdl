@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import json
@@ -5,12 +6,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import httpx
+
 from gplaydl.api import _extract_delivery_from_fields
 from gplaydl.download import (
     DownloadSpec,
     IntegrityError,
+    _download_one,
     _select_digest,
     _write_manifest,
+    make_progress,
 )
 
 
@@ -118,6 +123,35 @@ class DeliveryIntegrityTest(unittest.TestCase):
                 },
             )
             self.assertNotIn("secret", manifest.read_text(encoding="utf-8"))
+
+
+class DownloadErrorRedactionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_http_error_does_not_expose_url(self):
+        class FailingStream:
+            async def __aenter__(self):
+                raise httpx.ConnectError("https://example.invalid/?token=secret")
+
+            async def __aexit__(self, *_args):
+                return False
+
+        class Client:
+            def stream(self, *_args, **_kwargs):
+                return FailingStream()
+
+        with tempfile.TemporaryDirectory() as directory:
+            spec = DownloadSpec(
+                "https://example.invalid/?token=secret",
+                Path(directory) / "base.apk",
+                label="base.apk",
+            )
+            with self.assertRaisesRegex(IntegrityError, "download failed for base.apk") as raised:
+                await _download_one(
+                    spec,
+                    Client(),
+                    make_progress(),
+                    asyncio.Semaphore(1),
+                )
+            self.assertNotIn("secret", str(raised.exception))
 
 
 if __name__ == "__main__":
