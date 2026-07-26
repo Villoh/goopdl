@@ -88,12 +88,14 @@ class DeliveryIntegrityTest(unittest.TestCase):
     def test_manifest_contains_no_url_or_cookies(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            sha1 = digest(b"base", "sha1")
             encoded = digest(b"base", "sha256")
             spec = DownloadSpec(
                 "https://secret.invalid/token",
                 root / "base.apk",
                 cookies=[{"name": "auth", "value": "secret"}],
                 expected_size=4,
+                sha1=sha1,
                 sha256=encoded,
             )
             manifest = root / "manifest.json"
@@ -109,6 +111,8 @@ class DeliveryIntegrityTest(unittest.TestCase):
                             "size": 4,
                             "algorithm": "sha256",
                             "digest": encoded,
+                            "google_sha1": sha1,
+                            "google_sha256": encoded,
                         }
                     ],
                 },

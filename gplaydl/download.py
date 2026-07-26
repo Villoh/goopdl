@@ -167,12 +167,18 @@ def _write_manifest(path: Path, specs: list[DownloadSpec]) -> None:
     files = []
     for spec in specs:
         algorithm, encoded, _ = _select_digest(spec)
+        if spec.sha1:
+            _decode_digest(spec.sha1, "sha1")
+        if spec.sha256:
+            _decode_digest(spec.sha256, "sha256")
         files.append(
             {
                 "path": spec.dest.name,
                 "size": spec.expected_size,
                 "algorithm": algorithm,
                 "digest": encoded,
+                "google_sha1": spec.sha1,
+                "google_sha256": spec.sha256,
             }
         )
     temporary = path.with_name(path.name + ".part")
