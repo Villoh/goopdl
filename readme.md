@@ -296,3 +296,11 @@ Profiles are stored as `.properties` files in the `gplaydl/profiles/` directory.
 |------|-----|---------|
 | `arm64` (default) | arm64-v8a | Modern phones (2017+) |
 | `armv7` | armeabi-v7a | Older 32-bit phones |
+
+### Verified integrity manifest
+
+`download --integrity-manifest PATH` fails unless every requested base/split APK has
+Google delivery size and digest metadata. SHA-256 is preferred; SHA-1 is used only
+when SHA-256 is absent. Files are verified before atomic publication, then manifest
+is written atomically with relative filename, size, algorithm, and Base64url digest.
+Manifest never contains download URLs, cookies, headers, or auth tokens.

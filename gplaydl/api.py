@@ -59,6 +59,8 @@ class SplitInfo:
     name: str
     url: str = ""
     size: int = 0
+    sha1: str = ""
+    sha256: str = ""
 
 
 @dataclass
@@ -88,6 +90,7 @@ class DeliveryResult:
     download_url: str = ""
     download_size: int = 0
     sha1: str = ""
+    sha256: str = ""
     cookies: list[dict] = field(default_factory=list)
     splits: list[SplitInfo] = field(default_factory=list)
     additional_files: list[AdditionalFile] = field(default_factory=list)
@@ -121,6 +124,16 @@ def _first_string(fields: list[tuple[int, int, Any]], num: int) -> str:
         if fn == num and wt == 2:
             return ProtoDecoder.decode_string(v)
     return ""
+
+
+def _first_ascii(fields: list[tuple[int, int, Any]], num: int) -> str:
+    value = _first_bytes(fields, num)
+    if value is None:
+        return ""
+    try:
+        return value.decode("ascii")
+    except UnicodeDecodeError as error:
+        raise PlayAPIError(f"delivery field {num} is not ASCII") from error
 
 
 def _first_int(fields: list[tuple[int, int, Any]], num: int) -> Optional[int]:
@@ -523,7 +536,8 @@ def _extract_delivery_from_fields(fields: list[tuple[int, int, Any]]) -> Deliver
     result = DeliveryResult(
         download_url=_safe_cdn_url(_first_string(fields, 3)),
         download_size=_first_int(fields, 1) or 0,
-        sha1=_first_string(fields, 5),
+        sha1=_first_ascii(fields, 2),
+        sha256=_first_ascii(fields, 19),
     )
 
     # Field 4 (repeated) — contains BOTH cookies and OBB file metadata.
@@ -552,7 +566,7 @@ def _extract_delivery_from_fields(fields: list[tuple[int, int, Any]]) -> Deliver
                     )
                 )
 
-    # Splits (field 15, repeated: 1=name, 2=size, 5=downloadUrl)
+    # Splits (field 15, repeated: 1=name, 2=size, 4=SHA-1, 5=URL, 9=SHA-256)
     for split_b in _all_bytes(fields, 15):
         sf = ProtoDecoder(split_b).read_all_ordered()
         name = _first_string(sf, 1)
@@ -563,6 +577,8 @@ def _extract_delivery_from_fields(fields: list[tuple[int, int, Any]]) -> Deliver
                     name=name or f"split{len(result.splits)}",
                     url=url,
                     size=_first_int(sf, 2) or 0,
+                    sha1=_first_ascii(sf, 4),
+                    sha256=_first_ascii(sf, 9),
                 )
             )
 
@@ -799,12 +815,26 @@ def _build_specs(
             dest=output / base_name,
             cookies=delivery.cookies,
             label=base_name,
+            integrity_required=True,
+            expected_size=delivery.download_size,
+            sha1=delivery.sha1,
+            sha256=delivery.sha256,
         )
     ]
     if delivery.splits and not no_splits:
         for split in delivery.splits:
             name = f"{package}-{vc}-{split.name}.apk"
-            specs.append(DownloadSpec(url=split.url, dest=output / name, label=name))
+            specs.append(
+                DownloadSpec(
+                    url=split.url,
+                    dest=output / name,
+                    label=name,
+                    integrity_required=True,
+                    expected_size=split.size,
+                    sha1=split.sha1,
+                    sha256=split.sha256,
+                )
+            )
     if not no_extras and delivery.additional_files:
         for af in delivery.additional_files:
             name = (
