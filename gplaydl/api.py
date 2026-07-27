@@ -646,8 +646,6 @@ def get_delivery(
             "No download URL returned. The app may require purchase or "
             "is unavailable for this device."
         )
-    if result.version_code != version_code:
-        raise PlayAPIError("delivery version code mismatch")
 
     return result
 

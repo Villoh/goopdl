@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 from typer.testing import CliRunner
 
-from gplaydl.api import PlayAPIError, get_delivery
+from gplaydl.api import PlayAPIError, VersionUnavailableError, get_delivery
 from gplaydl.auth import (
     DirectAuthConfigurationError,
     DirectAuthError,
@@ -79,7 +79,9 @@ PROFILE = {
 
 class DirectAuthTest(unittest.TestCase):
     @patch("gplaydl.api.httpx.get")
-    def test_delivery_confirms_requested_version_code(self, get: Mock) -> None:
+    def test_delivery_exposes_app_version_code_metadata(self, get: Mock) -> None:
+        # Field 29 is delivery-internal OBB metadata, not a guarantee that it
+        # equals the requested vc, so get_delivery must not assert equality.
         app_delivery = field(3, b"https://android.clients.google.com/download") + int_field(
             29, 1561052632
         )
@@ -90,8 +92,15 @@ class DirectAuthTest(unittest.TestCase):
         auth = {"authToken": "temporary", "gsfId": "1234"}
         result = get_delivery("com.example.app", 1561052632, auth)
         self.assertEqual(result.version_code, 1561052632)
-        with self.assertRaisesRegex(PlayAPIError, "version code mismatch"):
-            get_delivery("com.example.app", 1561052633, auth)
+        result = get_delivery("com.example.app", 1561052633, auth)
+        self.assertEqual(result.version_code, 1561052632)
+
+    @patch("gplaydl.api.httpx.get")
+    def test_delivery_404_is_version_unavailable(self, get: Mock) -> None:
+        get.return_value = Mock(status_code=404, content=b"")
+        auth = {"authToken": "temporary", "gsfId": "1234"}
+        with self.assertRaises(VersionUnavailableError):
+            get_delivery("com.example.app", 1561052632, auth)
 
     def test_environment_requires_both_values(self) -> None:
         cases = [
