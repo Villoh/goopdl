@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from gplaydl.auth import (
     DirectAuthConfigurationError,
+    DirectAuthError,
     build_headers,
     direct_auth_enabled,
     ensure_auth,
@@ -86,6 +87,14 @@ class DirectAuthTest(unittest.TestCase):
                 "GPLAYDL_AAS_TOKEN",
             ),
             ({"GPLAYDL_AAS_TOKEN": "secret-token"}, None, "GPLAYDL_ACCOUNT_EMAIL"),
+            (
+                {
+                    "GPLAYDL_ACCOUNT_EMAIL": "account@example.test",
+                    "GPLAYDL_AAS_TOKEN": "g.a000temporary",
+                },
+                None,
+                "must start with aas_et/",
+            ),
         ]
         for environment, enabled, missing in cases:
             with (
@@ -121,7 +130,7 @@ class DirectAuthTest(unittest.TestCase):
             os.environ,
             {
                 "GPLAYDL_ACCOUNT_EMAIL": "account@example.test",
-                "GPLAYDL_AAS_TOKEN": "persistent-secret",
+                "GPLAYDL_AAS_TOKEN": "aas_et/persistent-secret",
             },
             clear=True,
         ):
@@ -238,7 +247,7 @@ class DirectAuthTest(unittest.TestCase):
         self.assertEqual(
             {
                 "Email": "account@example.test",
-                "Token": "persistent-secret",
+                "Token": "aas_et/persistent-secret",
                 "service": "oauth2:https://www.googleapis.com/auth/googleplay",
                 "app": "com.android.vending",
                 "client_sig": "38918a453d07199354f8b19af05ec6562ced5788",
@@ -290,11 +299,76 @@ class DirectAuthTest(unittest.TestCase):
             self.assertEqual(30, call.kwargs["timeout"])
             self.assertIsNone(call.kwargs["proxy"])
 
+        post.side_effect = [
+            Mock(status_code=200, content=checkin_response),
+            Mock(status_code=200, content=upload_response),
+            Mock(status_code=200, text="Auth=temporary-bearer\n"),
+        ]
+        get.return_value = Mock(status_code=503, content=b"")
+        with patch.dict(
+            os.environ,
+            {
+                "GPLAYDL_ACCOUNT_EMAIL": "account@example.test",
+                "GPLAYDL_AAS_TOKEN": "aas_et/persistent-secret",
+            },
+            clear=True,
+        ):
+            bundle_without_toc = fetch_token()
+        assert bundle_without_toc is not None
+        self.assertEqual("", bundle_without_toc["dfeCookie"])
+
+        post.side_effect = [
+            Mock(status_code=200, content=checkin_response),
+            Mock(status_code=200, content=upload_response),
+            Mock(
+                status_code=403,
+                text="Error=BadAuthentication\nSecret=must-not-be-logged\n",
+            ),
+        ]
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "GPLAYDL_ACCOUNT_EMAIL": "account@example.test",
+                    "GPLAYDL_AAS_TOKEN": "aas_et/persistent-secret",
+                },
+                clear=True,
+            ),
+            patch("gplaydl.auth.console.print") as console_print,
+        ):
+            self.assertIsNone(fetch_token())
+        output = " ".join(str(call) for call in console_print.call_args_list)
+        self.assertIn("HTTP 403, BadAuthentication", output)
+        self.assertNotIn("must-not-be-logged", output)
+
+    @patch(
+        "gplaydl.auth._direct_auth",
+        side_effect=DirectAuthError("checkin (HTTP 403)"),
+    )
+    @patch("gplaydl.auth.console.print")
+    def test_direct_failure_reports_safe_stage(
+        self, console_print: Mock, _auth: Mock
+    ) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "GPLAYDL_ACCOUNT_EMAIL": "account@example.test",
+                "GPLAYDL_AAS_TOKEN": "aas_et/persistent-secret",
+            },
+            clear=True,
+        ):
+            self.assertIsNone(fetch_token())
+
+        output = " ".join(str(call) for call in console_print.call_args_list)
+        self.assertIn("checkin (HTTP 403)", output)
+        self.assertNotIn("account@example.test", output)
+        self.assertNotIn("persistent-secret", output)
+
     def test_direct_mode_bypasses_all_persistence(self) -> None:
         token = {"authToken": "temporary"}
         environment = {
             "GPLAYDL_ACCOUNT_EMAIL": "account@example.test",
-            "GPLAYDL_AAS_TOKEN": "persistent-secret",
+            "GPLAYDL_AAS_TOKEN": "aas_et/persistent-secret",
         }
         with (
             patch.dict(os.environ, environment, clear=True),
@@ -345,7 +419,7 @@ class DirectAuthTest(unittest.TestCase):
     def test_cli_auth_does_not_save_or_identify_direct_credentials(self) -> None:
         environment = {
             "GPLAYDL_ACCOUNT_EMAIL": "account@example.test",
-            "GPLAYDL_AAS_TOKEN": "persistent-secret",
+            "GPLAYDL_AAS_TOKEN": "aas_et/persistent-secret",
         }
         bundle = {"authToken": "temporary", "gsfId": "secret-gsf"}
         with (

@@ -31,14 +31,15 @@ class AASTokenTest(unittest.TestCase):
 
     @patch("gplaydl.aastoken.httpx.post")
     def test_exchanges_embedded_setup_oauth_token(self, post: Mock) -> None:
-        post.return_value = Mock(text="Token=aas-token\n")
+        post.return_value = Mock(text="Token=aas_et/persistent\nAuth=g.a000temporary\n")
 
         token = fetch_aas_token("user@example.com", "oauth2_4/one-time-token")
 
-        self.assertEqual("aas-token", token)
+        self.assertEqual("aas_et/persistent", token)
         request = post.call_args.kwargs
         self.assertEqual("oauth2_4/one-time-token", request["data"]["Token"])
         self.assertEqual("1", request["data"]["ACCESS_TOKEN"])
+        self.assertEqual("com.google.android.gms", request["headers"]["app"])
         self.assertNotIn("EncryptedPasswd", request["data"])
 
     @patch("gplaydl.aastoken.httpx.post")

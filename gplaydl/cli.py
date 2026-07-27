@@ -647,9 +647,12 @@ def download(
         profile=profile,
     )
     if not auth_data:
-        err.print(
-            "[red]Could not obtain an auth token — dispenser may be rate-limiting.[/red]"
+        message = (
+            "Direct Google authentication failed."
+            if direct_auth_enabled()
+            else "Could not obtain an auth token — dispenser may be rate-limiting."
         )
+        err.print(f"[red]{message}[/red]")
         raise typer.Exit(code=AUTH_UNAVAILABLE_EXIT_CODE)
 
     output.mkdir(parents=True, exist_ok=True)

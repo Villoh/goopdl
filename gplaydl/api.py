@@ -22,6 +22,7 @@ import httpx
 from gplaydl.auth import (
     build_headers,
     _build_httpx_proxy,
+    direct_auth_enabled,
     pick_pool_token,
     replace_pool_token,
 )
@@ -884,9 +885,12 @@ def download_app(
 
     auth = _acquire_single_token(arch, country, proxy, dispenser_url, chosen_profile)
     if not auth:
-        raise PlayAPIError(
-            "Could not obtain an auth token — dispenser may be rate-limiting."
+        message = (
+            "Direct Google authentication failed."
+            if direct_auth_enabled()
+            else "Could not obtain an auth token — dispenser may be rate-limiting."
         )
+        raise PlayAPIError(message)
 
     try:
         details, delivery = _fetch_latest_delivery(package, auth, country, proxy)

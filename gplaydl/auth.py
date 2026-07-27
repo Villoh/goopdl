@@ -148,6 +148,10 @@ class DirectAuthConfigurationError(ValueError):
     """Direct Google authentication environment is only partially configured."""
 
 
+class DirectAuthError(RuntimeError):
+    """Direct Google authentication failed at a non-secret protocol stage."""
+
+
 def _direct_credentials() -> Optional[tuple[str, str]]:
     email = os.environ.get("GPLAYDL_ACCOUNT_EMAIL", "").strip()
     aas_token = os.environ.get("GPLAYDL_AAS_TOKEN", "").strip()
@@ -160,6 +164,10 @@ def _direct_credentials() -> Optional[tuple[str, str]]:
     if not aas_token:
         raise DirectAuthConfigurationError(
             "Missing required environment variable: GPLAYDL_AAS_TOKEN"
+        )
+    if not aas_token.startswith("aas_et/"):
+        raise DirectAuthConfigurationError(
+            "GPLAYDL_AAS_TOKEN must start with aas_et/ (not g.a or oauth2_4/)"
         )
     return email, aas_token
 
@@ -350,11 +358,14 @@ def _direct_auth(
         proxy=httpx_proxy,
     )
     if checkin.status_code != 200:
-        return None
-    android_id = _field(checkin.content, 7)
-    consistency_token = _response_string(checkin.content, 12)
+        raise DirectAuthError(f"checkin (HTTP {checkin.status_code})")
+    try:
+        android_id = _field(checkin.content, 7)
+        consistency_token = _response_string(checkin.content, 12)
+    except (EOFError, UnicodeDecodeError, ValueError) as exc:
+        raise DirectAuthError("checkin response") from exc
     if not isinstance(android_id, int):
-        return None
+        raise DirectAuthError("checkin response")
     gsf_id = format(android_id, "x")
 
     partial = {
@@ -379,8 +390,11 @@ def _direct_auth(
         proxy=httpx_proxy,
     )
     if upload.status_code != 200:
-        return None
-    config_token = _response_string(upload.content, 1, 28, 1)
+        raise DirectAuthError(f"device config upload (HTTP {upload.status_code})")
+    try:
+        config_token = _response_string(upload.content, 1, 28, 1)
+    except (EOFError, UnicodeDecodeError, ValueError) as exc:
+        raise DirectAuthError("device config response") from exc
 
     auth_response = httpx.post(
         "https://android.clients.google.com/auth",
@@ -411,14 +425,19 @@ def _direct_auth(
         timeout=30,
         proxy=httpx_proxy,
     )
-    if auth_response.status_code != 200:
-        return None
     auth_values = dict(
         line.split("=", 1) for line in auth_response.text.splitlines() if "=" in line
     )
+    if auth_response.status_code != 200:
+        reason = auth_values.get("Error", "")
+        safe_reason = reason if reason.isidentifier() else ""
+        detail = f", {safe_reason}" if safe_reason else ""
+        raise DirectAuthError(
+            f"token exchange (HTTP {auth_response.status_code}{detail})"
+        )
     bearer = auth_values.get("Auth")
     if not bearer:
-        return None
+        raise DirectAuthError("token exchange response")
 
     bundle = {
         **partial,
@@ -432,9 +451,11 @@ def _direct_auth(
         timeout=30,
         proxy=httpx_proxy,
     )
-    if toc.status_code != 200:
-        return None
-    bundle["dfeCookie"] = _response_string(toc.content, 1, 6, 22)
+    if toc.status_code == 200:
+        try:
+            bundle["dfeCookie"] = _response_string(toc.content, 1, 6, 22)
+        except (EOFError, UnicodeDecodeError, ValueError):
+            pass
     return bundle
 
 
@@ -462,8 +483,11 @@ def fetch_token(
                 proxy=proxy,
                 profile_name=profile,
             )
+        except DirectAuthError as exc:
+            console.print(f"  [red]Direct Google authentication failed at {exc}.[/red]")
+            return None
         except Exception:
-            console.print("  [red]Direct Google authentication failed.[/red]")
+            console.print("  [red]Direct Google authentication failed unexpectedly.[/red]")
             return None
 
     url = dispenser_url or DEFAULT_DISPENSER_URL

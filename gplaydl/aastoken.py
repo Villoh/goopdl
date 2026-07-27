@@ -130,4 +130,4 @@ def fetch_aas_token(email: str, password_or_oauth_token: str) -> str:
         reason = values["Error"]
         raise AASTokenError(reason if reason.isidentifier() else "Rejected")
     response.raise_for_status()
-    raise AASTokenError("NoToken")
+    raise AASTokenError("NoAASToken")
