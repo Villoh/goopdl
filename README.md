@@ -97,6 +97,18 @@ gplaydl auth --profile "Galaxy S25 Ultra"      # Use a specific device profile
 
 Tokens are cached at `~/.config/gplaydl/auth-{arch}.json` and reused automatically by other commands.
 
+#### Direct Google account authentication
+
+Set both environment variables to bypass Aurora's dispenser and authenticate directly with Google:
+
+```bash
+export GPLAYDL_ACCOUNT_EMAIL="account@example.com"
+export GPLAYDL_AAS_TOKEN="your-aas-token"
+gplaydl download com.whatsapp
+```
+
+No CLI flags, config files, or secret files are used. The AAS token is a persistent sensitive credential; changing the Google account password invalidates it. Temporary Google Play bearer tokens are kept in memory and never cached. If only one variable is configured, gplaydl fails without falling back to anonymous authentication.
+
 ---
 
 ### `aastoken` — Print a Google account AAS token

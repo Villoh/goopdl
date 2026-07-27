@@ -32,6 +32,8 @@ from gplaydl.aastoken import AASTokenError, fetch_aas_token
 from gplaydl.auth import (
     clear_auth,
     DEFAULT_PROBES,
+    DirectAuthConfigurationError,
+    direct_auth_enabled,
     ensure_auth,
     ensure_pool,
     fetch_token,
@@ -56,7 +58,7 @@ AUTH_UNAVAILABLE_EXIT_CODE = 3
 
 app = typer.Typer(
     name="gplaydl",
-    help="Download APKs from Google Play Store with anonymous authentication.",
+    help="Download APKs from Google Play Store.",
     add_completion=False,
     no_args_is_help=True,
 )
@@ -70,6 +72,7 @@ def _version_callback(value: bool) -> None:
 
 @app.callback()
 def main(
+    ctx: typer.Context,
     version: bool = typer.Option(  # noqa: ARG001
         False,
         "--version",
@@ -80,6 +83,20 @@ def main(
     ),
 ) -> None:
     """GPlay APK Downloader — download APKs from Google Play Store."""
+    if ctx.invoked_subcommand in {
+        "auth",
+        "latest",
+        "info",
+        "search",
+        "list-splits",
+        "download",
+        "fast-download",
+    }:
+        try:
+            direct_auth_enabled()
+        except DirectAuthConfigurationError as exc:
+            err.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=2)
 
 
 # ── auth ────────────────────────────────────────────────────────────────────
@@ -107,10 +124,11 @@ def auth(
         help="Device profile key or name substring (e.g. 'Pv' or 'samsung'). Run 'gplaydl profiles' to list all.",
     ),
 ) -> None:
-    """Acquire an anonymous auth token from the dispenser.
+    """Acquire a Google Play auth token.
 
-    Use --country to register the device with a specific region's MCC/MNC,
-    so subsequent info/download calls with the same --country get that
+    Without direct-auth environment variables, use --country to register the
+    device with a specific region's MCC/MNC, so subsequent info/download calls
+    with the same --country get that
     region's catalog without needing a proxy.
     """
     if clear:
@@ -118,13 +136,20 @@ def auth(
         rprint("[green]All cached tokens removed.[/green]")
         raise typer.Exit()
 
-    rprint(f"[dim]Dispenser:[/dim] {dispenser or 'https://auroraoss.com/api/auth'}")
-    rprint(f"[dim]Architecture:[/dim] {arch}")
-    if country:
-        rprint(f"[dim]Country:[/dim] {country.upper()}")
-    rprint()
+    direct = direct_auth_enabled()
+    if not direct:
+        rprint(f"[dim]Dispenser:[/dim] {dispenser or 'https://auroraoss.com/api/auth'}")
+        rprint(f"[dim]Architecture:[/dim] {arch}")
+        if country:
+            rprint(f"[dim]Country:[/dim] {country.upper()}")
+        rprint()
 
-    with console.status("Rotating through device profiles..."):
+    status = (
+        "Authenticating with Google..."
+        if direct
+        else "Rotating through device profiles..."
+    )
+    with console.status(status):
         data = fetch_token(
             dispenser_url=dispenser,
             arch=arch,
@@ -134,8 +159,17 @@ def auth(
         )
 
     if not data:
-        err.print("[red]Authentication failed — all profiles rejected.[/red]")
+        message = (
+            "Authentication failed."
+            if direct
+            else "Authentication failed — all profiles rejected."
+        )
+        err.print(f"[red]{message}[/red]")
         raise typer.Exit(code=AUTH_UNAVAILABLE_EXIT_CODE)
+
+    if direct:
+        rprint("[bold green]Authenticated[/bold green]")
+        return
 
     path = save_auth(data, arch, country)
     rprint(
@@ -169,6 +203,7 @@ def aastoken(
         raise typer.Exit(code=2)
     if oauth:
         password = typer.prompt("OAuth token", hide_input=True)
+        assert password is not None
         if not password.startswith("oauth2_4/"):
             err.print("[red]OAuth token must start with oauth2_4/.[/red]")
             raise typer.Exit(code=2)
@@ -604,7 +639,6 @@ def download(
     ),
 ) -> None:
     """Download an APK (with splits + additional files) from Google Play."""
-    output.mkdir(parents=True, exist_ok=True)
     auth_data = pick_pool_token(
         arch=arch,
         country=country,
@@ -617,6 +651,8 @@ def download(
             "[red]Could not obtain an auth token — dispenser may be rate-limiting.[/red]"
         )
         raise typer.Exit(code=AUTH_UNAVAILABLE_EXIT_CODE)
+
+    output.mkdir(parents=True, exist_ok=True)
 
     # ── resolve --version to an int version code ─────────────────────────
     resolved_vc: Optional[int] = None
@@ -888,7 +924,11 @@ def _resolve_version_string(
     rprint(f"[dim]Resolving [bold]{version_str}[/bold] — probing fresh tokens...[/dim]")
     for attempt in range(1, 21):
         token = fetch_token(
-            arch=arch, profile=profile, dispenser_url=dispenser, proxy=proxy
+            arch=arch,
+            country=country,
+            profile=profile,
+            dispenser_url=dispenser,
+            proxy=proxy,
         )
         if token is None:
             err.print(

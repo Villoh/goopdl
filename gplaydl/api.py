@@ -874,8 +874,6 @@ def download_app(
     *proxy* itself is passed through unpatched to the Google FDFE calls.
     Returns (apk_path, dotted version string) — not the numeric version code.
     """
-    output.mkdir(parents=True, exist_ok=True)
-
     if profile:
         chosen_profile = profile
     else:
@@ -905,6 +903,7 @@ def download_app(
             raise PlayAPIError("Token expired and replacement failed.")
         details, delivery = _fetch_latest_delivery(package, auth, country, proxy)
 
+    output.mkdir(parents=True, exist_ok=True)
     specs = _build_specs(
         package, details.version_code, output, delivery, no_splits, no_extras
     )

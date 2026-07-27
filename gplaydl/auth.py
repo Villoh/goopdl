@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
 import time
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse, urlunparse
 
 import httpx
-from urllib.parse import urlparse, urlunparse
 from rich.console import Console
 
 from gplaydl.profiles import (
@@ -19,6 +20,7 @@ from gplaydl.profiles import (
     get_priority_profiles,
     patch_profile_country,
 )
+from gplaydl.protobuf import WIRETYPE_LENGTH_DELIMITED, ProtoDecoder
 
 DEFAULT_DISPENSER_URL = "https://auroraoss.com/api/auth"
 
@@ -134,10 +136,306 @@ def _interpolate_region(proxy: Optional[str], region: str) -> Optional[str]:
             lower_code = code.lower()
             idx = password.lower().find(lower_code)
             if idx != -1:
-                new_password = password[:idx] + region.lower() + password[idx + len(lower_code):]
+                new_password = (
+                    password[:idx] + region.lower() + password[idx + len(lower_code) :]
+                )
                 new_netloc = parsed.netloc.replace(parsed.password, new_password, 1)
                 return urlunparse(parsed._replace(netloc=new_netloc))
     return proxy
+
+
+class DirectAuthConfigurationError(ValueError):
+    """Direct Google authentication environment is only partially configured."""
+
+
+def _direct_credentials() -> Optional[tuple[str, str]]:
+    email = os.environ.get("GPLAYDL_ACCOUNT_EMAIL", "").strip()
+    aas_token = os.environ.get("GPLAYDL_AAS_TOKEN", "").strip()
+    if not email and not aas_token:
+        return None
+    if not email:
+        raise DirectAuthConfigurationError(
+            "Missing required environment variable: GPLAYDL_ACCOUNT_EMAIL"
+        )
+    if not aas_token:
+        raise DirectAuthConfigurationError(
+            "Missing required environment variable: GPLAYDL_AAS_TOKEN"
+        )
+    return email, aas_token
+
+
+def direct_auth_enabled() -> bool:
+    """Return whether complete env-only Google account authentication is enabled."""
+    return _direct_credentials() is not None
+
+
+def _varint(value: int) -> bytes:
+    out = bytearray()
+    while value > 0x7F:
+        out.append((value & 0x7F) | 0x80)
+        value >>= 7
+    out.append(value)
+    return bytes(out)
+
+
+def _proto_varint(field: int, value: int) -> bytes:
+    return _varint(field << 3) + _varint(value)
+
+
+def _proto_bytes(field: int, value: str | bytes) -> bytes:
+    data = value.encode() if isinstance(value, str) else value
+    return _varint((field << 3) | WIRETYPE_LENGTH_DELIMITED) + _varint(len(data)) + data
+
+
+def _profile_bool(profile: dict, key: str) -> int:
+    return int(profile.get(key, "false").lower() == "true")
+
+
+def _device_configuration(profile: dict) -> bytes:
+    fields = bytearray()
+    for number, key in (
+        (1, "TouchScreen"),
+        (2, "Keyboard"),
+        (3, "Navigation"),
+        (4, "ScreenLayout"),
+        (7, "Screen.Density"),
+        (8, "GL.Version"),
+        (12, "Screen.Width"),
+        (13, "Screen.Height"),
+        (20, "TotalMemoryBytes"),
+        (21, "MaxNumOfCPUCores"),
+    ):
+        if profile.get(key):
+            fields += _proto_varint(number, int(profile[key]))
+    fields += _proto_varint(5, _profile_bool(profile, "HasHardKeyboard"))
+    fields += _proto_varint(6, _profile_bool(profile, "HasFiveWayNavigation"))
+    fields += _proto_varint(19, _profile_bool(profile, "LowRamDevice"))
+    for number, key in (
+        (9, "SharedLibraries"),
+        (10, "Features"),
+        (11, "Platforms"),
+        (14, "Locales"),
+        (15, "GL.Extensions"),
+    ):
+        for value in filter(None, profile.get(key, "").split(",")):
+            fields += _proto_bytes(number, value)
+    for feature in filter(None, profile.get("Features", "").split(",")):
+        fields += _proto_bytes(26, _proto_bytes(1, feature) + _proto_varint(2, 0))
+    fields += _proto_varint(16, 0)
+    return bytes(fields)
+
+
+def _google_auth_user_agent(profile: dict) -> str:
+    return (
+        f"GoogleAuth/1.4 ({profile.get('Build.DEVICE', '')} "
+        f"{profile.get('Build.ID', '')})"
+    )
+
+
+def _finsky_user_agent(profile: dict) -> str:
+    platforms = profile.get("Platforms", "").replace(",", ";")
+    values = (
+        ("api", "3"),
+        ("versionCode", profile.get("Vending.version", "")),
+        ("sdk", profile.get("Build.VERSION.SDK_INT", "")),
+        ("device", profile.get("Build.DEVICE", "")),
+        ("hardware", profile.get("Build.HARDWARE", "")),
+        ("product", profile.get("Build.PRODUCT", "")),
+        ("platformVersionRelease", profile.get("Build.VERSION.RELEASE", "")),
+        ("model", profile.get("Build.MODEL", "").replace(" ", "%20")),
+        ("buildId", profile.get("Build.ID", "")),
+        ("isWideScreen", "0"),
+        ("supportedAbis", platforms),
+    )
+    properties = ",".join(f"{key}={value}" for key, value in values)
+    return f"Android-Finsky/{profile.get('Vending.versionString', '')} ({properties})"
+
+
+def _checkin_request(profile: dict, device_config: bytes, locale: str) -> bytes:
+    build = b"".join(
+        _proto_bytes(number, profile.get(key, "").replace("\\:", ":"))
+        for number, key in (
+            (1, "Build.FINGERPRINT"),
+            (2, "Build.HARDWARE"),
+            (3, "Build.BRAND"),
+            (4, "Build.RADIO"),
+            (5, "Build.BOOTLOADER"),
+            (6, "Client"),
+        )
+    )
+    build += _proto_varint(7, int(time.time()))
+    build += _proto_varint(8, int(profile.get("GSF.version", "0")))
+    build += b"".join(
+        _proto_bytes(number, profile.get(key, ""))
+        for number, key in (
+            (9, "Build.DEVICE"),
+            (11, "Build.MODEL"),
+            (12, "Build.MANUFACTURER"),
+            (13, "Build.PRODUCT"),
+        )
+    )
+    build += _proto_varint(10, int(profile.get("Build.VERSION.SDK_INT", "0")))
+    build += _proto_varint(14, _profile_bool(profile, "OtaInstalled"))
+    checkin = _proto_bytes(1, build) + _proto_varint(2, 0)
+    for number, key in ((6, "CellOperator"), (7, "SimOperator"), (8, "Roaming")):
+        checkin += _proto_bytes(number, profile.get(key, ""))
+    checkin += _proto_varint(9, 0)
+    return b"".join(
+        (
+            _proto_varint(2, 0),
+            _proto_bytes(4, checkin),
+            _proto_bytes(6, locale),
+            _proto_bytes(12, profile.get("TimeZone", "UTC")),
+            _proto_varint(14, 3),
+            _proto_bytes(18, device_config),
+            _proto_varint(20, 0),
+        )
+    )
+
+
+def _field(data: bytes, number: int) -> object:
+    for field_number, _wire_type, value in ProtoDecoder(data).read_all_ordered():
+        if field_number == number:
+            return value
+    raise ValueError("Invalid Google authentication response")
+
+
+def _response_string(data: bytes, *path: int) -> str:
+    value: object = data
+    for number in path:
+        if not isinstance(value, bytes):
+            raise ValueError("Invalid Google authentication response")
+        value = _field(value, number)
+    if not isinstance(value, bytes):
+        raise ValueError("Invalid Google authentication response")
+    return value.decode("utf-8")
+
+
+def _direct_auth(
+    email: str,
+    aas_token: str,
+    arch: str,
+    country: Optional[str],
+    proxy: Optional[str],
+    profile_name: Optional[str],
+) -> Optional[dict]:
+    if profile_name:
+        selected = find_profile(profile_name, arch)
+        if not selected:
+            return None
+    else:
+        profiles = get_priority_profiles(arch) or [("fallback", FALLBACK_PROFILE)]
+        selected = profiles[0]
+    profile = patch_profile_country(selected[1], country) if country else selected[1]
+    locale = (
+        _COUNTRY_LOCALE.get(country.upper(), f"en_{country.upper()}")
+        if country
+        else "en_US"
+    )
+    auth_user_agent = _google_auth_user_agent(profile)
+    user_agent = _finsky_user_agent(profile)
+    device_config = _device_configuration(profile)
+    httpx_proxy = _build_httpx_proxy(proxy)
+
+    checkin = httpx.post(
+        "https://android.clients.google.com/checkin",
+        content=_checkin_request(profile, device_config, locale),
+        headers={
+            "app": "com.google.android.gms",
+            "Content-Type": "application/x-protobuffer",
+            "Host": "android.clients.google.com",
+            "User-Agent": auth_user_agent,
+        },
+        timeout=30,
+        proxy=httpx_proxy,
+    )
+    if checkin.status_code != 200:
+        return None
+    android_id = _field(checkin.content, 7)
+    consistency_token = _response_string(checkin.content, 12)
+    if not isinstance(android_id, int):
+        return None
+    gsf_id = format(android_id, "x")
+
+    partial = {
+        "authToken": "",
+        "gsfId": gsf_id,
+        "deviceCheckInConsistencyToken": consistency_token,
+        "deviceConfigToken": "",
+        "dfeCookie": "",
+        "deviceInfoProvider": {
+            "userAgentString": user_agent,
+            "mccMnc": profile.get("SimOperator", ""),
+        },
+    }
+    upload_headers = build_headers(partial, country=country)
+    upload_headers.pop("Authorization")
+    upload_headers["Content-Type"] = "application/x-protobuf"
+    upload = httpx.post(
+        "https://android.clients.google.com/fdfe/uploadDeviceConfig",
+        content=_proto_bytes(1, device_config),
+        headers=upload_headers,
+        timeout=30,
+        proxy=httpx_proxy,
+    )
+    if upload.status_code != 200:
+        return None
+    config_token = _response_string(upload.content, 1, 28, 1)
+
+    auth_response = httpx.post(
+        "https://android.clients.google.com/auth",
+        data={
+            "Email": email,
+            "Token": aas_token,
+            "service": "oauth2:https://www.googleapis.com/auth/googleplay",
+            "app": "com.android.vending",
+            "client_sig": "38918a453d07199354f8b19af05ec6562ced5788",
+            "callerPkg": "com.google.android.gms",
+            "callerSig": "38918a453d07199354f8b19af05ec6562ced5788",
+            "androidId": gsf_id,
+            "google_play_services_version": profile.get("GSF.version", ""),
+            "sdk_version": profile.get("Build.VERSION.SDK_INT", ""),
+            "device_country": (country or "US").lower(),
+            "lang": locale.split("_", 1)[0].lower(),
+            "oauth2_foreground": "1",
+            "token_request_options": "CAA4AVAB",
+            "check_email": "1",
+            "system_partition": "1",
+            "droidguard_results": "null",
+        },
+        headers={
+            "app": "com.google.android.gms",
+            "device": gsf_id,
+            "User-Agent": auth_user_agent,
+        },
+        timeout=30,
+        proxy=httpx_proxy,
+    )
+    if auth_response.status_code != 200:
+        return None
+    auth_values = dict(
+        line.split("=", 1) for line in auth_response.text.splitlines() if "=" in line
+    )
+    bearer = auth_values.get("Auth")
+    if not bearer:
+        return None
+
+    bundle = {
+        **partial,
+        "authToken": bearer,
+        "deviceConfigToken": config_token,
+    }
+    toc_headers = build_headers(bundle, country=country)
+    toc = httpx.get(
+        "https://android.clients.google.com/fdfe/toc",
+        headers=toc_headers,
+        timeout=30,
+        proxy=httpx_proxy,
+    )
+    if toc.status_code != 200:
+        return None
+    bundle["dfeCookie"] = _response_string(toc.content, 1, 6, 22)
+    return bundle
 
 
 def fetch_token(
@@ -147,13 +445,27 @@ def fetch_token(
     country: Optional[str] = None,
     profile: Optional[str] = None,
 ) -> Optional[dict]:
-    """Obtain an anonymous auth token from the dispenser.
+    """Obtain direct Google auth when configured, otherwise use the dispenser.
 
-    Rotates through device profiles until one yields an authToken.
+    Anonymous mode rotates through device profiles until one yields an authToken.
     When *country* is set, patches each profile's CellOperator/SimOperator
     with the matching MCC/MNC so the GSF registration is tied to that region.
     Returns the full auth dict on success, None on failure.
     """
+    credentials = _direct_credentials()
+    if credentials:
+        try:
+            return _direct_auth(
+                *credentials,
+                arch=arch,
+                country=country,
+                proxy=proxy,
+                profile_name=profile,
+            )
+        except Exception:
+            console.print("  [red]Direct Google authentication failed.[/red]")
+            return None
+
     url = dispenser_url or DEFAULT_DISPENSER_URL
     headers = {
         "User-Agent": "com.aurora.store-4.6.1-70",
@@ -172,9 +484,11 @@ def fetch_token(
     # ponytail: random start so single-profile callers don't always land on
     # the same region (index 0) and pile all their requests on one exit IP
     region_start = random.randrange(len(DISPENSER_PROXY_REGIONS))
-    for idx, (profile_name, profile) in enumerate(profiles):
-        device = profile.get("UserReadableName", profile_name)
-        payload = patch_profile_country(profile, country) if country else profile
+    for idx, (profile_name, profile_data) in enumerate(profiles):
+        device = profile_data.get("UserReadableName", profile_name)
+        payload = (
+            patch_profile_country(profile_data, country) if country else profile_data
+        )
         try:
             region = DISPENSER_PROXY_REGIONS[
                 (region_start + idx) % len(DISPENSER_PROXY_REGIONS)
@@ -254,6 +568,17 @@ def ensure_pool(
     Returns the full list of valid tokens (may be fewer than *size* if the
     dispenser is rate-limiting).
     """
+    if direct_auth_enabled():
+        tokens = []
+        for _ in range(size):
+            token = fetch_token(
+                arch=arch, country=country, proxy=proxy, profile=profile
+            )
+            if token is None:
+                break
+            tokens.append(token)
+        return tokens
+
     pool = _load_pool(arch, country)
     deficit = size - len(pool)
     if deficit > 0:
@@ -307,6 +632,9 @@ def pick_pool_token(
     Expired tokens are pruned and refetched by ensure_pool before picking.
     The round-robin index is persisted to disk so it survives across invocations.
     """
+    if direct_auth_enabled():
+        return fetch_token(arch=arch, country=country, proxy=proxy, profile=profile)
+
     pool = ensure_pool(
         arch=arch,
         country=country,
@@ -336,6 +664,9 @@ def replace_pool_token(
     Called when a mid-request AuthExpiredError reveals a token died early.
     Returns the new token, or None if the dispenser is unavailable.
     """
+    if direct_auth_enabled():
+        return fetch_token(arch=arch, country=country, proxy=proxy, profile=profile)
+
     pool = _load_pool(arch, country)
     failed_gsf = failed_token.get("gsfId")
     pool = [t for t in pool if t.get("gsfId") != failed_gsf]
@@ -367,6 +698,9 @@ def ensure_auth(
     Proactively refreshes tokens older than 50 minutes.
     Pass *force_refresh=True* to ignore cache entirely (e.g. after a 401).
     """
+    if direct_auth_enabled():
+        return fetch_token(arch=arch, country=country, proxy=proxy, profile=profile)
+
     if not force_refresh:
         cached = load_cached_auth(arch, country)
         if cached and cached.get("authToken"):
