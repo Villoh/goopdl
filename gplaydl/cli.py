@@ -18,6 +18,7 @@ from gplaydl import __version__
 from gplaydl.api import (
     AuthExpiredError,
     PlayAPIError,
+    VersionUnavailableError,
     download_app,
     fetch_app_item,
     get_delivery,
@@ -57,9 +58,6 @@ err = Console(stderr=True)
 AUTH_UNAVAILABLE_EXIT_CODE = 3
 VERSION_UNAVAILABLE_EXIT_CODE = 4
 
-
-class VersionUnavailableError(PlayAPIError):
-    """Requested version is unavailable from current Google Play cohorts."""
 
 app = typer.Typer(
     name="gplaydl",
@@ -711,16 +709,19 @@ def download(
                 delivery = get_delivery(
                     package, vc, auth_data, country=country, proxy=proxy
                 )
+    except VersionUnavailableError as exc:
+        err.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=VERSION_UNAVAILABLE_EXIT_CODE)
     except PlayAPIError as exc:
         err.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1)
 
-    rprint(
-        Panel.fit(
-            f"[bold]{details.title}[/bold]\n" f"{details.version_string}  (vc {vc})",
-            title=package,
-        )
+    label = (
+        f"requested version code {vc}"
+        if version is not None and version.isdigit()
+        else f"{version or details.version_string}  (vc {vc})"
     )
+    rprint(Panel.fit(f"[bold]{details.title}[/bold]\n{label}", title=package))
 
     # ── build download specs ────────────────────────────────────────────
     base_name = f"{package}-{vc}.apk"

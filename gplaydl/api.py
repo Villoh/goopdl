@@ -88,6 +88,7 @@ class AdditionalFile:
 
 @dataclass
 class DeliveryResult:
+    version_code: int = 0
     download_url: str = ""
     download_size: int = 0
     sha1: str = ""
@@ -103,6 +104,12 @@ class PlayAPIError(Exception):
 
 class AuthExpiredError(PlayAPIError):
     """Raised when the API returns 401 — token needs refresh."""
+
+    pass
+
+
+class VersionUnavailableError(PlayAPIError):
+    """Raised when Google Play cannot serve requested version code."""
 
     pass
 
@@ -535,6 +542,7 @@ def _extract_delivery_from_fields(fields: list[tuple[int, int, Any]]) -> Deliver
     app_vc = _first_int(fields, 29) or 0
 
     result = DeliveryResult(
+        version_code=app_vc,
         download_url=_safe_cdn_url(_first_string(fields, 3)),
         download_size=_first_int(fields, 1) or 0,
         sha1=_first_ascii(fields, 2),
@@ -626,6 +634,8 @@ def get_delivery(
     resp = httpx.get(url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy))
     if resp.status_code == 401:
         raise AuthExpiredError("Auth token expired.")
+    if resp.status_code == 404:
+        raise VersionUnavailableError("Requested version code is unavailable.")
     if resp.status_code != 200:
         raise PlayAPIError(f"Delivery failed (HTTP {resp.status_code}).")
 
@@ -636,6 +646,8 @@ def get_delivery(
             "No download URL returned. The app may require purchase or "
             "is unavailable for this device."
         )
+    if result.version_code != version_code:
+        raise PlayAPIError("delivery version code mismatch")
 
     return result
 

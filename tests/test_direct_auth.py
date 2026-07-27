@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 
 from typer.testing import CliRunner
 
+from gplaydl.api import PlayAPIError, get_delivery
 from gplaydl.auth import (
     DirectAuthConfigurationError,
     DirectAuthError,
@@ -77,6 +78,21 @@ PROFILE = {
 
 
 class DirectAuthTest(unittest.TestCase):
+    @patch("gplaydl.api.httpx.get")
+    def test_delivery_confirms_requested_version_code(self, get: Mock) -> None:
+        app_delivery = field(3, b"https://android.clients.google.com/download") + int_field(
+            29, 1561052632
+        )
+        get.return_value = Mock(
+            status_code=200,
+            content=field(1, field(21, field(2, app_delivery))),
+        )
+        auth = {"authToken": "temporary", "gsfId": "1234"}
+        result = get_delivery("com.example.app", 1561052632, auth)
+        self.assertEqual(result.version_code, 1561052632)
+        with self.assertRaisesRegex(PlayAPIError, "version code mismatch"):
+            get_delivery("com.example.app", 1561052633, auth)
+
     def test_environment_requires_both_values(self) -> None:
         cases = [
             ({}, False, None),
