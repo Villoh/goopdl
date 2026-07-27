@@ -55,6 +55,11 @@ err = Console(stderr=True)
 # Distinct exit code so callers can tell "Google Play is unreachable right now"
 # from "this artifact cannot be trusted" without parsing human-readable output.
 AUTH_UNAVAILABLE_EXIT_CODE = 3
+VERSION_UNAVAILABLE_EXIT_CODE = 4
+
+
+class VersionUnavailableError(PlayAPIError):
+    """Requested version is unavailable from current Google Play cohorts."""
 
 app = typer.Typer(
     name="gplaydl",
@@ -667,6 +672,9 @@ def download(
                 resolved_vc, auth_data = _resolve_version_string(
                     package, version, arch, dispenser, country, proxy, profile
                 )
+            except VersionUnavailableError as exc:
+                err.print(f"[red]{exc}[/red]")
+                raise typer.Exit(code=VERSION_UNAVAILABLE_EXIT_CODE)
             except PlayAPIError as exc:
                 err.print(f"[red]{exc}[/red]")
                 raise typer.Exit(code=1)
@@ -954,7 +962,7 @@ def _resolve_version_string(
             f"[dim]  attempt {attempt}: got {details.version_string}, want {version_str}[/dim]"
         )
         time.sleep(1)
-    raise PlayAPIError(
+    raise VersionUnavailableError(
         f"Version string '{version_str}' not found in 20 probes — "
         "it may not be in active rollout for any fresh GSF ID."
     )
