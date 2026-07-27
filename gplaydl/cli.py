@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import httpx
 import typer
 from rich import print as rprint
 from rich.console import Console
@@ -27,6 +28,7 @@ from gplaydl.api import (
     purchase,
     search_apps,
 )
+from gplaydl.aastoken import AASTokenError, fetch_aas_token
 from gplaydl.auth import (
     clear_auth,
     DEFAULT_PROBES,
@@ -145,6 +147,51 @@ def auth(
             title="Token",
         )
     )
+
+
+@app.command()
+def aastoken(
+    email: Optional[str] = typer.Argument(None, help="Google account email."),
+    password: Optional[str] = typer.Argument(
+        None, help="App password or oauth2_4 token. Omit for hidden input."
+    ),
+    oauth: bool = typer.Option(
+        False,
+        "--oauth",
+        help="Prompt for a one-time EmbeddedSetup oauth_token instead of a password.",
+    ),
+) -> None:
+    """Print a Google account AAS token without saving credentials or token files."""
+    if email is None:
+        email = typer.prompt("Email")
+    if oauth and password is not None:
+        err.print("[red]Do not pass PASSWORD with --oauth; token input is prompted.[/red]")
+        raise typer.Exit(code=2)
+    if oauth:
+        password = typer.prompt("OAuth token", hide_input=True)
+        if not password.startswith("oauth2_4/"):
+            err.print("[red]OAuth token must start with oauth2_4/.[/red]")
+            raise typer.Exit(code=2)
+    elif password is None:
+        password = typer.prompt("Password", hide_input=True)
+    assert email is not None and password is not None
+
+    try:
+        token = fetch_aas_token(email, password)
+    except AASTokenError as exc:
+        err.print(f"[red]Google account authentication failed:[/red] {exc}")
+        if str(exc) == "BadAuthentication":
+            err.print(
+                "[yellow]Google rejected password authentication. Use "
+                "[bold]gplaydl aastoken --oauth[/bold] with an EmbeddedSetup "
+                "oauth_token.[/yellow]"
+            )
+        raise typer.Exit(code=1)
+    except httpx.HTTPError:
+        err.print("[red]Google authentication request failed.[/red]")
+        raise typer.Exit(code=1)
+
+    console.print("AASToken:", token)
 
 
 # ── profiles ────────────────────────────────────────────────────────────────

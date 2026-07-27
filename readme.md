@@ -7,6 +7,7 @@ Download APKs from Google Play Store using anonymous authentication. Downloads b
 ## Features
 
 - Anonymous authentication via Aurora Store's token dispenser (no Google account needed)
+- Optional Google account AAS token retrieval without credential or token files
 - Multiple device profiles with automatic rotation for reliable token acquisition
 - Downloads base APK, split APKs, OBB files, and asset packs in one go
 - Streaming gzip decompression for Play Asset Delivery packs
@@ -95,6 +96,40 @@ gplaydl auth --profile "Galaxy S25 Ultra"      # Use a specific device profile
 | `--profile` | | — | Device profile key or name substring (e.g. `Pv` or `Samsung`). Run `gplaydl profiles` to list all |
 
 Tokens are cached at `~/.config/gplaydl/auth-{arch}.json` and reused automatically by other commands.
+
+---
+
+### `aastoken` — Print a Google account AAS token
+
+#### Password or app-password mode
+
+```bash
+# Interactive: asks for email and hides password input
+gplaydl aastoken
+
+# Arguments: convenient, but password remains in shell history
+gplaydl aastoken user@example.com password
+```
+
+Google commonly rejects both account passwords and 16-character app passwords with `BadAuthentication`. Keep 2-Step Verification enabled and use OAuth mode instead.
+
+#### OAuth mode (recommended)
+
+```bash
+gplaydl aastoken --oauth
+```
+
+Get the required one-time `oauth_token`:
+
+1. Open [Google EmbeddedSetup](https://accounts.google.com/EmbeddedSetup).
+2. Sign in and select **I agree**.
+3. The page may remain frozen/loading forever. This is expected; the cookie is normally already available.
+4. Open browser developer tools (`F12`).
+5. In Chrome or Edge, open **Application → Cookies → `https://accounts.google.com`**.
+6. Copy the value of the `oauth_token` cookie. It starts with `oauth2_4/`.
+7. Run `gplaydl aastoken --oauth`, enter the same email, then paste the token. Both inputs are handled interactively and the token is hidden.
+
+The `oauth_token` is short-lived and single-use. The resulting AAS token is printed to the console. Credentials and tokens are used in memory only; no `credentials.txt` or `token.txt` files are created.
 
 ---
 
