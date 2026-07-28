@@ -10,19 +10,15 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.9"
-authors = [{name = "Mikel Villota", email = "mikelvillotatic@gmail.com"}]
+authors = [{ name = "Mikel Villota", email = "mikelvillotatic@gmail.com" }]
 keywords = ["google-play", "apk", "downloader", "android"]
 classifiers = [
-    "Development Status :: 4 - Beta",
-    "Environment :: Console",
-    "Programming Language :: Python :: 3",
-    "Topic :: Utilities",
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Programming Language :: Python :: 3",
+  "Topic :: Utilities",
 ]
-dependencies = [
-    "typer>=0.9.0",
-    "rich>=13.0.0",
-    "httpx>=0.27.0",
-]
+dependencies = ["typer>=0.9.0", "rich>=13.0.0", "httpx>=0.27.0"]
 
 [project.scripts]
 gpdl = "gpdl.cli:app"

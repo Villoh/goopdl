@@ -2,9 +2,7 @@
 
 Download APKs from Google Play Store using anonymous authentication. Downloads base APKs, split APKs (App Bundles), OBB expansion files, and Play Asset Delivery packs — all by default.
 
-> **v2.0 — Complete Rewrite.** Ground-up rewrite with a new CLI, pure-Python protobuf decoding (no `gpapi` dependency), and automatic token management.
-
-> Originally derived from [rehmatworks/gplaydl](https://github.com/rehmatworks/gplaydl) (MIT). Now an independent project.
+> **Hard fork.** Independent project, hard-forked from [appknox/gplaydl](https://github.com/appknox/gplaydl), itself a fork of [rehmatworks/gplaydl](https://github.com/rehmatworks/gplaydl). MIT licensed, upstream copyright preserved.
 
 ## Install
 
