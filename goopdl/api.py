@@ -20,8 +20,8 @@ from urllib.parse import urlparse
 import httpx
 
 from goopdl.auth import (
-    build_headers,
     _build_httpx_proxy,
+    build_headers,
     direct_auth_enabled,
     pick_pool_token,
     replace_pool_token,
@@ -30,7 +30,7 @@ from goopdl.download import DownloadSpec, download_batch
 from goopdl.profiles import get_latest_probe_profiles
 from goopdl.protobuf import ProtoDecoder, extract_strings, proto_to_dict
 
-SEARCH_URL = f"https://android.clients.google.com/fdfe/search"
+SEARCH_URL = "https://android.clients.google.com/fdfe/search"
 
 FDFE_URL = "https://android.clients.google.com/fdfe"
 DETAILS_URL = f"{FDFE_URL}/details"
@@ -105,13 +105,11 @@ class PlayAPIError(Exception):
 class AuthExpiredError(PlayAPIError):
     """Raised when the API returns 401 — token needs refresh."""
 
-    pass
 
 
 class VersionUnavailableError(PlayAPIError):
     """Raised when Google Play cannot serve requested version code."""
 
-    pass
 
 
 # ---------------------------------------------------------------------------
@@ -642,7 +640,7 @@ def get_delivery(
     result = _parse_delivery(resp.content)
 
     if not result.download_url:
-        raise PlayAPIError(
+        raise VersionUnavailableError(
             "No download URL returned. The app may require purchase or "
             "is unavailable for this device."
         )
