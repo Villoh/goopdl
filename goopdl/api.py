@@ -19,16 +19,16 @@ from urllib.parse import urlparse
 
 import httpx
 
-from gpdl.auth import (
+from goopdl.auth import (
     build_headers,
     _build_httpx_proxy,
     direct_auth_enabled,
     pick_pool_token,
     replace_pool_token,
 )
-from gpdl.download import DownloadSpec, download_batch
-from gpdl.profiles import get_latest_probe_profiles
-from gpdl.protobuf import ProtoDecoder, extract_strings, proto_to_dict
+from goopdl.download import DownloadSpec, download_batch
+from goopdl.profiles import get_latest_probe_profiles
+from goopdl.protobuf import ProtoDecoder, extract_strings, proto_to_dict
 
 SEARCH_URL = f"https://android.clients.google.com/fdfe/search"
 
@@ -294,7 +294,7 @@ def fetch_app_item(
 
     Example::
 
-        from gpdl.api import fetch_app_item
+        from goopdl.api import fetch_app_item
         item = fetch_app_item("com.whatsapp", country="US", proxy="http://user:pass@host:port/")
     """
     auth = pick_pool_token(
@@ -305,7 +305,7 @@ def fetch_app_item(
         profile=profile,
     )
     if not auth:
-        raise PlayAPIError("Could not obtain auth token — run: gpdl auth")
+        raise PlayAPIError("Could not obtain auth token — run: goopdl auth")
     try:
         raw = get_details_raw(package, auth, country=country, proxy=proxy)
     except AuthExpiredError:

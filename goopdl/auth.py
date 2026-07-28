@@ -14,13 +14,13 @@ from urllib.parse import urlparse, urlunparse
 import httpx
 from rich.console import Console
 
-from gpdl.profiles import (
+from goopdl.profiles import (
     FALLBACK_PROFILE,
     find_profile,
     get_priority_profiles,
     patch_profile_country,
 )
-from gpdl.protobuf import WIRETYPE_LENGTH_DELIMITED, ProtoDecoder
+from goopdl.protobuf import WIRETYPE_LENGTH_DELIMITED, ProtoDecoder
 
 DEFAULT_DISPENSER_URL = "https://auroraoss.com/api/auth"
 
@@ -61,7 +61,7 @@ DISPENSER_PROXY_REGIONS = [
     "KE",
 ]
 
-_CONFIG_DIR = Path.home() / ".config" / "gpdl"
+_CONFIG_DIR = Path.home() / ".config" / "goopdl"
 
 console = Console(stderr=True)
 
@@ -153,21 +153,21 @@ class DirectAuthError(RuntimeError):
 
 
 def _direct_credentials() -> Optional[tuple[str, str]]:
-    email = os.environ.get("GPDL_ACCOUNT_EMAIL", "").strip()
-    aas_token = os.environ.get("GPDL_AAS_TOKEN", "").strip()
+    email = os.environ.get("GOOPDL_ACCOUNT_EMAIL", "").strip()
+    aas_token = os.environ.get("GOOPDL_AAS_TOKEN", "").strip()
     if not email and not aas_token:
         return None
     if not email:
         raise DirectAuthConfigurationError(
-            "Missing required environment variable: GPDL_ACCOUNT_EMAIL"
+            "Missing required environment variable: GOOPDL_ACCOUNT_EMAIL"
         )
     if not aas_token:
         raise DirectAuthConfigurationError(
-            "Missing required environment variable: GPDL_AAS_TOKEN"
+            "Missing required environment variable: GOOPDL_AAS_TOKEN"
         )
     if not aas_token.startswith("aas_et/"):
         raise DirectAuthConfigurationError(
-            "GPDL_AAS_TOKEN must start with aas_et/ (not g.a or oauth2_4/)"
+            "GOOPDL_AAS_TOKEN must start with aas_et/ (not g.a or oauth2_4/)"
         )
     return email, aas_token
 

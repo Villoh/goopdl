@@ -1,4 +1,4 @@
-# gpdl
+# goopdl
 
 Download APKs from Google Play Store using anonymous authentication. Downloads base APKs, split APKs (App Bundles), OBB expansion files, and Play Asset Delivery packs — all by default.
 
@@ -7,7 +7,7 @@ Download APKs from Google Play Store using anonymous authentication. Downloads b
 ## Install
 
 ```bash
-pip install gpdl
+pip install goopdl
 ```
 
 ## Features
@@ -28,27 +28,27 @@ pip install gpdl
 For servers, Docker images, or any environment that uses `pip` directly:
 
 ```bash
-pip install git+https://github.com/appknox/gpdl.git
+pip install git+https://github.com/Villoh/goopdl.git
 ```
 
 In a **Dockerfile**:
 
 ```dockerfile
-RUN pip3 install git+https://github.com/appknox/gpdl.git
+RUN pip3 install git+https://github.com/Villoh/goopdl.git
 ```
 
 To pin to a specific release tag or commit (recommended for production):
 
 ```dockerfile
-RUN pip3 install git+https://github.com/appknox/gpdl.git@v2.0.0
+RUN pip3 install git+https://github.com/Villoh/goopdl.git@v2.0.0
 # or by commit SHA:
-RUN pip3 install git+https://github.com/appknox/gpdl.git@46d0b1f
+RUN pip3 install git+https://github.com/Villoh/goopdl.git@46d0b1f
 ```
 
 In a **`requirements.txt`**:
 
 ```
-git+https://github.com/appknox/gpdl.git
+git+https://github.com/Villoh/goopdl.git
 ```
 
 ---
@@ -57,11 +57,11 @@ git+https://github.com/appknox/gpdl.git
 
 **Requirements:** Python 3.9+, [uv](https://github.com/astral-sh/uv)
 
-This package is not published to PyPI. Install directly from source:
+Or install from source:
 
 ```bash
-git clone https://github.com/appknox/gpdl.git
-cd gpdl
+git clone https://github.com/Villoh/goopdl.git
+cd goopdl
 uv sync
 uv pip install .
 ```
@@ -70,26 +70,26 @@ uv pip install .
 
 ```bash
 # 1. Get an auth token (automatic, anonymous)
-uv run gpdl auth
+uv run goopdl auth
 
 # 2. Download an app (base APK only)
-uv run gpdl download com.whatsapp
+uv run goopdl download com.whatsapp
 ```
 
-All commands below use `uv run gpdl ...`. If you activate the virtual environment (`source .venv/bin/activate`) you can drop the `uv run` prefix.
+All commands below use `uv run goopdl ...`. If you activate the virtual environment (`source .venv/bin/activate`) you can drop the `uv run` prefix.
 
 ## Commands
 
 ### `auth` — Acquire an authentication token
 
 ```bash
-gpdl auth                                   # Default (arm64)
-gpdl auth --arch armv7                      # Token for older ARM devices
-gpdl auth -d https://my-server/api          # Use a custom dispenser
-gpdl auth --clear                           # Remove all cached tokens
-gpdl auth --country IN                      # Register device with India MCC/MNC
-gpdl auth --proxy socks5://host:1080        # Route dispenser call through proxy
-gpdl auth --profile "Galaxy S25 Ultra"      # Use a specific device profile
+goopdl auth                                   # Default (arm64)
+goopdl auth --arch armv7                      # Token for older ARM devices
+goopdl auth -d https://my-server/api          # Use a custom dispenser
+goopdl auth --clear                           # Remove all cached tokens
+goopdl auth --country IN                      # Register device with India MCC/MNC
+goopdl auth --proxy socks5://host:1080        # Route dispenser call through proxy
+goopdl auth --profile "Galaxy S25 Ultra"      # Use a specific device profile
 ```
 
 | Flag | Short | Default | Description |
@@ -99,21 +99,21 @@ gpdl auth --profile "Galaxy S25 Ultra"      # Use a specific device profile
 | `--clear` | | `false` | Remove all cached tokens |
 | `--country` | `-c` | — | 2-letter country code; registers device with that region's MCC/MNC |
 | `--proxy` | `-p` | — | Proxy URL for dispenser calls (e.g. `socks5://host:port`) |
-| `--profile` | | — | Device profile key or name substring (e.g. `Pv` or `Samsung`). Run `gpdl profiles` to list all |
+| `--profile` | | — | Device profile key or name substring (e.g. `Pv` or `Samsung`). Run `goopdl profiles` to list all |
 
-Tokens are cached at `~/.config/gpdl/auth-{arch}.json` and reused automatically by other commands.
+Tokens are cached at `~/.config/goopdl/auth-{arch}.json` and reused automatically by other commands.
 
 #### Direct Google account authentication
 
 Set both environment variables to bypass Aurora's dispenser and authenticate directly with Google:
 
 ```bash
-export GPDL_ACCOUNT_EMAIL="account@example.com"
-export GPDL_AAS_TOKEN="your-aas-token"
-gpdl download com.whatsapp
+export GOOPDL_ACCOUNT_EMAIL="account@example.com"
+export GOOPDL_AAS_TOKEN="your-aas-token"
+goopdl download com.whatsapp
 ```
 
-No CLI flags, config files, or secret files are used. The AAS token is a persistent sensitive credential; changing the Google account password invalidates it. Temporary Google Play bearer tokens are kept in memory and never cached. If only one variable is configured, gpdl fails without falling back to anonymous authentication.
+No CLI flags, config files, or secret files are used. The AAS token is a persistent sensitive credential; changing the Google account password invalidates it. Temporary Google Play bearer tokens are kept in memory and never cached. If only one variable is configured, goopdl fails without falling back to anonymous authentication.
 
 ---
 
@@ -123,10 +123,10 @@ No CLI flags, config files, or secret files are used. The AAS token is a persist
 
 ```bash
 # Interactive: asks for email and hides password input
-gpdl aastoken
+goopdl aastoken
 
 # Arguments: convenient, but password remains in shell history
-gpdl aastoken user@example.com password
+goopdl aastoken user@example.com password
 ```
 
 Google commonly rejects both account passwords and 16-character app passwords with `BadAuthentication`. Keep 2-Step Verification enabled and use OAuth mode instead.
@@ -134,7 +134,7 @@ Google commonly rejects both account passwords and 16-character app passwords wi
 #### OAuth mode (recommended)
 
 ```bash
-gpdl aastoken --oauth
+goopdl aastoken --oauth
 ```
 
 Get the required one-time `oauth_token`:
@@ -145,7 +145,7 @@ Get the required one-time `oauth_token`:
 4. Open browser developer tools (`F12`).
 5. In Chrome or Edge, open **Application → Cookies → `https://accounts.google.com`**.
 6. Copy the value of the `oauth_token` cookie. It starts with `oauth2_4/`.
-7. Run `gpdl aastoken --oauth`, enter the same email, then paste the token. Both inputs are handled interactively and the token is hidden.
+7. Run `goopdl aastoken --oauth`, enter the same email, then paste the token. Both inputs are handled interactively and the token is hidden.
 
 The `oauth_token` is short-lived and single-use. The resulting AAS token is printed to the console. Credentials and tokens are used in memory only; no `credentials.txt` or `token.txt` files are created.
 
@@ -156,12 +156,12 @@ The `oauth_token` is short-lived and single-use. The resulting AAS token is prin
 Probes multiple fresh GSF IDs (Google Services Framework IDs) from the token dispenser. Because Google stages rollouts by device cohort (tied to the GSF ID), sampling many IDs and taking the maximum version gives the most accurate latest version available.
 
 ```bash
-gpdl latest com.instagram.android
-gpdl latest com.instagram.android --stable 5
-gpdl latest com.instagram.android --profile "Galaxy S25 Ultra"
-gpdl latest com.instagram.android --country IN
-gpdl latest com.instagram.android --proxy socks5://host:1080
-gpdl latest com.instagram.android -s 4 -c US -p socks5://host:1080
+goopdl latest com.instagram.android
+goopdl latest com.instagram.android --stable 5
+goopdl latest com.instagram.android --profile "Galaxy S25 Ultra"
+goopdl latest com.instagram.android --country IN
+goopdl latest com.instagram.android --proxy socks5://host:1080
+goopdl latest com.instagram.android -s 4 -c US -p socks5://host:1080
 ```
 
 | Flag | Short | Default | Description |
@@ -173,7 +173,7 @@ gpdl latest com.instagram.android -s 4 -c US -p socks5://host:1080
 | `--proxy` | `-p` | — | Proxy URL for dispenser + FDFE calls (e.g. `socks5://host:port`) |
 | `--arch` | | `arm64` | Architecture for token acquisition |
 
-**How the pool works:** The tool maintains a regional pool of 5 GSF ID / token pairs on disk (`~/.config/gpdl/token-pool-{arch}-{country}.json`). Before every `latest` or `download` call, it checks how many valid (unexpired) tokens exist in that region's pool and fetches only the deficit from Aurora's dispenser — so if the pool is already full, zero dispenser calls are made. Tokens are valid for 50 minutes. If a token dies mid-request (HTTP 401), it is automatically replaced in the pool.
+**How the pool works:** The tool maintains a regional pool of 5 GSF ID / token pairs on disk (`~/.config/goopdl/token-pool-{arch}-{country}.json`). Before every `latest` or `download` call, it checks how many valid (unexpired) tokens exist in that region's pool and fetches only the deficit from Aurora's dispenser — so if the pool is already full, zero dispenser calls are made. Tokens are valid for 50 minutes. If a token dies mid-request (HTTP 401), it is automatically replaced in the pool.
 
 **How convergence works:** After each probe, if the best version code seen so far hasn't increased for `--stable` consecutive probes, the command stops early.
 
@@ -186,17 +186,17 @@ gpdl latest com.instagram.android -s 4 -c US -p socks5://host:1080
 By default, `download` fetches the base APK, all split APKs, and any additional files (OBB expansion files, Play Asset Delivery packs).
 
 ```bash
-gpdl download com.whatsapp                          # Everything (base + splits + extras)
-gpdl download com.whatsapp -o ./apks                # Custom output directory
-gpdl download com.whatsapp -a armv7                 # ARMv7 build
-gpdl download com.whatsapp -v 231205015             # Specific version code
-gpdl download com.instagram.android -v 434.0.0.44.74  # Specific version string
-gpdl download com.whatsapp --no-splits              # Skip split APKs
-gpdl download com.whatsapp --no-extras              # Skip OBB / asset packs
-gpdl download com.whatsapp -d https://...           # Use custom dispenser
-gpdl download com.whatsapp --country IN             # Country header for regional variant
-gpdl download com.whatsapp --proxy socks5://host:1080  # Route through proxy
-gpdl download com.whatsapp --profile "Galaxy S25 Ultra"  # Specific device profile
+goopdl download com.whatsapp                          # Everything (base + splits + extras)
+goopdl download com.whatsapp -o ./apks                # Custom output directory
+goopdl download com.whatsapp -a armv7                 # ARMv7 build
+goopdl download com.whatsapp -v 231205015             # Specific version code
+goopdl download com.instagram.android -v 434.0.0.44.74  # Specific version string
+goopdl download com.whatsapp --no-splits              # Skip split APKs
+goopdl download com.whatsapp --no-extras              # Skip OBB / asset packs
+goopdl download com.whatsapp -d https://...           # Use custom dispenser
+goopdl download com.whatsapp --country IN             # Country header for regional variant
+goopdl download com.whatsapp --proxy socks5://host:1080  # Route through proxy
+goopdl download com.whatsapp --profile "Galaxy S25 Ultra"  # Specific device profile
 ```
 
 | Flag | Short | Default | Description |
@@ -209,7 +209,7 @@ gpdl download com.whatsapp --profile "Galaxy S25 Ultra"  # Specific device profi
 | `--no-extras` | | `false` | Skip downloading OBB files and asset packs |
 | `--country` | `-c` | — | 2-letter country code (e.g. `IN`, `US`). Combine with `--proxy` for true regional APK variants |
 | `--proxy` | `-p` | — | Proxy URL for FDFE calls (e.g. `socks5://host:port` or `http://host:port`) |
-| `--profile` | | — | Device profile key or name substring (e.g. `D2` or `Samsung`). Run `gpdl profiles` to list all |
+| `--profile` | | — | Device profile key or name substring (e.g. `D2` or `Samsung`). Run `goopdl profiles` to list all |
 
 **Output files:**
 
@@ -231,10 +231,10 @@ adb install-multiple *.apk
 ### `info` — Show app details
 
 ```bash
-gpdl info com.whatsapp
-gpdl info com.whatsapp --country IN
-gpdl info com.whatsapp --proxy socks5://host:1080
-gpdl info com.whatsapp --profile "Galaxy S25 Ultra"
+goopdl info com.whatsapp
+goopdl info com.whatsapp --country IN
+goopdl info com.whatsapp --proxy socks5://host:1080
+goopdl info com.whatsapp --profile "Galaxy S25 Ultra"
 ```
 
 | Flag | Short | Default | Description |
@@ -252,9 +252,9 @@ Displays app name, version, developer, rating, download count, and Play Store UR
 ### `search` — Search for apps
 
 ```bash
-gpdl search "whatsapp"
-gpdl search "file manager" --limit 5
-gpdl search "whatsapp" --country IN
+goopdl search "whatsapp"
+goopdl search "file manager" --limit 5
+goopdl search "whatsapp" --country IN
 ```
 
 | Flag | Short | Default | Description |
@@ -271,7 +271,7 @@ gpdl search "whatsapp" --country IN
 ### `list-splits` — List available split APKs
 
 ```bash
-gpdl list-splits com.whatsapp
+goopdl list-splits com.whatsapp
 ```
 
 | Flag | Short | Default | Description |
@@ -286,9 +286,9 @@ Shows all split APK names (config splits, language splits, etc.) without downloa
 ### `profiles` — List device profiles
 
 ```bash
-gpdl profiles           # All profiles
-gpdl profiles --arch arm64   # ARM64 only
-gpdl profiles --arch armv7   # ARMv7 only
+goopdl profiles           # All profiles
+goopdl profiles --arch arm64   # ARM64 only
+goopdl profiles --arch armv7   # ARMv7 only
 ```
 
 Use the **Key** column value with `--profile` in any command.
@@ -298,8 +298,8 @@ Use the **Key** column value with `--profile` in any command.
 After `uv sync`, you can also invoke via the module directly:
 
 ```bash
-uv run python -m gpdl auth
-uv run python -m gpdl download com.whatsapp
+uv run python -m goopdl auth
+uv run python -m goopdl download com.whatsapp
 ```
 
 ## How It Works
@@ -317,7 +317,7 @@ Google stages app rollouts by device cohort, which is determined by the GSF ID (
 The `latest` command exploits this by sampling multiple fresh GSF IDs and reporting the highest version code seen:
 
 ```bash
-gpdl latest com.instagram.android --probes 10 --stable 3
+goopdl latest com.instagram.android --probes 10 --stable 3
 ```
 
 - Each probe fetches a fresh token → fresh GSF ID → queries Play Store for that cohort's version
@@ -331,17 +331,17 @@ The tool uses [Aurora Store's](https://auroraoss.com/) public token dispenser by
 You can point to a custom/self-hosted dispenser with the `--dispenser` / `-d` flag on any command:
 
 ```bash
-gpdl auth -d https://my-dispenser.example.com/api/auth
-gpdl download com.whatsapp -d https://my-dispenser.example.com/api/auth
+goopdl auth -d https://my-dispenser.example.com/api/auth
+goopdl download com.whatsapp -d https://my-dispenser.example.com/api/auth
 ```
 
 ## Device Profiles
 
 The tool includes multiple device profiles, used to authenticate with Google Play's token dispenser. Profiles are rotated automatically during token acquisition to maximise compatibility.
 
-Run `gpdl profiles` to see all available profiles and their keys. Use `--profile` with any command to pin a specific device.
+Run `goopdl profiles` to see all available profiles and their keys. Use `--profile` with any command to pin a specific device.
 
-Profiles are stored as `.properties` files in the `gpdl/profiles/` directory.
+Profiles are stored as `.properties` files in the `goopdl/profiles/` directory.
 
 ## Architecture Support
 

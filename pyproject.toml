@@ -3,7 +3,7 @@ requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "gpdl"
+name = "goopdl"
 version = "0.0.0"
 description = "Download APKs from Google Play Store with anonymous authentication"
 readme = "README.md"
@@ -21,15 +21,15 @@ classifiers = [
 dependencies = ["typer>=0.9.0", "rich>=13.0.0", "httpx>=0.27.0"]
 
 [project.scripts]
-gpdl = "gpdl.cli:app"
+goopdl = "goopdl.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/Villoh/gpdl"
-Repository = "https://github.com/Villoh/gpdl"
-Issues = "https://github.com/Villoh/gpdl/issues"
+Homepage = "https://github.com/Villoh/goopdl"
+Repository = "https://github.com/Villoh/goopdl"
+Issues = "https://github.com/Villoh/goopdl/issues"
 
 [tool.setuptools.packages.find]
-include = ["gpdl*"]
+include = ["goopdl*"]
 
 [tool.setuptools.package-data]
-gpdl = ["profiles/*.properties"]
+goopdl = ["profiles/*.properties"]

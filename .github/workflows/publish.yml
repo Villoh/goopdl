@@ -30,7 +30,7 @@ jobs:
         run: |
           VERSION="${INPUT_VERSION:-${GITHUB_REF_NAME#v}}"
           sed -i "s/version = \"0.0.0\"/version = \"$VERSION\"/" pyproject.toml
-          sed -i "s/__version__ = \"0.0.0\"/__version__ = \"$VERSION\"/" gpdl/__init__.py
+          sed -i "s/__version__ = \"0.0.0\"/__version__ = \"$VERSION\"/" goopdl/__init__.py
 
       - name: Install build tools
         run: pip install build
@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/gpdl
+      url: https://pypi.org/p/goopdl
     permissions:
       id-token: write
     steps:

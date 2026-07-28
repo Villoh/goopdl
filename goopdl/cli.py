@@ -14,8 +14,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from gpdl import __version__
-from gpdl.api import (
+from goopdl import __version__
+from goopdl.api import (
     AuthExpiredError,
     PlayAPIError,
     VersionUnavailableError,
@@ -29,8 +29,8 @@ from gpdl.api import (
     purchase,
     search_apps,
 )
-from gpdl.aastoken import AASTokenError, fetch_aas_token
-from gpdl.auth import (
+from goopdl.aastoken import AASTokenError, fetch_aas_token
+from goopdl.auth import (
     clear_auth,
     DEFAULT_PROBES,
     DirectAuthConfigurationError,
@@ -42,13 +42,13 @@ from gpdl.auth import (
     replace_pool_token,
     save_auth,
 )
-from gpdl.profiles import (
+from goopdl.profiles import (
     ARM64_PROFILES,
     ARMV7_PROFILES,
     find_profile,
     get_latest_probe_profiles,
 )
-from gpdl.download import DownloadSpec, download_batch
+from goopdl.download import DownloadSpec, download_batch
 
 console = Console()
 err = Console(stderr=True)
@@ -60,7 +60,7 @@ VERSION_UNAVAILABLE_EXIT_CODE = 4
 
 
 app = typer.Typer(
-    name="gpdl",
+    name="goopdl",
     help="Download APKs from Google Play Store.",
     add_completion=False,
     no_args_is_help=True,
@@ -69,7 +69,7 @@ app = typer.Typer(
 
 def _version_callback(value: bool) -> None:
     if value:
-        rprint(f"gpdl [bold]{__version__}[/bold]")
+        rprint(f"goopdl [bold]{__version__}[/bold]")
         raise typer.Exit()
 
 
@@ -124,7 +124,7 @@ def auth(
     profile: Optional[str] = typer.Option(
         None,
         "--profile",
-        help="Device profile key or name substring (e.g. 'Pv' or 'samsung'). Run 'gpdl profiles' to list all.",
+        help="Device profile key or name substring (e.g. 'Pv' or 'samsung'). Run 'goopdl profiles' to list all.",
     ),
 ) -> None:
     """Acquire a Google Play auth token.
@@ -221,7 +221,7 @@ def aastoken(
         if str(exc) == "BadAuthentication":
             err.print(
                 "[yellow]Google rejected password authentication. Use "
-                "[bold]gpdl aastoken --oauth[/bold] with an EmbeddedSetup "
+                "[bold]goopdl aastoken --oauth[/bold] with an EmbeddedSetup "
                 "oauth_token.[/yellow]"
             )
         raise typer.Exit(code=1)
@@ -424,7 +424,7 @@ def info(
     profile: Optional[str] = typer.Option(
         None,
         "--profile",
-        help="Device profile key or name substring (e.g. 'D2' or 'samsung'). Run 'gpdl profiles' to list all.",
+        help="Device profile key or name substring (e.g. 'D2' or 'samsung'). Run 'goopdl profiles' to list all.",
     ),
     raw: bool = typer.Option(
         False, "--raw", "-r", help="Print full decoded protobuf response as JSON."
@@ -873,7 +873,7 @@ def fast_download(
         raise typer.Exit(code=1)
 
     # soft_wrap: a long --output path must never get line-broken here — scripts
-    # (e.g. the Airflow gpdl fallback) parse this exact line from stdout.
+    # (e.g. the Airflow goopdl fallback) parse this exact line from stdout.
     console.print(
         f"[green bold]Downloaded[/green bold] {path}  [dim]({version_string})[/dim]",
         soft_wrap=True,
@@ -911,7 +911,7 @@ def _require_auth(
     if not data:
         err.print(
             "[red]Could not obtain an auth token. "
-            "Try running [bold]gpdl auth[/bold] first.[/red]"
+            "Try running [bold]goopdl auth[/bold] first.[/red]"
         )
         raise typer.Exit(code=1)
     return data

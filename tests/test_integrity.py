@@ -8,8 +8,8 @@ from pathlib import Path
 
 import httpx
 
-from gpdl.api import _extract_delivery_from_fields
-from gpdl.download import (
+from goopdl.api import _extract_delivery_from_fields
+from goopdl.download import (
     DownloadSpec,
     IntegrityError,
     _download_one,
