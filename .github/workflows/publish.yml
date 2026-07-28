@@ -17,6 +17,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.set_version.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
 
@@ -25,12 +27,14 @@ jobs:
           python-version: "3.12"
 
       - name: Set version from tag
+        id: set_version
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
           VERSION="${INPUT_VERSION:-${GITHUB_REF_NAME#v}}"
           sed -i "s/version = \"0.0.0\"/version = \"$VERSION\"/" pyproject.toml
           sed -i "s/__version__ = \"0.0.0\"/__version__ = \"$VERSION\"/" goopdl/__init__.py
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Install build tools
         run: pip install build
@@ -72,6 +76,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Download artifacts
         uses: actions/download-artifact@v8
@@ -79,7 +85,20 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Create GitHub Release
+      - name: Get previous tag
+        id: previous
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" dist/* --generate-notes
+          CURRENT_TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          PREV=$(git describe --tags --abbrev=0 "$CURRENT_TAG^" \
+            2>/dev/null || echo "")
+          echo "tag=$PREV" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        # v3
+        uses: >-
+          softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
+        with:
+          tag_name: ${{ needs.build.outputs.tag }}
+          previous_tag: ${{ steps.previous.outputs.tag }}
+          generate_release_notes: true
