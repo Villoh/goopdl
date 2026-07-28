@@ -6,6 +6,22 @@ Download APKs from Google Play Store using anonymous authentication. Downloads b
 
 ## Install
 
+As a global CLI tool (recommended — isolated environment, `goopdl` on your PATH):
+
+```bash
+uv tool install goopdl
+# or
+pipx install goopdl
+```
+
+Run it once without installing:
+
+```bash
+uvx goopdl --help
+```
+
+As a library or into the current environment:
+
 ```bash
 pip install goopdl
 ```
@@ -25,39 +41,29 @@ pip install goopdl
 
 ## Deployment / Integration
 
-For servers, Docker images, or any environment that uses `pip` directly:
-
-```bash
-pip install git+https://github.com/Villoh/goopdl.git
-```
-
-In a **Dockerfile**:
+In a **Dockerfile**, pin an exact version (recommended for production):
 
 ```dockerfile
-RUN pip3 install git+https://github.com/Villoh/goopdl.git
-```
-
-To pin to a specific release tag or commit (recommended for production):
-
-```dockerfile
-RUN pip3 install git+https://github.com/Villoh/goopdl.git@v2.0.0
-# or by commit SHA:
-RUN pip3 install git+https://github.com/Villoh/goopdl.git@46d0b1f
+RUN pip3 install goopdl==1.0.0
 ```
 
 In a **`requirements.txt`**:
 
 ```
-git+https://github.com/Villoh/goopdl.git
+goopdl==1.0.0
+```
+
+To track unreleased changes, install straight from git:
+
+```bash
+pip install git+https://github.com/Villoh/goopdl.git
 ```
 
 ---
 
-## Installation
+## From source
 
 **Requirements:** Python 3.9+, [uv](https://github.com/astral-sh/uv)
-
-Or install from source:
 
 ```bash
 git clone https://github.com/Villoh/goopdl.git
