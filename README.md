@@ -1,8 +1,16 @@
-# gplaydl
+# gpdl
 
 Download APKs from Google Play Store using anonymous authentication. Downloads base APKs, split APKs (App Bundles), OBB expansion files, and Play Asset Delivery packs — all by default.
 
 > **v2.0 — Complete Rewrite.** Ground-up rewrite with a new CLI, pure-Python protobuf decoding (no `gpapi` dependency), and automatic token management.
+
+> Originally derived from [rehmatworks/gplaydl](https://github.com/rehmatworks/gplaydl) (MIT). Now an independent project.
+
+## Install
+
+```bash
+pip install gpdl
+```
 
 ## Features
 
@@ -22,27 +30,27 @@ Download APKs from Google Play Store using anonymous authentication. Downloads b
 For servers, Docker images, or any environment that uses `pip` directly:
 
 ```bash
-pip install git+https://github.com/appknox/gplaydl.git
+pip install git+https://github.com/appknox/gpdl.git
 ```
 
 In a **Dockerfile**:
 
 ```dockerfile
-RUN pip3 install git+https://github.com/appknox/gplaydl.git
+RUN pip3 install git+https://github.com/appknox/gpdl.git
 ```
 
 To pin to a specific release tag or commit (recommended for production):
 
 ```dockerfile
-RUN pip3 install git+https://github.com/appknox/gplaydl.git@v2.0.0
+RUN pip3 install git+https://github.com/appknox/gpdl.git@v2.0.0
 # or by commit SHA:
-RUN pip3 install git+https://github.com/appknox/gplaydl.git@46d0b1f
+RUN pip3 install git+https://github.com/appknox/gpdl.git@46d0b1f
 ```
 
 In a **`requirements.txt`**:
 
 ```
-git+https://github.com/appknox/gplaydl.git
+git+https://github.com/appknox/gpdl.git
 ```
 
 ---
@@ -54,8 +62,8 @@ git+https://github.com/appknox/gplaydl.git
 This package is not published to PyPI. Install directly from source:
 
 ```bash
-git clone https://github.com/appknox/gplaydl.git
-cd gplaydl
+git clone https://github.com/appknox/gpdl.git
+cd gpdl
 uv sync
 uv pip install .
 ```
@@ -64,50 +72,50 @@ uv pip install .
 
 ```bash
 # 1. Get an auth token (automatic, anonymous)
-uv run gplaydl auth
+uv run gpdl auth
 
 # 2. Download an app (base APK only)
-uv run gplaydl download com.whatsapp
+uv run gpdl download com.whatsapp
 ```
 
-All commands below use `uv run gplaydl ...`. If you activate the virtual environment (`source .venv/bin/activate`) you can drop the `uv run` prefix.
+All commands below use `uv run gpdl ...`. If you activate the virtual environment (`source .venv/bin/activate`) you can drop the `uv run` prefix.
 
 ## Commands
 
 ### `auth` — Acquire an authentication token
 
 ```bash
-gplaydl auth                                   # Default (arm64)
-gplaydl auth --arch armv7                      # Token for older ARM devices
-gplaydl auth -d https://my-server/api          # Use a custom dispenser
-gplaydl auth --clear                           # Remove all cached tokens
-gplaydl auth --country IN                      # Register device with India MCC/MNC
-gplaydl auth --proxy socks5://host:1080        # Route dispenser call through proxy
-gplaydl auth --profile "Galaxy S25 Ultra"      # Use a specific device profile
+gpdl auth                                   # Default (arm64)
+gpdl auth --arch armv7                      # Token for older ARM devices
+gpdl auth -d https://my-server/api          # Use a custom dispenser
+gpdl auth --clear                           # Remove all cached tokens
+gpdl auth --country IN                      # Register device with India MCC/MNC
+gpdl auth --proxy socks5://host:1080        # Route dispenser call through proxy
+gpdl auth --profile "Galaxy S25 Ultra"      # Use a specific device profile
 ```
 
 | Flag | Short | Default | Description |
-|------|-------|---------|-------------|
+| ------ | ------- | --------- | ------------- |
 | `--arch` | | `arm64` | Architecture: `arm64` or `armv7` |
 | `--dispenser` | `-d` | Aurora Store | Custom token dispenser URL |
 | `--clear` | | `false` | Remove all cached tokens |
 | `--country` | `-c` | — | 2-letter country code; registers device with that region's MCC/MNC |
 | `--proxy` | `-p` | — | Proxy URL for dispenser calls (e.g. `socks5://host:port`) |
-| `--profile` | | — | Device profile key or name substring (e.g. `Pv` or `Samsung`). Run `gplaydl profiles` to list all |
+| `--profile` | | — | Device profile key or name substring (e.g. `Pv` or `Samsung`). Run `gpdl profiles` to list all |
 
-Tokens are cached at `~/.config/gplaydl/auth-{arch}.json` and reused automatically by other commands.
+Tokens are cached at `~/.config/gpdl/auth-{arch}.json` and reused automatically by other commands.
 
 #### Direct Google account authentication
 
 Set both environment variables to bypass Aurora's dispenser and authenticate directly with Google:
 
 ```bash
-export GPLAYDL_ACCOUNT_EMAIL="account@example.com"
-export GPLAYDL_AAS_TOKEN="your-aas-token"
-gplaydl download com.whatsapp
+export GPDL_ACCOUNT_EMAIL="account@example.com"
+export GPDL_AAS_TOKEN="your-aas-token"
+gpdl download com.whatsapp
 ```
 
-No CLI flags, config files, or secret files are used. The AAS token is a persistent sensitive credential; changing the Google account password invalidates it. Temporary Google Play bearer tokens are kept in memory and never cached. If only one variable is configured, gplaydl fails without falling back to anonymous authentication.
+No CLI flags, config files, or secret files are used. The AAS token is a persistent sensitive credential; changing the Google account password invalidates it. Temporary Google Play bearer tokens are kept in memory and never cached. If only one variable is configured, gpdl fails without falling back to anonymous authentication.
 
 ---
 
@@ -117,10 +125,10 @@ No CLI flags, config files, or secret files are used. The AAS token is a persist
 
 ```bash
 # Interactive: asks for email and hides password input
-gplaydl aastoken
+gpdl aastoken
 
 # Arguments: convenient, but password remains in shell history
-gplaydl aastoken user@example.com password
+gpdl aastoken user@example.com password
 ```
 
 Google commonly rejects both account passwords and 16-character app passwords with `BadAuthentication`. Keep 2-Step Verification enabled and use OAuth mode instead.
@@ -128,7 +136,7 @@ Google commonly rejects both account passwords and 16-character app passwords wi
 #### OAuth mode (recommended)
 
 ```bash
-gplaydl aastoken --oauth
+gpdl aastoken --oauth
 ```
 
 Get the required one-time `oauth_token`:
@@ -139,7 +147,7 @@ Get the required one-time `oauth_token`:
 4. Open browser developer tools (`F12`).
 5. In Chrome or Edge, open **Application → Cookies → `https://accounts.google.com`**.
 6. Copy the value of the `oauth_token` cookie. It starts with `oauth2_4/`.
-7. Run `gplaydl aastoken --oauth`, enter the same email, then paste the token. Both inputs are handled interactively and the token is hidden.
+7. Run `gpdl aastoken --oauth`, enter the same email, then paste the token. Both inputs are handled interactively and the token is hidden.
 
 The `oauth_token` is short-lived and single-use. The resulting AAS token is printed to the console. Credentials and tokens are used in memory only; no `credentials.txt` or `token.txt` files are created.
 
@@ -150,16 +158,16 @@ The `oauth_token` is short-lived and single-use. The resulting AAS token is prin
 Probes multiple fresh GSF IDs (Google Services Framework IDs) from the token dispenser. Because Google stages rollouts by device cohort (tied to the GSF ID), sampling many IDs and taking the maximum version gives the most accurate latest version available.
 
 ```bash
-gplaydl latest com.instagram.android
-gplaydl latest com.instagram.android --stable 5
-gplaydl latest com.instagram.android --profile "Galaxy S25 Ultra"
-gplaydl latest com.instagram.android --country IN
-gplaydl latest com.instagram.android --proxy socks5://host:1080
-gplaydl latest com.instagram.android -s 4 -c US -p socks5://host:1080
+gpdl latest com.instagram.android
+gpdl latest com.instagram.android --stable 5
+gpdl latest com.instagram.android --profile "Galaxy S25 Ultra"
+gpdl latest com.instagram.android --country IN
+gpdl latest com.instagram.android --proxy socks5://host:1080
+gpdl latest com.instagram.android -s 4 -c US -p socks5://host:1080
 ```
 
 | Flag | Short | Default | Description |
-|------|-------|---------|-------------|
+| ------ | ------- | --------- | ------------- |
 | `--stable` | `-s` | `3` | Stop early when the highest version code is unchanged for this many consecutive probes |
 | `--profile` | | top-ranked | Device profile for all probes (e.g. `Galaxy S25 Ultra`). Defaults to the highest SDK + Vending version profile |
 | `--country` | `-c` | — | 2-letter country code sent with FDFE requests |
@@ -167,7 +175,7 @@ gplaydl latest com.instagram.android -s 4 -c US -p socks5://host:1080
 | `--proxy` | `-p` | — | Proxy URL for dispenser + FDFE calls (e.g. `socks5://host:port`) |
 | `--arch` | | `arm64` | Architecture for token acquisition |
 
-**How the pool works:** The tool maintains a regional pool of 5 GSF ID / token pairs on disk (`~/.config/gplaydl/token-pool-{arch}-{country}.json`). Before every `latest` or `download` call, it checks how many valid (unexpired) tokens exist in that region's pool and fetches only the deficit from Aurora's dispenser — so if the pool is already full, zero dispenser calls are made. Tokens are valid for 50 minutes. If a token dies mid-request (HTTP 401), it is automatically replaced in the pool.
+**How the pool works:** The tool maintains a regional pool of 5 GSF ID / token pairs on disk (`~/.config/gpdl/token-pool-{arch}-{country}.json`). Before every `latest` or `download` call, it checks how many valid (unexpired) tokens exist in that region's pool and fetches only the deficit from Aurora's dispenser — so if the pool is already full, zero dispenser calls are made. Tokens are valid for 50 minutes. If a token dies mid-request (HTTP 401), it is automatically replaced in the pool.
 
 **How convergence works:** After each probe, if the best version code seen so far hasn't increased for `--stable` consecutive probes, the command stops early.
 
@@ -180,21 +188,21 @@ gplaydl latest com.instagram.android -s 4 -c US -p socks5://host:1080
 By default, `download` fetches the base APK, all split APKs, and any additional files (OBB expansion files, Play Asset Delivery packs).
 
 ```bash
-gplaydl download com.whatsapp                          # Everything (base + splits + extras)
-gplaydl download com.whatsapp -o ./apks                # Custom output directory
-gplaydl download com.whatsapp -a armv7                 # ARMv7 build
-gplaydl download com.whatsapp -v 231205015             # Specific version code
-gplaydl download com.instagram.android -v 434.0.0.44.74  # Specific version string
-gplaydl download com.whatsapp --no-splits              # Skip split APKs
-gplaydl download com.whatsapp --no-extras              # Skip OBB / asset packs
-gplaydl download com.whatsapp -d https://...           # Use custom dispenser
-gplaydl download com.whatsapp --country IN             # Country header for regional variant
-gplaydl download com.whatsapp --proxy socks5://host:1080  # Route through proxy
-gplaydl download com.whatsapp --profile "Galaxy S25 Ultra"  # Specific device profile
+gpdl download com.whatsapp                          # Everything (base + splits + extras)
+gpdl download com.whatsapp -o ./apks                # Custom output directory
+gpdl download com.whatsapp -a armv7                 # ARMv7 build
+gpdl download com.whatsapp -v 231205015             # Specific version code
+gpdl download com.instagram.android -v 434.0.0.44.74  # Specific version string
+gpdl download com.whatsapp --no-splits              # Skip split APKs
+gpdl download com.whatsapp --no-extras              # Skip OBB / asset packs
+gpdl download com.whatsapp -d https://...           # Use custom dispenser
+gpdl download com.whatsapp --country IN             # Country header for regional variant
+gpdl download com.whatsapp --proxy socks5://host:1080  # Route through proxy
+gpdl download com.whatsapp --profile "Galaxy S25 Ultra"  # Specific device profile
 ```
 
 | Flag | Short | Default | Description |
-|------|-------|---------|-------------|
+| ------ | ------- | --------- | ------------- |
 | `--output` | `-o` | `.` (current dir) | Output directory |
 | `--arch` | `-a` | `arm64` | Architecture: `arm64` or `armv7` |
 | `--version` | `-v` | latest | Version code (e.g. `384009971`) **or** version string (e.g. `434.0.0.44.74`). When a version string is given, the tool probes fresh GSF IDs until it finds a cohort that sees that version |
@@ -203,12 +211,12 @@ gplaydl download com.whatsapp --profile "Galaxy S25 Ultra"  # Specific device pr
 | `--no-extras` | | `false` | Skip downloading OBB files and asset packs |
 | `--country` | `-c` | — | 2-letter country code (e.g. `IN`, `US`). Combine with `--proxy` for true regional APK variants |
 | `--proxy` | `-p` | — | Proxy URL for FDFE calls (e.g. `socks5://host:port` or `http://host:port`) |
-| `--profile` | | — | Device profile key or name substring (e.g. `D2` or `Samsung`). Run `gplaydl profiles` to list all |
+| `--profile` | | — | Device profile key or name substring (e.g. `D2` or `Samsung`). Run `gpdl profiles` to list all |
 
 **Output files:**
 
 | Type | Naming | Example |
-|------|--------|---------|
+| ------ | -------- | --------- |
 | Base APK | `{package}-{vc}.apk` | `com.whatsapp-231205015.apk` |
 | Split APK | `{package}-{vc}-{split}.apk` | `com.whatsapp-231205015-config.arm64_v8a.apk` |
 | OBB (main/patch) | `{type}.{vc}.{package}.obb` | `main.20925.com.tencent.ig.obb` |
@@ -225,14 +233,14 @@ adb install-multiple *.apk
 ### `info` — Show app details
 
 ```bash
-gplaydl info com.whatsapp
-gplaydl info com.whatsapp --country IN
-gplaydl info com.whatsapp --proxy socks5://host:1080
-gplaydl info com.whatsapp --profile "Galaxy S25 Ultra"
+gpdl info com.whatsapp
+gpdl info com.whatsapp --country IN
+gpdl info com.whatsapp --proxy socks5://host:1080
+gpdl info com.whatsapp --profile "Galaxy S25 Ultra"
 ```
 
 | Flag | Short | Default | Description |
-|------|-------|---------|-------------|
+| ------ | ------- | --------- | ------------- |
 | `--arch` | | `arm64` | Architecture for token |
 | `--dispenser` | `-d` | Aurora Store | Custom token dispenser URL |
 | `--country` | `-c` | — | 2-letter country code; sets `gl=` and locale headers |
@@ -246,13 +254,13 @@ Displays app name, version, developer, rating, download count, and Play Store UR
 ### `search` — Search for apps
 
 ```bash
-gplaydl search "whatsapp"
-gplaydl search "file manager" --limit 5
-gplaydl search "whatsapp" --country IN
+gpdl search "whatsapp"
+gpdl search "file manager" --limit 5
+gpdl search "whatsapp" --country IN
 ```
 
 | Flag | Short | Default | Description |
-|------|-------|---------|-------------|
+| ------ | ------- | --------- | ------------- |
 | `--limit` | `-l` | `10` | Max results |
 | `--arch` | | `arm64` | Architecture for token |
 | `--dispenser` | `-d` | Aurora Store | Custom token dispenser URL |
@@ -265,7 +273,7 @@ gplaydl search "whatsapp" --country IN
 ### `list-splits` — List available split APKs
 
 ```bash
-gplaydl list-splits com.whatsapp
+gpdl list-splits com.whatsapp
 ```
 
 | Flag | Short | Default | Description |
@@ -280,9 +288,9 @@ Shows all split APK names (config splits, language splits, etc.) without downloa
 ### `profiles` — List device profiles
 
 ```bash
-gplaydl profiles           # All profiles
-gplaydl profiles --arch arm64   # ARM64 only
-gplaydl profiles --arch armv7   # ARMv7 only
+gpdl profiles           # All profiles
+gpdl profiles --arch arm64   # ARM64 only
+gpdl profiles --arch armv7   # ARMv7 only
 ```
 
 Use the **Key** column value with `--profile` in any command.
@@ -292,8 +300,8 @@ Use the **Key** column value with `--profile` in any command.
 After `uv sync`, you can also invoke via the module directly:
 
 ```bash
-uv run python -m gplaydl auth
-uv run python -m gplaydl download com.whatsapp
+uv run python -m gpdl auth
+uv run python -m gpdl download com.whatsapp
 ```
 
 ## How It Works
@@ -311,7 +319,7 @@ Google stages app rollouts by device cohort, which is determined by the GSF ID (
 The `latest` command exploits this by sampling multiple fresh GSF IDs and reporting the highest version code seen:
 
 ```bash
-gplaydl latest com.instagram.android --probes 10 --stable 3
+gpdl latest com.instagram.android --probes 10 --stable 3
 ```
 
 - Each probe fetches a fresh token → fresh GSF ID → queries Play Store for that cohort's version
@@ -325,17 +333,17 @@ The tool uses [Aurora Store's](https://auroraoss.com/) public token dispenser by
 You can point to a custom/self-hosted dispenser with the `--dispenser` / `-d` flag on any command:
 
 ```bash
-gplaydl auth -d https://my-dispenser.example.com/api/auth
-gplaydl download com.whatsapp -d https://my-dispenser.example.com/api/auth
+gpdl auth -d https://my-dispenser.example.com/api/auth
+gpdl download com.whatsapp -d https://my-dispenser.example.com/api/auth
 ```
 
 ## Device Profiles
 
 The tool includes multiple device profiles, used to authenticate with Google Play's token dispenser. Profiles are rotated automatically during token acquisition to maximise compatibility.
 
-Run `gplaydl profiles` to see all available profiles and their keys. Use `--profile` with any command to pin a specific device.
+Run `gpdl profiles` to see all available profiles and their keys. Use `--profile` with any command to pin a specific device.
 
-Profiles are stored as `.properties` files in the `gplaydl/profiles/` directory.
+Profiles are stored as `.properties` files in the `gpdl/profiles/` directory.
 
 ## Architecture Support
 

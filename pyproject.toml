@@ -1,15 +1,16 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "gplaydl"
+name = "gpdl"
 version = "0.0.0"
 description = "Download APKs from Google Play Store with anonymous authentication"
-readme = "readme.md"
+readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.9"
-authors = [{name = "Rehmat Alam", email = "contact@rehmat.works"}]
+authors = [{name = "Mikel Villota", email = "mikelvillotatic@gmail.com"}]
 keywords = ["google-play", "apk", "downloader", "android"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -24,13 +25,15 @@ dependencies = [
 ]
 
 [project.scripts]
-gplaydl = "gplaydl.cli:app"
+gpdl = "gpdl.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/rehmatworks/gplaydl"
+Homepage = "https://github.com/Villoh/gpdl"
+Repository = "https://github.com/Villoh/gpdl"
+Issues = "https://github.com/Villoh/gpdl/issues"
 
 [tool.setuptools.packages.find]
-include = ["gplaydl*"]
+include = ["gpdl*"]
 
 [tool.setuptools.package-data]
-gplaydl = ["profiles/*.properties"]
+gpdl = ["profiles/*.properties"]

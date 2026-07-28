@@ -7,8 +7,8 @@ from unittest.mock import Mock, patch
 
 from typer.testing import CliRunner
 
-from gplaydl.api import PlayAPIError, VersionUnavailableError, get_delivery
-from gplaydl.auth import (
+from gpdl.api import PlayAPIError, VersionUnavailableError, get_delivery
+from gpdl.auth import (
     DirectAuthConfigurationError,
     DirectAuthError,
     build_headers,
@@ -18,7 +18,7 @@ from gplaydl.auth import (
     pick_pool_token,
     replace_pool_token,
 )
-from gplaydl.cli import app
+from gpdl.cli import app
 
 
 def varint(value: int) -> bytes:
@@ -78,7 +78,7 @@ PROFILE = {
 
 
 class DirectAuthTest(unittest.TestCase):
-    @patch("gplaydl.api.httpx.get")
+    @patch("gpdl.api.httpx.get")
     def test_delivery_exposes_app_version_code_metadata(self, get: Mock) -> None:
         # Field 29 is delivery-internal OBB metadata, not a guarantee that it
         # equals the requested vc, so get_delivery must not assert equality.
@@ -95,7 +95,7 @@ class DirectAuthTest(unittest.TestCase):
         result = get_delivery("com.example.app", 1561052633, auth)
         self.assertEqual(result.version_code, 1561052632)
 
-    @patch("gplaydl.api.httpx.get")
+    @patch("gpdl.api.httpx.get")
     def test_delivery_404_is_version_unavailable(self, get: Mock) -> None:
         get.return_value = Mock(status_code=404, content=b"")
         auth = {"authToken": "temporary", "gsfId": "1234"}
@@ -105,17 +105,17 @@ class DirectAuthTest(unittest.TestCase):
     def test_environment_requires_both_values(self) -> None:
         cases = [
             ({}, False, None),
-            ({"GPLAYDL_ACCOUNT_EMAIL": "", "GPLAYDL_AAS_TOKEN": ""}, False, None),
+            ({"GPDL_ACCOUNT_EMAIL": "", "GPDL_AAS_TOKEN": ""}, False, None),
             (
-                {"GPLAYDL_ACCOUNT_EMAIL": "account@example.test"},
+                {"GPDL_ACCOUNT_EMAIL": "account@example.test"},
                 None,
-                "GPLAYDL_AAS_TOKEN",
+                "GPDL_AAS_TOKEN",
             ),
-            ({"GPLAYDL_AAS_TOKEN": "secret-token"}, None, "GPLAYDL_ACCOUNT_EMAIL"),
+            ({"GPDL_AAS_TOKEN": "secret-token"}, None, "GPDL_ACCOUNT_EMAIL"),
             (
                 {
-                    "GPLAYDL_ACCOUNT_EMAIL": "account@example.test",
-                    "GPLAYDL_AAS_TOKEN": "g.a000temporary",
+                    "GPDL_ACCOUNT_EMAIL": "account@example.test",
+                    "GPDL_AAS_TOKEN": "g.a000temporary",
                 },
                 None,
                 "must start with aas_et/",
@@ -132,10 +132,10 @@ class DirectAuthTest(unittest.TestCase):
                 else:
                     self.assertEqual(enabled, direct_auth_enabled())
 
-    @patch("gplaydl.auth.time.time", return_value=1_700_000_000)
-    @patch("gplaydl.auth.get_priority_profiles", return_value=[("test", PROFILE)])
-    @patch("gplaydl.auth.httpx.get")
-    @patch("gplaydl.auth.httpx.post")
+    @patch("gpdl.auth.time.time", return_value=1_700_000_000)
+    @patch("gpdl.auth.get_priority_profiles", return_value=[("test", PROFILE)])
+    @patch("gpdl.auth.httpx.get")
+    @patch("gpdl.auth.httpx.post")
     def test_direct_google_sequence_matches_aurora_aas_protocol(
         self, post: Mock, get: Mock, _profiles: Mock, _time: Mock
     ) -> None:
@@ -154,8 +154,8 @@ class DirectAuthTest(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "GPLAYDL_ACCOUNT_EMAIL": "account@example.test",
-                "GPLAYDL_AAS_TOKEN": "aas_et/persistent-secret",
+                "GPDL_ACCOUNT_EMAIL": "account@example.test",
+                "GPDL_AAS_TOKEN": "aas_et/persistent-secret",
             },
             clear=True,
         ):
@@ -333,8 +333,8 @@ class DirectAuthTest(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "GPLAYDL_ACCOUNT_EMAIL": "account@example.test",
-                "GPLAYDL_AAS_TOKEN": "aas_et/persistent-secret",
+                "GPDL_ACCOUNT_EMAIL": "account@example.test",
+                "GPDL_AAS_TOKEN": "aas_et/persistent-secret",
             },
             clear=True,
         ):
@@ -354,12 +354,12 @@ class DirectAuthTest(unittest.TestCase):
             patch.dict(
                 os.environ,
                 {
-                    "GPLAYDL_ACCOUNT_EMAIL": "account@example.test",
-                    "GPLAYDL_AAS_TOKEN": "aas_et/persistent-secret",
+                    "GPDL_ACCOUNT_EMAIL": "account@example.test",
+                    "GPDL_AAS_TOKEN": "aas_et/persistent-secret",
                 },
                 clear=True,
             ),
-            patch("gplaydl.auth.console.print") as console_print,
+            patch("gpdl.auth.console.print") as console_print,
         ):
             self.assertIsNone(fetch_token())
         output = " ".join(str(call) for call in console_print.call_args_list)
@@ -367,18 +367,18 @@ class DirectAuthTest(unittest.TestCase):
         self.assertNotIn("must-not-be-logged", output)
 
     @patch(
-        "gplaydl.auth._direct_auth",
+        "gpdl.auth._direct_auth",
         side_effect=DirectAuthError("checkin (HTTP 403)"),
     )
-    @patch("gplaydl.auth.console.print")
+    @patch("gpdl.auth.console.print")
     def test_direct_failure_reports_safe_stage(
         self, console_print: Mock, _auth: Mock
     ) -> None:
         with patch.dict(
             os.environ,
             {
-                "GPLAYDL_ACCOUNT_EMAIL": "account@example.test",
-                "GPLAYDL_AAS_TOKEN": "aas_et/persistent-secret",
+                "GPDL_ACCOUNT_EMAIL": "account@example.test",
+                "GPDL_AAS_TOKEN": "aas_et/persistent-secret",
             },
             clear=True,
         ):
@@ -392,18 +392,18 @@ class DirectAuthTest(unittest.TestCase):
     def test_direct_mode_bypasses_all_persistence(self) -> None:
         token = {"authToken": "temporary"}
         environment = {
-            "GPLAYDL_ACCOUNT_EMAIL": "account@example.test",
-            "GPLAYDL_AAS_TOKEN": "aas_et/persistent-secret",
+            "GPDL_ACCOUNT_EMAIL": "account@example.test",
+            "GPDL_AAS_TOKEN": "aas_et/persistent-secret",
         }
         with (
             patch.dict(os.environ, environment, clear=True),
-            patch("gplaydl.auth.fetch_token", return_value=token) as fetch,
-            patch("gplaydl.auth._load_pool") as load_pool,
-            patch("gplaydl.auth._save_pool") as save_pool,
-            patch("gplaydl.auth._read_index") as read_index,
-            patch("gplaydl.auth._write_index") as write_index,
-            patch("gplaydl.auth.load_cached_auth") as load_auth,
-            patch("gplaydl.auth.save_auth") as save_auth,
+            patch("gpdl.auth.fetch_token", return_value=token) as fetch,
+            patch("gpdl.auth._load_pool") as load_pool,
+            patch("gpdl.auth._save_pool") as save_pool,
+            patch("gpdl.auth._read_index") as read_index,
+            patch("gpdl.auth._write_index") as write_index,
+            patch("gpdl.auth.load_cached_auth") as load_auth,
+            patch("gpdl.auth.save_auth") as save_auth,
         ):
             self.assertIs(token, pick_pool_token())
             self.assertIs(token, replace_pool_token({}))
@@ -425,10 +425,10 @@ class DirectAuthTest(unittest.TestCase):
             tempfile.TemporaryDirectory() as directory,
             patch.dict(
                 os.environ,
-                {"GPLAYDL_ACCOUNT_EMAIL": "account@example.test"},
+                {"GPDL_ACCOUNT_EMAIL": "account@example.test"},
                 clear=True,
             ),
-            patch("gplaydl.cli.pick_pool_token") as pick,
+            patch("gpdl.cli.pick_pool_token") as pick,
         ):
             output = Path(directory) / "new-output"
             result = CliRunner().invoke(
@@ -436,21 +436,21 @@ class DirectAuthTest(unittest.TestCase):
             )
 
         self.assertEqual(2, result.exit_code)
-        self.assertIn("GPLAYDL_AAS_TOKEN", result.output)
+        self.assertIn("GPDL_AAS_TOKEN", result.output)
         self.assertNotIn("account@example.test", result.output)
         self.assertFalse(output.exists())
         pick.assert_not_called()
 
     def test_cli_auth_does_not_save_or_identify_direct_credentials(self) -> None:
         environment = {
-            "GPLAYDL_ACCOUNT_EMAIL": "account@example.test",
-            "GPLAYDL_AAS_TOKEN": "aas_et/persistent-secret",
+            "GPDL_ACCOUNT_EMAIL": "account@example.test",
+            "GPDL_AAS_TOKEN": "aas_et/persistent-secret",
         }
         bundle = {"authToken": "temporary", "gsfId": "secret-gsf"}
         with (
             patch.dict(os.environ, environment, clear=True),
-            patch("gplaydl.cli.fetch_token", return_value=bundle),
-            patch("gplaydl.cli.save_auth") as save_auth,
+            patch("gpdl.cli.fetch_token", return_value=bundle),
+            patch("gpdl.cli.save_auth") as save_auth,
         ):
             result = CliRunner().invoke(app, ["auth"])
 

@@ -8,8 +8,8 @@ from pathlib import Path
 
 import httpx
 
-from gplaydl.api import _extract_delivery_from_fields
-from gplaydl.download import (
+from gpdl.api import _extract_delivery_from_fields
+from gpdl.download import (
     DownloadSpec,
     IntegrityError,
     _download_one,

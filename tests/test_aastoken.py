@@ -7,8 +7,8 @@ from unittest.mock import Mock, patch
 
 from typer.testing import CliRunner
 
-from gplaydl.aastoken import AASTokenError, encrypt_password, fetch_aas_token
-from gplaydl.cli import app
+from gpdl.aastoken import AASTokenError, encrypt_password, fetch_aas_token
+from gpdl.cli import app
 
 
 class AASTokenTest(unittest.TestCase):
@@ -19,7 +19,7 @@ class AASTokenTest(unittest.TestCase):
         self.assertEqual(133, len(encrypted))
         self.assertEqual(0, encrypted[0])
 
-    @patch("gplaydl.aastoken.httpx.post")
+    @patch("gpdl.aastoken.httpx.post")
     def test_fetches_token_without_logging_or_files(self, post: Mock) -> None:
         post.return_value = Mock(text="SID=ignored\nToken=aas-token\n")
 
@@ -29,7 +29,7 @@ class AASTokenTest(unittest.TestCase):
         self.assertEqual("240913000", request["data"]["google_play_services_version"])
         self.assertEqual("ac2dm", request["data"]["service"])
 
-    @patch("gplaydl.aastoken.httpx.post")
+    @patch("gpdl.aastoken.httpx.post")
     def test_exchanges_embedded_setup_oauth_token(self, post: Mock) -> None:
         post.return_value = Mock(text="Token=aas_et/persistent\nAuth=g.a000temporary\n")
 
@@ -42,14 +42,14 @@ class AASTokenTest(unittest.TestCase):
         self.assertEqual("com.google.android.gms", request["headers"]["app"])
         self.assertNotIn("EncryptedPasswd", request["data"])
 
-    @patch("gplaydl.aastoken.httpx.post")
+    @patch("gpdl.aastoken.httpx.post")
     def test_reports_google_error_code(self, post: Mock) -> None:
         post.return_value = Mock(text="Error=BadAuthentication\n")
 
         with self.assertRaisesRegex(AASTokenError, "BadAuthentication"):
             fetch_aas_token("user@example.com", "wrong")
 
-    @patch("gplaydl.cli.fetch_aas_token", return_value="aas-token")
+    @patch("gpdl.cli.fetch_aas_token", return_value="aas-token")
     def test_argument_mode(self, fetch: Mock) -> None:
         result = CliRunner().invoke(
             app, ["aastoken", "user@example.com", "secret"]
@@ -59,7 +59,7 @@ class AASTokenTest(unittest.TestCase):
         self.assertIn("AASToken: aas-token", result.output)
         fetch.assert_called_once_with("user@example.com", "secret")
 
-    @patch("gplaydl.cli.fetch_aas_token", side_effect=AASTokenError("BadAuthentication"))
+    @patch("gpdl.cli.fetch_aas_token", side_effect=AASTokenError("BadAuthentication"))
     def test_bad_authentication_explains_app_password(self, fetch: Mock) -> None:
         result = CliRunner().invoke(
             app, ["aastoken", "user@example.com", "wrong"]
@@ -70,7 +70,7 @@ class AASTokenTest(unittest.TestCase):
         self.assertIn("--oauth", result.output)
         self.assertNotIn("wrong", result.output)
 
-    @patch("gplaydl.cli.fetch_aas_token", return_value="aas-token")
+    @patch("gpdl.cli.fetch_aas_token", return_value="aas-token")
     def test_oauth_mode_hides_one_time_token(self, fetch: Mock) -> None:
         result = CliRunner().invoke(
             app,
@@ -83,7 +83,7 @@ class AASTokenTest(unittest.TestCase):
         self.assertNotIn("one-time-token", result.output)
         fetch.assert_called_once_with("user@example.com", "oauth2_4/one-time-token")
 
-    @patch("gplaydl.cli.fetch_aas_token", return_value="aas-token")
+    @patch("gpdl.cli.fetch_aas_token", return_value="aas-token")
     def test_interactive_mode_hides_password_and_creates_no_files(
         self, fetch: Mock
     ) -> None:

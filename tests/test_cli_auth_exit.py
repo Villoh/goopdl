@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
-from gplaydl.cli import (
+from gpdl.cli import (
     AUTH_UNAVAILABLE_EXIT_CODE,
     VERSION_UNAVAILABLE_EXIT_CODE,
     VersionUnavailableError,
@@ -15,15 +15,15 @@ from gplaydl.cli import (
 
 class AuthExitCodeTest(unittest.TestCase):
     def test_unavailable_auth_has_dedicated_exit_code(self) -> None:
-        with patch("gplaydl.cli.fetch_token", return_value=None):
+        with patch("gpdl.cli.fetch_token", return_value=None):
             result = CliRunner().invoke(app, ["auth", "--arch", "arm64"])
         self.assertEqual(AUTH_UNAVAILABLE_EXIT_CODE, result.exit_code)
 
     def test_unavailable_version_has_dedicated_exit_code(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch(
-            "gplaydl.cli.pick_pool_token", return_value={"authToken": "token"}
+            "gpdl.cli.pick_pool_token", return_value={"authToken": "token"}
         ), patch(
-            "gplaydl.cli._resolve_version_string",
+            "gpdl.cli._resolve_version_string",
             side_effect=VersionUnavailableError("version unavailable"),
         ):
             result = CliRunner().invoke(

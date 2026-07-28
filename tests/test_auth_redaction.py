@@ -1,13 +1,13 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from gplaydl.auth import fetch_token
+from gpdl.auth import fetch_token
 
 
 class FetchTokenRedactionTest(unittest.TestCase):
-    @patch("gplaydl.auth.get_priority_profiles")
-    @patch("gplaydl.auth.httpx.post")
-    @patch("gplaydl.auth.console.print")
+    @patch("gpdl.auth.get_priority_profiles")
+    @patch("gpdl.auth.httpx.post")
+    @patch("gpdl.auth.console.print")
     def test_does_not_log_dispenser_response(
         self, console_print, httpx_post, get_priority_profiles
     ) -> None:
@@ -23,9 +23,9 @@ class FetchTokenRedactionTest(unittest.TestCase):
         self.assertNotIn("secret response body", output)
         self.assertIn("No authToken in dispenser response", output)
 
-    @patch("gplaydl.auth.get_priority_profiles")
-    @patch("gplaydl.auth.httpx.post")
-    @patch("gplaydl.auth.console.print")
+    @patch("gpdl.auth.get_priority_profiles")
+    @patch("gpdl.auth.httpx.post")
+    @patch("gpdl.auth.console.print")
     def test_does_not_log_exception_details(
         self, console_print, httpx_post, get_priority_profiles
     ) -> None:
