@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from typing import cast
 
 import httpx
 
@@ -69,16 +70,25 @@ class DeliveryIntegrityTest(unittest.TestCase):
             ]
         )
 
-        self.assertEqual((delivery.download_size, delivery.sha1, delivery.sha256), (4, base_sha1, base_sha256))
         self.assertEqual(
-            (delivery.splits[0].size, delivery.splits[0].sha1, delivery.splits[0].sha256),
+            (delivery.download_size, delivery.sha1, delivery.sha256),
+            (4, base_sha1, base_sha256),
+        )
+        self.assertEqual(
+            (
+                delivery.splits[0].size,
+                delivery.splits[0].sha1,
+                delivery.splits[0].sha256,
+            ),
             (5, split_sha1, split_sha256),
         )
 
     def test_sha256_preferred_and_sha1_fallback(self):
         sha1 = digest(b"base", "sha1")
         sha256 = digest(b"base", "sha256")
-        spec = DownloadSpec("url", Path("base.apk"), expected_size=4, sha1=sha1, sha256=sha256)
+        spec = DownloadSpec(
+            "url", Path("base.apk"), expected_size=4, sha1=sha1, sha256=sha256
+        )
         self.assertEqual(_select_digest(spec)[:2], ("sha256", sha256))
         spec.sha256 = ""
         self.assertEqual(_select_digest(spec)[:2], ("sha1", sha1))
@@ -88,7 +98,9 @@ class DeliveryIntegrityTest(unittest.TestCase):
         invalid = ["+" * 43, "A" * 42 + "=", short, ""]
         for value in invalid:
             with self.subTest(value=value), self.assertRaises(IntegrityError):
-                _select_digest(DownloadSpec("url", Path("base.apk"), expected_size=4, sha256=value))
+                _select_digest(
+                    DownloadSpec("url", Path("base.apk"), expected_size=4, sha256=value)
+                )
 
     def test_manifest_contains_no_url_or_cookies(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -144,14 +156,82 @@ class DownloadErrorRedactionTest(unittest.IsolatedAsyncioTestCase):
                 Path(directory) / "base.apk",
                 label="base.apk",
             )
-            with self.assertRaisesRegex(IntegrityError, "download failed for base.apk") as raised:
+            with self.assertRaisesRegex(
+                IntegrityError, "download failed for base.apk"
+            ) as raised:
                 await _download_one(
                     spec,
-                    Client(),
+                    cast(httpx.AsyncClient, Client()),
                     make_progress(),
                     asyncio.Semaphore(1),
                 )
             self.assertNotIn("secret", str(raised.exception))
+
+
+class IncrementalDownloadTest(unittest.IsolatedAsyncioTestCase):
+    async def test_skips_existing_verified_file(self):
+        class Client:
+            def stream(self, *_args, **_kwargs):
+                raise AssertionError("network must not be used")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "base.apk"
+            path.write_bytes(b"base")
+            spec = DownloadSpec(
+                "https://example.invalid/base",
+                path,
+                expected_size=4,
+                sha256=digest(b"base", "sha256"),
+            )
+
+            result = await _download_one(
+                spec,
+                cast(httpx.AsyncClient, Client()),
+                make_progress(),
+                asyncio.Semaphore(1),
+            )
+
+            self.assertEqual(result, path)
+            self.assertEqual(path.read_bytes(), b"base")
+
+    async def test_replaces_existing_file_when_digest_does_not_match(self):
+        class Stream:
+            headers = {"Content-Length": "4"}
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+            def raise_for_status(self):
+                return None
+
+            async def aiter_bytes(self, chunk_size):
+                yield b"good"
+
+        class Client:
+            def stream(self, *_args, **_kwargs):
+                return Stream()
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "base.apk"
+            path.write_bytes(b"bad!")
+            spec = DownloadSpec(
+                "https://example.invalid/base",
+                path,
+                expected_size=4,
+                sha256=digest(b"good", "sha256"),
+            )
+
+            await _download_one(
+                spec,
+                cast(httpx.AsyncClient, Client()),
+                make_progress(),
+                asyncio.Semaphore(1),
+            )
+
+            self.assertEqual(path.read_bytes(), b"good")
 
 
 if __name__ == "__main__":
