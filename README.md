@@ -235,8 +235,10 @@ goopdl download com.whatsapp --profile "Galaxy S25 Ultra"  # Specific device pro
 Split APKs can be installed to a device with:
 
 ```bash
-adb install-multiple *.apk
+adb install-multiple com.whatsapp-231205015*.apk
 ```
+
+Use package/version prefix shown by CLI. Bare `*.apk` can mix unrelated apps or versions.
 
 ---
 
