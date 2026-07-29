@@ -8,6 +8,7 @@ from goopdl.api import (
     AppNotPurchasedError,
     AppNotSupportedError,
     DeliveryResult,
+    DexMetadata,
     SplitInfo,
     _build_specs,
     _extract_delivery_from_fields,
@@ -78,6 +79,35 @@ class DeliveryProtocolTest(unittest.TestCase):
             delivery.splits[0].gzipped_url, "https://play.googleapis.com/split.gz"
         )
         self.assertEqual(delivery.splits[0].gzipped_size, 40)
+
+    def test_parses_and_builds_optional_dex_metadata(self):
+        dex = b"".join(
+            [
+                encoded_field(1, 0, 25),
+                encoded_field(2, 2, b"D" * 43),
+                encoded_field(3, 2, b"https://play.googleapis.com/base.dm"),
+            ]
+        )
+        delivery = _extract_delivery_from_fields(
+            [
+                (1, 0, 100),
+                (3, 2, b"https://play.googleapis.com/base"),
+                (21, 2, dex),
+            ]
+        )
+
+        self.assertEqual(
+            delivery.dex_metadata,
+            DexMetadata(
+                url="https://play.googleapis.com/base.dm",
+                size=25,
+                sha256="D" * 43,
+            ),
+        )
+        specs = _build_specs("pkg", 1, Path("."), delivery, True, True, dm=True)
+        self.assertEqual(specs[-1].dest.name, "pkg-1.dm")
+        self.assertEqual(specs[-1].expected_size, 25)
+        self.assertEqual(specs[-1].sha256, "D" * 43)
 
     def test_specs_prefer_compressed_urls_but_verify_final_sizes(self):
         delivery = DeliveryResult(

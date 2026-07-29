@@ -634,7 +634,11 @@ def _parse_locales(value: str | None) -> list[str] | None:
     return list(
         dict.fromkeys(
             ["en-US"]
-            + [item.strip().replace("_", "-") for item in value.split(",") if item.strip()]
+            + [
+                item.strip().replace("_", "-")
+                for item in value.split(",")
+                if item.strip()
+            ]
         )
     )
 
@@ -733,6 +737,9 @@ def download(
         "-l",
         help="Extra language splits, comma-separated (e.g. de,fr,zh-CN).",
     ),
+    dm: bool = typer.Option(
+        False, "--dm", help="Download DEX metadata used to speed up first launch."
+    ),
     dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
     ),
@@ -775,6 +782,7 @@ def download(
                 dispenser=dispenser,
                 no_splits=no_splits,
                 no_extras=no_extras,
+                dm=dm,
                 country=country,
                 proxy=proxy,
                 profile=profile,
@@ -883,6 +891,18 @@ def download(
                     sha256=split.sha256,
                 )
             )
+    if dm and delivery.dex_metadata:
+        name = f"{package}-{vc}.dm"
+        extras.append(
+            DownloadSpec(
+                url=delivery.dex_metadata.url,
+                dest=output / name,
+                label=name,
+                integrity_required=True,
+                expected_size=delivery.dex_metadata.size,
+                sha256=delivery.dex_metadata.sha256,
+            )
+        )
     if not no_extras and delivery.additional_files:
         for af in delivery.additional_files:
             if af.is_asset_pack:
@@ -904,6 +924,8 @@ def download(
     total_size = delivery.download_size + sum(
         s.size for s in delivery.splits if not no_splits
     )
+    if dm and delivery.dex_metadata:
+        total_size += delivery.dex_metadata.size
     if not no_extras:
         total_size += sum(af.size for af in delivery.additional_files)
     file_label = f"{total_files} file{'s' if total_files > 1 else ''}"
@@ -922,6 +944,11 @@ def download(
             sp = output / f"{package}-{vc}-{split.name}.apk"
             if sp.exists():
                 files_table.add_row(sp.name, _fmt(sp.stat().st_size))
+
+    if dm and delivery.dex_metadata:
+        dex_path = output / f"{package}-{vc}.dm"
+        if dex_path.exists():
+            files_table.add_row(dex_path.name, _fmt(dex_path.stat().st_size))
 
     if not no_extras and delivery.additional_files:
         for af in delivery.additional_files:
