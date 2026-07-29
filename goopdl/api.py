@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
@@ -50,8 +50,8 @@ class AppDetails:
     developer: str = ""
     version_string: str = ""
     version_code: int = 0
-    rating: Optional[str] = None
-    downloads: Optional[str] = None
+    rating: str | None = None
+    downloads: str | None = None
     play_url: str = ""
 
 
@@ -62,6 +62,8 @@ class SplitInfo:
     size: int = 0
     sha1: str = ""
     sha256: str = ""
+    gzipped_url: str = ""
+    gzipped_size: int = 0
 
 
 @dataclass
@@ -91,6 +93,8 @@ class DeliveryResult:
     version_code: int = 0
     download_url: str = ""
     download_size: int = 0
+    gzipped_url: str = ""
+    gzipped_size: int = 0
     sha1: str = ""
     sha256: str = ""
     cookies: list[dict] = field(default_factory=list)
@@ -106,10 +110,16 @@ class AuthExpiredError(PlayAPIError):
     """Raised when the API returns 401 — token needs refresh."""
 
 
-
 class VersionUnavailableError(PlayAPIError):
     """Raised when Google Play cannot serve requested version code."""
 
+
+class AppNotSupportedError(VersionUnavailableError):
+    """Raised when current device profile cannot receive requested version."""
+
+
+class AppNotPurchasedError(PlayAPIError):
+    """Raised when account has not acquired requested app."""
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +127,7 @@ class VersionUnavailableError(PlayAPIError):
 # ---------------------------------------------------------------------------
 
 
-def _first_bytes(fields: list[tuple[int, int, Any]], num: int) -> Optional[bytes]:
+def _first_bytes(fields: list[tuple[int, int, Any]], num: int) -> bytes | None:
     """Return raw bytes of the first length-delimited field with number *num*."""
     for fn, wt, v in fields:
         if fn == num and wt == 2 and isinstance(v, (bytes, bytearray)):
@@ -142,10 +152,10 @@ def _first_ascii(fields: list[tuple[int, int, Any]], num: int) -> str:
         raise PlayAPIError(f"delivery field {num} is not ASCII") from error
 
 
-def _first_int(fields: list[tuple[int, int, Any]], num: int) -> Optional[int]:
+def _first_int(fields: list[tuple[int, int, Any]], num: int) -> int | None:
     for fn, wt, v in fields:
-        if fn == num and wt == 0:
-            return int(v)
+        if fn == num and wt == 0 and isinstance(v, int):
+            return v
     return None
 
 
@@ -175,7 +185,7 @@ def _navigate(raw: bytes, *path: int) -> list[tuple[int, int, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def _proto_headers(auth: dict, country: Optional[str] = None) -> dict:
+def _proto_headers(auth: dict, country: str | None = None) -> dict:
     headers = build_headers(auth, country=country)
     headers["Content-Type"] = "application/x-protobuf"
     headers["Accept"] = "application/x-protobuf"
@@ -190,7 +200,7 @@ def _proto_headers(auth: dict, country: Optional[str] = None) -> dict:
 # DocDetails(1) -> AppDetails: 3=versionCode, 4=versionString
 
 
-def _first_float(fields: list[tuple[int, int, Any]], num: int) -> Optional[float]:
+def _first_float(fields: list[tuple[int, int, Any]], num: int) -> float | None:
     for fn, wt, v in fields:
         if fn == num and wt == 5:
             return struct.unpack("<f", struct.pack("<I", v))[0]
@@ -204,8 +214,8 @@ class _ParsedDetails:
     creator: str = ""
     version_code: int = 0
     version_string: str = ""
-    rating: Optional[str] = None
-    downloads: Optional[str] = None
+    rating: str | None = None
+    downloads: str | None = None
 
 
 def _parse_details_proto(raw: bytes) -> _ParsedDetails:
@@ -247,8 +257,8 @@ def _parse_details_proto(raw: bytes) -> _ParsedDetails:
 def _fetch_details_raw(
     package: str,
     auth: dict,
-    country: Optional[str] = None,
-    proxy: Optional[str] = None,
+    country: str | None = None,
+    proxy: str | None = None,
 ) -> bytes:
     """Fetch raw protobuf details response."""
     headers = _proto_headers(auth, country=country)
@@ -268,23 +278,21 @@ def _fetch_details_raw(
 def get_details_raw(
     package: str,
     auth: dict,
-    country: Optional[str] = None,
-    proxy: Optional[str] = None,
+    country: str | None = None,
+    proxy: str | None = None,
 ) -> dict:
     """Return the full protobuf response decoded as a nested dict."""
-    raw = _fetch_details_raw(
-        package, auth, country=country, proxy=_build_httpx_proxy(proxy)
-    )
+    raw = _fetch_details_raw(package, auth, country=country, proxy=proxy)
     return proto_to_dict(raw)
 
 
 def fetch_app_item(
     package: str,
     arch: str = "arm64",
-    country: Optional[str] = None,
-    proxy: Optional[str] = None,
-    profile: Optional[str] = None,
-    dispenser_url: Optional[str] = None,
+    country: str | None = None,
+    proxy: str | None = None,
+    profile: str | None = None,
+    dispenser_url: str | None = None,
 ) -> dict:
     """Fetch, parse and return a PlayStoreAppItem dict in one call.
 
@@ -318,7 +326,7 @@ def fetch_app_item(
             profile=profile,
         )
         if not auth:
-            raise PlayAPIError("Token expired and replacement failed.")
+            raise PlayAPIError("Token expired and replacement failed.") from None
         raw = get_details_raw(package, auth, country=country, proxy=proxy)
     return parse_app_item(raw, region=country or "")
 
@@ -371,7 +379,7 @@ def parse_app_item(raw: dict, region: str = "") -> dict:
         cats = [cats]
     cat = cats[0] if cats and isinstance(cats[0], dict) else {}
 
-    def _parse_date(s: Any) -> Optional[str]:
+    def _parse_date(s: Any) -> str | None:
         if not isinstance(s, str):
             return None
         try:
@@ -383,7 +391,7 @@ def parse_app_item(raw: dict, region: str = "") -> dict:
         except ValueError:
             return s
 
-    def _rating_float(s: Any) -> Optional[float]:
+    def _rating_float(s: Any) -> float | None:
         try:
             return float(s)
         except (TypeError, ValueError):
@@ -442,14 +450,12 @@ def parse_app_item(raw: dict, region: str = "") -> dict:
 def get_details(
     package: str,
     auth: dict,
-    country: Optional[str] = None,
-    proxy: Optional[str] = None,
+    country: str | None = None,
+    proxy: str | None = None,
 ) -> AppDetails:
     """Return structured app details."""
     parsed = _parse_details_proto(
-        _fetch_details_raw(
-            package, auth, country=country, proxy=_build_httpx_proxy(proxy)
-        )
+        _fetch_details_raw(package, auth, country=country, proxy=proxy)
     )
     if not parsed.docid:
         raise PlayAPIError("App not found or unavailable for this device profile.")
@@ -474,10 +480,10 @@ def purchase(
     package: str,
     version_code: int,
     auth: dict,
-    country: Optional[str] = None,
-    proxy: Optional[str] = None,
-) -> None:
-    """Acquire a free app (equivalent of clicking 'Install')."""
+    country: str | None = None,
+    proxy: str | None = None,
+) -> str:
+    """Acquire a free app and return Play's delivery token when present."""
     headers = build_headers(auth, country=country)
     headers["Content-Type"] = "application/x-www-form-urlencoded"
     body = f"doc={package}&ot=1&vc={version_code}"
@@ -488,22 +494,23 @@ def purchase(
         timeout=30,
         proxy=_build_httpx_proxy(proxy),
     )
+    if resp.status_code == 401:
+        raise AuthExpiredError("Auth token expired.")
     if resp.status_code not in (200, 204):
-        pass  # non-fatal — may already be "purchased"
+        return ""  # non-fatal — may already be purchased
+    buy_fields = _navigate(resp.content, 1, 4)
+    return _first_string(buy_fields, 55) if buy_fields else ""
 
 
 # ---------------------------------------------------------------------------
 # Delivery
 # ---------------------------------------------------------------------------
-# ResponseWrapper(1) -> Payload(21) -> DeliveryResponse(2) -> AppDeliveryData
-# AppDeliveryData (field numbers from live probing):
-#   1  = downloadSize         (varint, bytes)
-#   2  = signature            (string)
-#   3  = downloadUrl          (string)
-#   4  = downloadAuthCookie   (repeated message: 1=name, 2=value)
-#   15 = splitDeliveryData    (repeated message: 1=name, 2=size, 5=downloadUrl)
-#   18 = additionalFile       (repeated message: 1=fileType, 2=size, 3=downloadUrl)
-#   29 = versionCode          (varint)
+# ResponseWrapper(1) -> Payload(21) -> DeliveryResponse
+# DeliveryResponse: 1=status (1=OK, 2=incompatible, 3=not purchased),
+#                   2=AppDeliveryData
+# AppDeliveryData fields used here:
+#   1=size, 2=sha1, 3=url, 5=cookies, 13=gzip URL, 14=gzip size,
+#   15=splits, 18=compressed base APK, 19=sha256, 29=version code.
 
 _GOOGLE_CDN_SUFFIXES = (
     ".google.com",
@@ -543,11 +550,31 @@ def _extract_delivery_from_fields(fields: list[tuple[int, int, Any]]) -> Deliver
         version_code=app_vc,
         download_url=_safe_cdn_url(_first_string(fields, 3)),
         download_size=_first_int(fields, 1) or 0,
+        gzipped_url=_safe_cdn_url(_first_string(fields, 13)),
+        gzipped_size=_first_int(fields, 14) or 0,
         sha1=_first_ascii(fields, 2),
         sha256=_first_ascii(fields, 19),
     )
 
-    # Field 4 (repeated) — contains BOTH cookies and OBB file metadata.
+    if not result.gzipped_url:
+        for compressed in _all_bytes(fields, 18):
+            compressed_fields = ProtoDecoder(compressed).read_all_ordered()
+            url = _safe_cdn_url(_first_string(compressed_fields, 3))
+            if url and (_first_int(compressed_fields, 1) or 0) == 2:
+                result.gzipped_url = url
+                result.gzipped_size = _first_int(compressed_fields, 2) or 0
+                break
+
+    # Cookies normally use field 5.
+    for cookie in _all_bytes(fields, 5):
+        cookie_fields = ProtoDecoder(cookie).read_all_ordered()
+        name = _first_string(cookie_fields, 1)
+        if name:
+            result.cookies.append(
+                {"name": name, "value": _first_string(cookie_fields, 2)}
+            )
+
+    # Field 4 can contain legacy cookies and OBB/asset-pack metadata.
     # Cookies have f1=string(name), f2=string(value).
     # OBB entries have f1=varint(fileType), f2=varint(versionCode),
     # f3=varint(size), f4=string(downloadUrl), f7=string(compressedUrl).
@@ -573,36 +600,34 @@ def _extract_delivery_from_fields(fields: list[tuple[int, int, Any]]) -> Deliver
                     )
                 )
 
-    # Splits (field 15, repeated: 1=name, 2=size, 4=SHA-1, 5=URL, 9=SHA-256)
+    # Splits (1=name, 2=size, 3=gzip size, 4=SHA-1, 5=URL,
+    # 6=gzip URL, 8=compressed variant, 9=SHA-256).
     for split_b in _all_bytes(fields, 15):
         sf = ProtoDecoder(split_b).read_all_ordered()
         name = _first_string(sf, 1)
         url = _safe_cdn_url(_first_string(sf, 5))
-        if url:
-            result.splits.append(
-                SplitInfo(
-                    name=name or f"split{len(result.splits)}",
-                    url=url,
-                    size=_first_int(sf, 2) or 0,
-                    sha1=_first_ascii(sf, 4),
-                    sha256=_first_ascii(sf, 9),
-                )
+        if not url:
+            continue
+        gzipped_url = _safe_cdn_url(_first_string(sf, 6))
+        gzipped_size = _first_int(sf, 3) or 0
+        if not gzipped_url:
+            compressed = _first_bytes(sf, 8)
+            if compressed:
+                compressed_fields = ProtoDecoder(compressed).read_all_ordered()
+                if (_first_int(compressed_fields, 1) or 0) == 2:
+                    gzipped_url = _safe_cdn_url(_first_string(compressed_fields, 3))
+                    gzipped_size = _first_int(compressed_fields, 2) or 0
+        result.splits.append(
+            SplitInfo(
+                name=name or f"split{len(result.splits)}",
+                url=url,
+                size=_first_int(sf, 2) or 0,
+                sha1=_first_ascii(sf, 4),
+                sha256=_first_ascii(sf, 9),
+                gzipped_url=gzipped_url,
+                gzipped_size=gzipped_size,
             )
-
-    # Field 18 (repeated) — asset pack APKs (fileType=2, gzip-compressed).
-    for af_b in _all_bytes(fields, 18):
-        af = ProtoDecoder(af_b).read_all_ordered()
-        url = _safe_cdn_url(_first_string(af, 3))
-        if url:
-            ft = _first_int(af, 1) or 0
-            result.additional_files.append(
-                AdditionalFile(
-                    file_type=ft,
-                    size=_first_int(af, 2) or 0,
-                    url=url,
-                    gzipped=ft == 2,
-                )
-            )
+        )
 
     return result
 
@@ -621,12 +646,15 @@ def get_delivery(
     package: str,
     version_code: int,
     auth: dict,
-    country: Optional[str] = None,
-    proxy: Optional[str] = None,
+    country: str | None = None,
+    proxy: str | None = None,
+    delivery_token: str = "",
 ) -> DeliveryResult:
     """Fetch download URLs for base APK, splits, and OBB files."""
     headers = _proto_headers(auth, country=country)
     url = f"{DELIVERY_URL}?doc={package}&ot=1&vc={version_code}"
+    if delivery_token:
+        url += f"&dtok={delivery_token}"
     if country:
         url += f"&gl={country.upper()}"
     resp = httpx.get(url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy))
@@ -640,6 +668,17 @@ def get_delivery(
     result = _parse_delivery(resp.content)
 
     if not result.download_url:
+        status = _first_int(_navigate(resp.content, 1, 21), 1)
+        if status == 2:
+            raise AppNotSupportedError(
+                f"Google Play does not serve version {version_code} of {package} "
+                "to this device profile."
+            )
+        if status == 3:
+            raise AppNotPurchasedError(
+                f"The account has not acquired {package}; it may be paid or "
+                "unavailable in this region."
+            )
         raise VersionUnavailableError(
             "No download URL returned. The app may require purchase or "
             "is unavailable for this device."
@@ -656,8 +695,8 @@ def get_delivery(
 def list_splits(
     package: str,
     auth: dict,
-    country: Optional[str] = None,
-    proxy: Optional[str] = None,
+    country: str | None = None,
+    proxy: str | None = None,
 ) -> list[str]:
     """Return split names from app details metadata."""
     headers = _proto_headers(auth, country=country)
@@ -735,8 +774,8 @@ def search_apps(
     query: str,
     auth: dict,
     limit: int = 10,
-    country: Optional[str] = None,
-    proxy: Optional[str] = None,
+    country: str | None = None,
+    proxy: str | None = None,
 ) -> list[dict]:
     """Search Google Play via FDFE protobuf API. Returns list of {package, title, creator}."""
     headers = _proto_headers(auth, country=country)
@@ -771,11 +810,11 @@ _TOKEN_FETCH_COOLDOWN = 5  # seconds — dispenser 5xx/429s are usually transien
 
 def _acquire_single_token(
     arch: str,
-    country: Optional[str],
-    proxy: Optional[str],
-    dispenser_url: Optional[str],
+    country: str | None,
+    proxy: str | None,
+    dispenser_url: str | None,
     profile: str,
-) -> Optional[dict]:
+) -> dict | None:
     """pick_pool_token(size=1), retrying a few times if the dispenser hiccups."""
     for attempt in range(_TOKEN_FETCH_ATTEMPTS):
         auth = pick_pool_token(
@@ -796,14 +835,21 @@ def _acquire_single_token(
 def _fetch_latest_delivery(
     package: str,
     auth: dict,
-    country: Optional[str],
-    proxy: Optional[str],
+    country: str | None,
+    proxy: str | None,
 ) -> tuple[AppDetails, DeliveryResult]:
     """Fetch details for whatever version *auth*'s GSF ID sees, then acquire + deliver it."""
     details = get_details(package, auth, country=country, proxy=proxy)
-    purchase(package, details.version_code, auth, country=country, proxy=proxy)
-    delivery = get_delivery(
+    delivery_token = purchase(
         package, details.version_code, auth, country=country, proxy=proxy
+    )
+    delivery = get_delivery(
+        package,
+        details.version_code,
+        auth,
+        country=country,
+        proxy=proxy,
+        delivery_token=delivery_token,
     )
     return details, delivery
 
@@ -820,10 +866,11 @@ def _build_specs(
     base_name = f"{package}-{vc}.apk"
     specs = [
         DownloadSpec(
-            url=delivery.download_url,
+            url=delivery.gzipped_url or delivery.download_url,
             dest=output / base_name,
             cookies=delivery.cookies,
             label=base_name,
+            gzipped=bool(delivery.gzipped_url),
             integrity_required=True,
             expected_size=delivery.download_size,
             sha1=delivery.sha1,
@@ -835,9 +882,10 @@ def _build_specs(
             name = f"{package}-{vc}-{split.name}.apk"
             specs.append(
                 DownloadSpec(
-                    url=split.url,
+                    url=split.gzipped_url or split.url,
                     dest=output / name,
                     label=name,
+                    gzipped=bool(split.gzipped_url),
                     integrity_required=True,
                     expected_size=split.size,
                     sha1=split.sha1,
@@ -867,10 +915,10 @@ def download_app(
     package: str,
     output: Path,
     arch: str = "arm64",
-    country: Optional[str] = None,
-    proxy: Optional[str] = None,
-    dispenser_url: Optional[str] = None,
-    profile: Optional[str] = None,
+    country: str | None = None,
+    proxy: str | None = None,
+    dispenser_url: str | None = None,
+    profile: str | None = None,
     no_splits: bool = True,
     no_extras: bool = True,
 ) -> tuple[Path, str]:
@@ -912,7 +960,7 @@ def download_app(
             profile=chosen_profile,
         )
         if not auth:
-            raise PlayAPIError("Token expired and replacement failed.")
+            raise PlayAPIError("Token expired and replacement failed.") from None
         details, delivery = _fetch_latest_delivery(package, auth, country, proxy)
 
     output.mkdir(parents=True, exist_ok=True)

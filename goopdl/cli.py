@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 import time
 from pathlib import Path
-from typing import Optional
 
 import httpx
 import typer
@@ -15,6 +14,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from goopdl import __version__
+from goopdl.aastoken import AASTokenError, fetch_aas_token
 from goopdl.api import (
     AuthExpiredError,
     PlayAPIError,
@@ -23,32 +23,30 @@ from goopdl.api import (
     fetch_app_item,
     get_delivery,
     get_details,
-    get_details_raw,
-    parse_app_item,
-    list_splits as api_list_splits,
     purchase,
     search_apps,
 )
-from goopdl.aastoken import AASTokenError, fetch_aas_token
+from goopdl.api import (
+    list_splits as api_list_splits,
+)
 from goopdl.auth import (
-    clear_auth,
     DEFAULT_PROBES,
     DirectAuthConfigurationError,
+    clear_auth,
     direct_auth_enabled,
-    ensure_auth,
     ensure_pool,
     fetch_token,
     pick_pool_token,
     replace_pool_token,
     save_auth,
 )
+from goopdl.download import DownloadSpec, download_batch
 from goopdl.profiles import (
     ARM64_PROFILES,
     ARMV7_PROFILES,
     find_profile,
     get_latest_probe_profiles,
 )
-from goopdl.download import DownloadSpec, download_batch
 
 console = Console()
 err = Console(stderr=True)
@@ -76,7 +74,7 @@ def _version_callback(value: bool) -> None:
 @app.callback()
 def main(
     ctx: typer.Context,
-    version: bool = typer.Option(  # noqa: ARG001
+    version: bool = typer.Option(
         False,
         "--version",
         "-V",
@@ -99,7 +97,7 @@ def main(
             direct_auth_enabled()
         except DirectAuthConfigurationError as exc:
             err.print(f"[red]{exc}[/red]")
-            raise typer.Exit(code=2)
+            raise typer.Exit(code=2) from None
 
 
 # ── auth ────────────────────────────────────────────────────────────────────
@@ -108,20 +106,20 @@ def main(
 @app.command()
 def auth(
     arch: str = typer.Option("arm64", help="Architecture: arm64 or armv7."),
-    dispenser: Optional[str] = typer.Option(
+    dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
     ),
     clear: bool = typer.Option(False, "--clear", help="Remove all cached tokens."),
-    country: Optional[str] = typer.Option(
+    country: str | None = typer.Option(
         None,
         "--country",
         "-c",
         help="2-letter country code to register device in that region (e.g. IN, JP, BR).",
     ),
-    proxy: Optional[str] = typer.Option(
+    proxy: str | None = typer.Option(
         None, "--proxy", "-p", help="Proxy URL for dispenser + FDFE calls."
     ),
-    profile: Optional[str] = typer.Option(
+    profile: str | None = typer.Option(
         None,
         "--profile",
         help="Device profile key or name substring (e.g. 'Pv' or 'samsung'). Run 'goopdl profiles' to list all.",
@@ -168,7 +166,7 @@ def auth(
             else "Authentication failed — all profiles rejected."
         )
         err.print(f"[red]{message}[/red]")
-        raise typer.Exit(code=AUTH_UNAVAILABLE_EXIT_CODE)
+        raise typer.Exit(code=AUTH_UNAVAILABLE_EXIT_CODE) from None
 
     if direct:
         rprint("[bold green]Authenticated[/bold green]")
@@ -188,8 +186,8 @@ def auth(
 
 @app.command()
 def aastoken(
-    email: Optional[str] = typer.Argument(None, help="Google account email."),
-    password: Optional[str] = typer.Argument(
+    email: str | None = typer.Argument(None, help="Google account email."),
+    password: str | None = typer.Argument(
         None, help="App password or oauth2_4 token. Omit for hidden input."
     ),
     oauth: bool = typer.Option(
@@ -202,14 +200,16 @@ def aastoken(
     if email is None:
         email = typer.prompt("Email")
     if oauth and password is not None:
-        err.print("[red]Do not pass PASSWORD with --oauth; token input is prompted.[/red]")
-        raise typer.Exit(code=2)
+        err.print(
+            "[red]Do not pass PASSWORD with --oauth; token input is prompted.[/red]"
+        )
+        raise typer.Exit(code=2) from None
     if oauth:
         password = typer.prompt("OAuth token", hide_input=True)
         assert password is not None
         if not password.startswith("oauth2_4/"):
             err.print("[red]OAuth token must start with oauth2_4/.[/red]")
-            raise typer.Exit(code=2)
+            raise typer.Exit(code=2) from None
     elif password is None:
         password = typer.prompt("Password", hide_input=True)
     assert email is not None and password is not None
@@ -224,10 +224,10 @@ def aastoken(
                 "[bold]goopdl aastoken --oauth[/bold] with an EmbeddedSetup "
                 "oauth_token.[/yellow]"
             )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     except httpx.HTTPError:
         err.print("[red]Google authentication request failed.[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     console.print("AASToken:", token)
 
@@ -240,7 +240,7 @@ def profiles(
     arch: str = typer.Option("all", help="Filter by arch: arm64, armv7, or all."),
 ) -> None:
     """List available device profiles."""
-    pool: list[tuple[str, dict]] = []
+    pool: list[tuple[str, dict, str]] = []
     if arch in ("arm64", "all"):
         pool += [(k, p, "arm64") for k, p in ARM64_PROFILES]
     if arch in ("armv7", "all"):
@@ -265,10 +265,10 @@ def profiles(
 def latest(
     package: str = typer.Argument(..., help="Package name (e.g. com.whatsapp)."),
     arch: str = typer.Option("arm64", help="Architecture for token."),
-    country: Optional[str] = typer.Option(
+    country: str | None = typer.Option(
         None, "--country", "-c", help="2-letter country code."
     ),
-    dispenser: Optional[str] = typer.Option(
+    dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
     ),
     stable: int = typer.Option(
@@ -277,12 +277,12 @@ def latest(
         "-s",
         help="Stop early when max version unchanged for this many consecutive probes (default 3).",
     ),
-    profile: Optional[str] = typer.Option(
+    profile: str | None = typer.Option(
         None,
         "--profile",
         help="Device profile for all probes (e.g. 'Galaxy S25 Ultra'). Defaults to top-ranked.",
     ),
-    proxy: Optional[str] = typer.Option(
+    proxy: str | None = typer.Option(
         None,
         "--proxy",
         "-p",
@@ -294,13 +294,13 @@ def latest(
         found = find_profile(profile, arch)
         if not found:
             err.print(f"[red]Profile not found: {profile}[/red]")
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
         profile_key, profile_data = found
     else:
         top = get_latest_probe_profiles(arch, n=1)
         if not top:
             err.print("[red]No profiles available.[/red]")
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
         profile_key, profile_data = top[0]
 
     device_name = profile_data.get("UserReadableName", profile_key)
@@ -320,7 +320,7 @@ def latest(
         err.print(
             "[red]Could not obtain any tokens — dispenser may be rate-limiting.[/red]"
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     results: list[tuple[str, str, int]] = []
     best_vc = 0
@@ -332,7 +332,7 @@ def latest(
             details = get_details(package, token, country=country, proxy=proxy)
         except AuthExpiredError:
             err.print(
-                f"[dim]  probe {i+1}: {gsf_prefix}... token expired — replacing[/dim]"
+                f"[dim]  probe {i + 1}: {gsf_prefix}... token expired — replacing[/dim]"
             )
             new_token = replace_pool_token(
                 token,
@@ -344,17 +344,17 @@ def latest(
             )
             if new_token is None:
                 err.print(
-                    f"[dim]  probe {i+1}: replacement unavailable, skipping[/dim]"
+                    f"[dim]  probe {i + 1}: replacement unavailable, skipping[/dim]"
                 )
                 continue
             tokens[i] = new_token
             try:
                 details = get_details(package, new_token, country=country, proxy=proxy)
             except PlayAPIError as exc:
-                err.print(f"[dim]  probe {i+1}: retry failed: {exc}[/dim]")
+                err.print(f"[dim]  probe {i + 1}: retry failed: {exc}[/dim]")
                 continue
         except PlayAPIError as exc:
-            err.print(f"[dim]  probe {i+1}: {gsf_prefix}... error: {exc}[/dim]")
+            err.print(f"[dim]  probe {i + 1}: {gsf_prefix}... error: {exc}[/dim]")
             continue
 
         vc = details.version_code
@@ -365,21 +365,21 @@ def latest(
             best_vc = vc
             consecutive_stable = 0
             rprint(
-                f"  probe {i+1}/{len(tokens)}: gsf={gsf_prefix}... {vs} ({vc}) [bold green]↑ new max[/bold green]"
+                f"  probe {i + 1}/{len(tokens)}: gsf={gsf_prefix}... {vs} ({vc}) [bold green]↑ new max[/bold green]"
             )
         else:
             consecutive_stable += 1
             rprint(
-                f"  probe {i+1}/{len(tokens)}: gsf={gsf_prefix}... {vs} ({vc}) [dim](stable {consecutive_stable}/{stable})[/dim]"
+                f"  probe {i + 1}/{len(tokens)}: gsf={gsf_prefix}... {vs} ({vc}) [dim](stable {consecutive_stable}/{stable})[/dim]"
             )
 
         if consecutive_stable >= stable:
-            rprint(f"[dim]  Converged after {i+1} probes.[/dim]")
+            rprint(f"[dim]  Converged after {i + 1} probes.[/dim]")
             break
 
     if not results:
         err.print("[red]Could not fetch version from any probe.[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     results.sort(key=lambda x: x[2], reverse=True)
     _, best_version, best_vc_final = results[0]
@@ -406,22 +406,22 @@ def latest(
 def info(
     package: str = typer.Argument(..., help="Package name (e.g. com.whatsapp)."),
     arch: str = typer.Option("arm64", help="Architecture for token."),
-    dispenser: Optional[str] = typer.Option(
+    dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
     ),
-    country: Optional[str] = typer.Option(
+    country: str | None = typer.Option(
         None,
         "--country",
         "-c",
         help="2-letter country code (e.g. US, IN, DE). Sets gl= and locale headers. For true regional versions, combine with --proxy.",
     ),
-    proxy: Optional[str] = typer.Option(
+    proxy: str | None = typer.Option(
         None,
         "--proxy",
         "-p",
         help="Proxy URL for FDFE calls, e.g. socks5://host:port or http://host:port. Routes requests through a regional IP.",
     ),
-    profile: Optional[str] = typer.Option(
+    profile: str | None = typer.Option(
         None,
         "--profile",
         help="Device profile key or name substring (e.g. 'D2' or 'samsung'). Run 'goopdl profiles' to list all.",
@@ -438,6 +438,9 @@ def info(
     """
     import json as _json
 
+    item: dict | None = None
+    details = None
+    auth_data = None
     with console.status(f"Fetching details for [bold]{package}[/bold]..."):
         try:
             if raw:
@@ -473,12 +476,14 @@ def info(
                     )
         except PlayAPIError as exc:
             err.print(f"[red]{exc}[/red]")
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
 
     if raw:
+        assert item is not None
         print(_json.dumps(item, indent=2, ensure_ascii=False))
         return
 
+    assert details is not None and auth_data is not None
     table = Table(title=details.title or package, show_header=False, title_style="bold")
     table.add_column("Field", style="dim")
     table.add_column("Value")
@@ -502,19 +507,19 @@ def search(
     query: str = typer.Argument(..., help="Search query."),
     limit: int = typer.Option(10, "--limit", "-l", help="Max results."),
     arch: str = typer.Option("arm64", help="Architecture for token."),
-    dispenser: Optional[str] = typer.Option(
+    dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
     ),
-    country: Optional[str] = typer.Option(
+    country: str | None = typer.Option(
         None,
         "--country",
         "-c",
         help="2-letter country code for regional search results.",
     ),
-    proxy: Optional[str] = typer.Option(
+    proxy: str | None = typer.Option(
         None, "--proxy", "-p", help="Proxy URL for FDFE calls."
     ),
-    profile: Optional[str] = typer.Option(
+    profile: str | None = typer.Option(
         None, "--profile", help="Device profile key or name substring."
     ),
 ) -> None:
@@ -543,7 +548,7 @@ def search(
                 )
         except PlayAPIError as exc:
             err.print(f"[red]{exc}[/red]")
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
 
     if not results:
         rprint("[yellow]No results found.[/yellow]")
@@ -565,7 +570,7 @@ def search(
 def list_splits_cmd(
     package: str = typer.Argument(..., help="Package name."),
     arch: str = typer.Option("arm64", help="Architecture for token."),
-    dispenser: Optional[str] = typer.Option(
+    dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
     ),
 ) -> None:
@@ -581,7 +586,7 @@ def list_splits_cmd(
                 splits = api_list_splits(package, auth_data)
         except PlayAPIError as exc:
             err.print(f"[red]{exc}[/red]")
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
 
     if not splits:
         rprint(f"[yellow]{package} has no split APKs.[/yellow]")
@@ -606,13 +611,13 @@ def download(
     arch: str = typer.Option(
         "arm64", "--arch", "-a", help="Architecture: arm64 or armv7."
     ),
-    version: Optional[str] = typer.Option(
+    version: str | None = typer.Option(
         None,
         "--version",
         "-v",
         help="Version code (e.g. 384009971) or version string (e.g. 434.0.0.44.74).",
     ),
-    dispenser: Optional[str] = typer.Option(
+    dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
     ),
     no_splits: bool = typer.Option(
@@ -623,19 +628,19 @@ def download(
         "--no-extras/--extras",
         help="Include OBB / asset packs (default: skipped).",
     ),
-    country: Optional[str] = typer.Option(
+    country: str | None = typer.Option(
         None,
         "--country",
         "-c",
         help="2-letter country code (e.g. IN, US). Use with --proxy for true regional APK variants.",
     ),
-    proxy: Optional[str] = typer.Option(
+    proxy: str | None = typer.Option(
         None, "--proxy", "-p", help="Proxy URL for FDFE calls, e.g. socks5://host:port."
     ),
-    profile: Optional[str] = typer.Option(
+    profile: str | None = typer.Option(
         None, "--profile", help="Device profile key or name substring."
     ),
-    integrity_manifest: Optional[Path] = typer.Option(
+    integrity_manifest: Path | None = typer.Option(
         None,
         "--integrity-manifest",
         help="Write verified file metadata as JSON after all downloads pass.",
@@ -656,12 +661,12 @@ def download(
             else "Could not obtain an auth token — dispenser may be rate-limiting."
         )
         err.print(f"[red]{message}[/red]")
-        raise typer.Exit(code=AUTH_UNAVAILABLE_EXIT_CODE)
+        raise typer.Exit(code=AUTH_UNAVAILABLE_EXIT_CODE) from None
 
     output.mkdir(parents=True, exist_ok=True)
 
     # ── resolve --version to an int version code ─────────────────────────
-    resolved_vc: Optional[int] = None
+    resolved_vc: int | None = None
     if version is not None:
         if version.isdigit():
             resolved_vc = int(version)
@@ -672,10 +677,10 @@ def download(
                 )
             except VersionUnavailableError as exc:
                 err.print(f"[red]{exc}[/red]")
-                raise typer.Exit(code=VERSION_UNAVAILABLE_EXIT_CODE)
+                raise typer.Exit(code=VERSION_UNAVAILABLE_EXIT_CODE) from None
             except PlayAPIError as exc:
                 err.print(f"[red]{exc}[/red]")
-                raise typer.Exit(code=1)
+                raise typer.Exit(code=1) from None
 
     # ── details + purchase + delivery (with auto-retry on expired token) ─
     try:
@@ -684,9 +689,16 @@ def download(
                 details = get_details(package, auth_data, country=country, proxy=proxy)
             vc = resolved_vc if resolved_vc is not None else details.version_code
             with console.status("Acquiring app and fetching download URLs..."):
-                purchase(package, vc, auth_data, country=country, proxy=proxy)
-                delivery = get_delivery(
+                delivery_token = purchase(
                     package, vc, auth_data, country=country, proxy=proxy
+                )
+                delivery = get_delivery(
+                    package,
+                    vc,
+                    auth_data,
+                    country=country,
+                    proxy=proxy,
+                    delivery_token=delivery_token,
                 )
         except AuthExpiredError:
             new_token = replace_pool_token(
@@ -699,22 +711,29 @@ def download(
             )
             if not new_token:
                 err.print("[red]Token expired and replacement failed.[/red]")
-                raise typer.Exit(code=AUTH_UNAVAILABLE_EXIT_CODE)
+                raise typer.Exit(code=AUTH_UNAVAILABLE_EXIT_CODE) from None
             auth_data = new_token
             with console.status(f"Fetching details for [bold]{package}[/bold]..."):
                 details = get_details(package, auth_data, country=country, proxy=proxy)
             vc = resolved_vc if resolved_vc is not None else details.version_code
             with console.status("Acquiring app and fetching download URLs..."):
-                purchase(package, vc, auth_data, country=country, proxy=proxy)
-                delivery = get_delivery(
+                delivery_token = purchase(
                     package, vc, auth_data, country=country, proxy=proxy
+                )
+                delivery = get_delivery(
+                    package,
+                    vc,
+                    auth_data,
+                    country=country,
+                    proxy=proxy,
+                    delivery_token=delivery_token,
                 )
     except VersionUnavailableError as exc:
         err.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=VERSION_UNAVAILABLE_EXIT_CODE)
+        raise typer.Exit(code=VERSION_UNAVAILABLE_EXIT_CODE) from None
     except PlayAPIError as exc:
         err.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     label = (
         f"requested version code {vc}"
@@ -727,10 +746,11 @@ def download(
     base_name = f"{package}-{vc}.apk"
     base_path = output / base_name
     base_spec = DownloadSpec(
-        url=delivery.download_url,
+        url=delivery.gzipped_url or delivery.download_url,
         dest=base_path,
         cookies=delivery.cookies,
         label=base_name,
+        gzipped=bool(delivery.gzipped_url),
         integrity_required=True,
         expected_size=delivery.download_size,
         sha1=delivery.sha1,
@@ -743,9 +763,10 @@ def download(
             name = f"{package}-{vc}-{split.name}.apk"
             extras.append(
                 DownloadSpec(
-                    url=split.url,
+                    url=split.gzipped_url or split.url,
                     dest=output / name,
                     label=name,
+                    gzipped=bool(split.gzipped_url),
                     integrity_required=True,
                     expected_size=split.size,
                     sha1=split.sha1,
@@ -823,7 +844,7 @@ def fast_download(
     arch: str = typer.Option(
         "arm64", "--arch", "-a", help="Architecture: arm64 or armv7."
     ),
-    dispenser: Optional[str] = typer.Option(
+    dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
     ),
     no_splits: bool = typer.Option(
@@ -834,16 +855,16 @@ def fast_download(
         "--no-extras/--extras",
         help="Include OBB / asset packs (default: skipped).",
     ),
-    country: Optional[str] = typer.Option(
+    country: str | None = typer.Option(
         None, "--country", "-c", help="2-letter country code (e.g. IN, US)."
     ),
-    proxy: Optional[str] = typer.Option(
+    proxy: str | None = typer.Option(
         None,
         "--proxy",
         "-p",
         help="Proxy for Google FDFE calls. Dispenser token fetches rotate proxy regions automatically.",
     ),
-    profile: Optional[str] = typer.Option(
+    profile: str | None = typer.Option(
         None,
         "--profile",
         help="Device profile key or name substring. Defaults to a random pick from the two newest profiles.",
@@ -870,7 +891,7 @@ def fast_download(
         )
     except PlayAPIError as exc:
         err.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     # soft_wrap: a long --output path must never get line-broken here — scripts
     # (e.g. the Airflow goopdl fallback) parse this exact line from stdout.
@@ -893,12 +914,12 @@ def _device_label(auth_data: dict) -> str:
 
 def _require_auth(
     arch: str,
-    dispenser: Optional[str],
+    dispenser: str | None,
     *,
     force: bool = False,
-    proxy: Optional[str] = None,
-    country: Optional[str] = None,
-    profile: Optional[str] = None,
+    proxy: str | None = None,
+    country: str | None = None,
+    profile: str | None = None,
 ) -> dict:
     """Return next round-robin pool token, ensuring pool is full first."""
     data = pick_pool_token(
@@ -913,7 +934,7 @@ def _require_auth(
             "[red]Could not obtain an auth token. "
             "Try running [bold]goopdl auth[/bold] first.[/red]"
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     return data
 
 
@@ -921,10 +942,10 @@ def _resolve_version_string(
     package: str,
     version_str: str,
     arch: str,
-    dispenser: Optional[str],
-    country: Optional[str],
-    proxy: Optional[str],
-    profile: Optional[str],
+    dispenser: str | None,
+    country: str | None,
+    proxy: str | None,
+    profile: str | None,
 ) -> tuple[int, dict]:
     """Probe fresh tokens until one sees the requested version string.
 
@@ -969,7 +990,7 @@ def _resolve_version_string(
     )
 
 
-def _fmt(size_bytes: int | float) -> str:
+def _fmt(size_bytes: float) -> str:
     """Format bytes as a human-readable string."""
     if not size_bytes:
         return "Unknown"
