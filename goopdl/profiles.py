@@ -5,7 +5,6 @@ Profiles are rotated during token acquisition for reliability.
 """
 
 from pathlib import Path
-from typing import Optional
 
 PROFILES_DIR = Path(__file__).resolve().parent / "profiles"
 
@@ -84,20 +83,48 @@ FALLBACK_PROFILE = {
 # MCC (Mobile Country Code) + MNC for major markets used to register a
 # device token as belonging to a specific country via the dispenser.
 COUNTRY_MCC: dict[str, tuple[str, str]] = {
-    "US": ("310", "38"),   "IN": ("404", "20"),   "GB": ("234", "30"),
-    "DE": ("262", "01"),   "JP": ("440", "10"),   "CN": ("460", "00"),
-    "BR": ("724", "05"),   "KR": ("450", "05"),   "FR": ("208", "01"),
-    "AU": ("505", "01"),   "CA": ("302", "720"),  "RU": ("250", "01"),
-    "MX": ("334", "020"),  "ID": ("510", "01"),   "TR": ("286", "01"),
-    "SA": ("420", "01"),   "IT": ("222", "01"),   "ES": ("214", "01"),
-    "TH": ("520", "01"),   "VN": ("452", "01"),   "MY": ("502", "12"),
-    "PH": ("515", "02"),   "ZA": ("655", "01"),   "PK": ("410", "01"),
-    "TW": ("466", "92"),   "SG": ("525", "05"),   "NZ": ("530", "24"),
-    "SE": ("240", "01"),   "NO": ("242", "01"),   "NL": ("204", "04"),
-    "PL": ("260", "01"),   "PT": ("268", "01"),   "CH": ("228", "01"),
-    "AT": ("232", "01"),   "BE": ("206", "01"),   "IE": ("272", "01"),
-    "GR": ("202", "01"),   "AR": ("722", "310"),  "EG": ("602", "01"),
-    "NG": ("621", "30"),   "BD": ("470", "01"),   "HK": ("454", "00"),
+    "US": ("310", "38"),
+    "IN": ("404", "20"),
+    "GB": ("234", "30"),
+    "DE": ("262", "01"),
+    "JP": ("440", "10"),
+    "CN": ("460", "00"),
+    "BR": ("724", "05"),
+    "KR": ("450", "05"),
+    "FR": ("208", "01"),
+    "AU": ("505", "01"),
+    "CA": ("302", "720"),
+    "RU": ("250", "01"),
+    "MX": ("334", "020"),
+    "ID": ("510", "01"),
+    "TR": ("286", "01"),
+    "SA": ("420", "01"),
+    "IT": ("222", "01"),
+    "ES": ("214", "01"),
+    "TH": ("520", "01"),
+    "VN": ("452", "01"),
+    "MY": ("502", "12"),
+    "PH": ("515", "02"),
+    "ZA": ("655", "01"),
+    "PK": ("410", "01"),
+    "TW": ("466", "92"),
+    "SG": ("525", "05"),
+    "NZ": ("530", "24"),
+    "SE": ("240", "01"),
+    "NO": ("242", "01"),
+    "NL": ("204", "04"),
+    "PL": ("260", "01"),
+    "PT": ("268", "01"),
+    "CH": ("228", "01"),
+    "AT": ("232", "01"),
+    "BE": ("206", "01"),
+    "IE": ("272", "01"),
+    "GR": ("202", "01"),
+    "AR": ("722", "310"),
+    "EG": ("602", "01"),
+    "NG": ("621", "30"),
+    "BD": ("470", "01"),
+    "HK": ("454", "00"),
 }
 
 
@@ -114,17 +141,36 @@ def patch_profile_country(profile: dict, country: str) -> dict:
 # restricted apps (banking apps like Chase). Pixel 9a first for arm64.
 _PRIORITY_ARM64 = ["Pv", "D2", "eV", "iq", "Fj", "HE", "VP", "Hb", "p6", "B1"]
 _PRIORITY_ARMV7 = ["XK", "Gj", "IV", "Gb"]
+_PRIORITY_X86 = ["x8", "7M"]
+_PRIORITY_TV = ["Gb"]
+
+ABI_TOKENS = {
+    "arm64": "arm64-v8a",
+    "armv7": "armeabi-v7a",
+    "x86": "x86",
+    "x86_64": "x86_64",
+}
+VALID_ARCHS = tuple(ABI_TOKENS) + ("tv",)
+_TV_FEATURES = ("android.hardware.type.television", "android.software.leanback")
+
+
+def is_tv_profile(profile: dict) -> bool:
+    features = profile.get("Features", "")
+    return any(feature in features for feature in _TV_FEATURES)
 
 
 def _load_properties(filepath: Path) -> dict:
     """Parse a Java-style .properties file into a dict."""
     profile: dict[str, str] = {}
-    with open(filepath) as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, val = line.split("=", 1)
-                profile[key] = val
+    try:
+        lines = filepath.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return profile
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, val = line.split("=", 1)
+            profile[key] = val
     return profile
 
 
@@ -160,11 +206,28 @@ ARM64_PROFILES: list[tuple[str, dict]] = [
 ARMV7_PROFILES: list[tuple[str, dict]] = [
     (k, d["profile"]) for k, d in _ALL.items() if d["arch"] == "armv7"
 ]
+TV_PROFILES: list[tuple[str, dict]] = [
+    (k, d["profile"]) for k, d in _ALL.items() if is_tv_profile(d["profile"])
+]
 
 
-def find_profile(name: str, arch: str = "arm64") -> Optional[tuple[str, dict]]:
+def _profiles_supporting(abi_token: str) -> list[tuple[str, dict]]:
+    return [
+        (key, data["profile"])
+        for key, data in _ALL.items()
+        if abi_token in data["profile"].get("Platforms", "")
+    ]
+
+
+def _pool_for_arch(arch: str) -> list[tuple[str, dict]]:
+    if arch == "tv":
+        return TV_PROFILES
+    return _profiles_supporting(ABI_TOKENS.get(arch, ABI_TOKENS["arm64"]))
+
+
+def find_profile(name: str, arch: str = "arm64") -> tuple[str, dict] | None:
     """Find a profile by exact key or case-insensitive substring of UserReadableName."""
-    pool = ARM64_PROFILES if arch != "armv7" else ARMV7_PROFILES
+    pool = _pool_for_arch(arch)
     # exact key match first
     for key, profile in pool:
         if key == name:
@@ -177,18 +240,23 @@ def find_profile(name: str, arch: str = "arm64") -> Optional[tuple[str, dict]]:
     return None
 
 
-def get_latest_probe_profiles(arch: str = "arm64", n: int = 2) -> list[tuple[str, dict]]:
+def get_latest_probe_profiles(
+    arch: str = "arm64", n: int = 2
+) -> list[tuple[str, dict]]:
     """Return the n profiles most likely to see the latest staged rollout.
 
     Ranked by newest Android SDK + newest Play Store (Vending) version,
     since Google tends to roll out to newer OS/store versions first.
     """
-    pool = ARM64_PROFILES if arch != "armv7" else ARMV7_PROFILES
+    pool = _pool_for_arch(arch)
 
     def _rank(item: tuple[str, dict]) -> tuple[int, int]:
-        _, p = item
-        sdk = int(p.get("Build.VERSION.SDK_INT", "0"))
-        vending = int(p.get("Vending.version", "0"))
+        _, profile = item
+        try:
+            sdk = int(profile.get("Build.VERSION.SDK_INT", "0"))
+            vending = int(profile.get("Vending.version", "0"))
+        except ValueError:
+            return (0, 0)
         return (sdk, vending)
 
     return sorted(pool, key=_rank, reverse=True)[:n]
@@ -197,9 +265,14 @@ def get_latest_probe_profiles(arch: str = "arm64", n: int = 2) -> list[tuple[str
 def get_priority_profiles(arch: str = "arm64") -> list[tuple[str, dict]]:
     """Return profiles ordered by reliability (best first)."""
     if arch == "armv7":
-        priority, pool = _PRIORITY_ARMV7, ARMV7_PROFILES
+        priority = _PRIORITY_ARMV7
+    elif arch in ("x86", "x86_64"):
+        priority = _PRIORITY_X86
+    elif arch == "tv":
+        priority = _PRIORITY_TV
     else:
-        priority, pool = _PRIORITY_ARM64, ARM64_PROFILES
+        priority = _PRIORITY_ARM64
+    pool = _pool_for_arch(arch)
 
     seen: set[str] = set()
     result: list[tuple[str, dict]] = []
@@ -216,4 +289,36 @@ def get_priority_profiles(arch: str = "arm64") -> list[tuple[str, dict]]:
             result.append((pkey, profile))
             seen.add(pkey)
 
+    return result
+
+
+def get_compat_profiles(arch: str = "arm64") -> list[tuple[str, dict]]:
+    """Profiles most likely to receive old or unusual app versions."""
+    pool = _pool_for_arch(arch)
+
+    def sort_key(item: tuple[str, dict]) -> tuple[int, int]:
+        profile = item[1]
+        try:
+            sdk = int(profile.get("Build.VERSION.SDK_INT", "99"))
+        except ValueError:
+            sdk = 99
+        abi_count = len(profile.get("Platforms", "").split(","))
+        return (sdk, -abi_count)
+
+    return sorted(pool, key=sort_key)
+
+
+def get_discovery_profiles(arch: str = "arm64") -> list[tuple[str, dict]]:
+    """Try one compatible device from each form factor and ABI family."""
+    candidates = get_compat_profiles(arch)[:1] + TV_PROFILES
+    for other in ("armv7", "arm64", "x86_64"):
+        if other != arch:
+            candidates += get_compat_profiles(other)[:1]
+
+    seen: set[str] = set()
+    result: list[tuple[str, dict]] = []
+    for key, profile in candidates:
+        if key not in seen:
+            seen.add(key)
+            result.append((key, profile))
     return result
