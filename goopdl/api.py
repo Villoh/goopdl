@@ -118,6 +118,10 @@ class AppNotSupportedError(VersionUnavailableError):
     """Raised when current device profile cannot receive requested version."""
 
 
+class AppNotAvailableError(PlayAPIError):
+    """Raised when app is invisible to current device profile."""
+
+
 class AppNotPurchasedError(PlayAPIError):
     """Raised when account has not acquired requested app."""
 
@@ -267,7 +271,7 @@ def _fetch_details_raw(
         url += f"&gl={country.upper()}"
     resp = httpx.get(url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy))
     if resp.status_code == 404:
-        raise PlayAPIError(f"App not found: {package}")
+        raise AppNotAvailableError(f"App not found: {package}")
     if resp.status_code == 401:
         raise AuthExpiredError("Auth token expired.")
     if resp.status_code != 200:
@@ -458,7 +462,9 @@ def get_details(
         _fetch_details_raw(package, auth, country=country, proxy=proxy)
     )
     if not parsed.docid:
-        raise PlayAPIError("App not found or unavailable for this device profile.")
+        raise AppNotAvailableError(
+            "App not found or unavailable for this device profile."
+        )
     return AppDetails(
         package=parsed.docid or package,
         title=parsed.title,

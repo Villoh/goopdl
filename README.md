@@ -34,7 +34,7 @@ pip install goopdl
 - Downloads base APK, split APKs, OBB files, and asset packs in one go
 - Streaming gzip decompression for Play Asset Delivery packs
 - Beautiful terminal UI with real-time download progress bars
-- Architecture support: ARM64 (modern phones) and ARMv7 (older phones)
+- Device support: ARM64, ARMv7, x86, x86_64, and Android TV
 - Custom token dispenser URL support
 - Search and browse app details from the command line
 - Find the latest available version by sampling multiple fresh GSF IDs
@@ -100,7 +100,7 @@ goopdl auth --profile "Galaxy S25 Ultra"      # Use a specific device profile
 
 | Flag | Short | Default | Description |
 | ------ | ------- | --------- | ------------- |
-| `--arch` | | `arm64` | Architecture: `arm64` or `armv7` |
+| `--arch` | | `arm64` | Device type: `arm64`, `armv7`, `x86`, `x86_64`, or `tv` |
 | `--dispenser` | `-d` | Aurora Store | Custom token dispenser URL |
 | `--clear` | | `false` | Remove all cached tokens |
 | `--country` | `-c` | — | 2-letter country code; registers device with that region's MCC/MNC |
@@ -195,6 +195,8 @@ By default, `download` fetches the base APK, all split APKs, and any additional 
 goopdl download com.whatsapp                          # Everything (base + splits + extras)
 goopdl download com.whatsapp -o ./apks                # Custom output directory
 goopdl download com.whatsapp -a armv7                 # ARMv7 build
+goopdl download com.whatsapp -a arm64,armv7           # Several device builds
+goopdl download com.google.android.katniss -a tv      # Android TV build
 goopdl download com.whatsapp -v 231205015             # Specific version code
 goopdl download com.instagram.android -v 434.0.0.44.74  # Specific version string
 goopdl download com.whatsapp --no-splits              # Skip split APKs
@@ -208,7 +210,7 @@ goopdl download com.whatsapp --profile "Galaxy S25 Ultra"  # Specific device pro
 | Flag | Short | Default | Description |
 | ------ | ------- | --------- | ------------- |
 | `--output` | `-o` | `.` (current dir) | Output directory |
-| `--arch` | `-a` | `arm64` | Architecture: `arm64` or `armv7` |
+| `--arch` | `-a` | `arm64` | Device type(s): `arm64`, `armv7`, `x86`, `x86_64`, or `tv`; comma-separated |
 | `--version` | `-v` | latest | Version code (e.g. `384009971`) **or** version string (e.g. `434.0.0.44.74`). When a version string is given, the tool probes fresh GSF IDs until it finds a cohort that sees that version |
 | `--dispenser` | `-d` | Aurora Store | Custom token dispenser URL |
 | `--no-splits` | | `false` | Skip downloading split APKs |

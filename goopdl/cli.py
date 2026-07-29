@@ -16,6 +16,8 @@ from rich.table import Table
 from goopdl import __version__
 from goopdl.aastoken import AASTokenError, fetch_aas_token
 from goopdl.api import (
+    AppNotAvailableError,
+    AppNotSupportedError,
     AuthExpiredError,
     PlayAPIError,
     VersionUnavailableError,
@@ -42,10 +44,12 @@ from goopdl.auth import (
 )
 from goopdl.download import DownloadSpec, download_batch
 from goopdl.profiles import (
-    ARM64_PROFILES,
-    ARMV7_PROFILES,
+    VALID_ARCHS,
     find_profile,
+    get_compat_profiles,
+    get_discovery_profiles,
     get_latest_probe_profiles,
+    get_priority_profiles,
 )
 
 console = Console()
@@ -105,7 +109,9 @@ def main(
 
 @app.command()
 def auth(
-    arch: str = typer.Option("arm64", help="Architecture: arm64 or armv7."),
+    arch: str = typer.Option(
+        "arm64", help="Device type: arm64, armv7, x86, x86_64 or tv."
+    ),
     dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
     ),
@@ -225,9 +231,9 @@ def aastoken(
                 "oauth_token.[/yellow]"
             )
         raise typer.Exit(code=1) from None
-    except httpx.HTTPError:
+    except httpx.HTTPError as exc:
         err.print("[red]Google authentication request failed.[/red]")
-        raise typer.Exit(code=1) from None
+        raise typer.Exit(code=1) from exc
 
     console.print("AASToken:", token)
 
@@ -237,14 +243,19 @@ def aastoken(
 
 @app.command()
 def profiles(
-    arch: str = typer.Option("all", help="Filter by arch: arm64, armv7, or all."),
+    arch: str = typer.Option(
+        "all", help="Filter by device type: arm64, armv7, x86, x86_64, tv or all."
+    ),
 ) -> None:
     """List available device profiles."""
+    archs = VALID_ARCHS if arch == "all" else tuple(_parse_archs(arch))
     pool: list[tuple[str, dict, str]] = []
-    if arch in ("arm64", "all"):
-        pool += [(k, p, "arm64") for k, p in ARM64_PROFILES]
-    if arch in ("armv7", "all"):
-        pool += [(k, p, "armv7") for k, p in ARMV7_PROFILES]
+    seen: set[tuple[str, str]] = set()
+    for arch_item in archs:
+        for key, profile in get_priority_profiles(arch_item):
+            if (key, arch_item) not in seen:
+                seen.add((key, arch_item))
+                pool.append((key, profile, arch_item))
 
     table = Table(title="Device Profiles")
     table.add_column("Key", style="bold", width=6)
@@ -604,12 +615,98 @@ def list_splits_cmd(
 # ── download ────────────────────────────────────────────────────────────────
 
 
+def _parse_archs(value: str) -> list[str]:
+    archs = list(
+        dict.fromkeys(item.strip() for item in value.split(",") if item.strip())
+    )
+    invalid = [item for item in archs if item not in VALID_ARCHS]
+    if not archs or invalid:
+        choices = ", ".join(VALID_ARCHS)
+        raise typer.BadParameter(
+            f"Unknown architecture: {', '.join(invalid) or value}. Choose from {choices}."
+        )
+    return archs
+
+
+def _acquire_delivery(
+    package: str,
+    version_code: int | None,
+    arch: str,
+    auth_data: dict,
+    dispenser: str | None,
+    country: str | None,
+    proxy: str | None,
+    profile: str | None,
+):
+    def flow(current_auth: dict):
+        details = get_details(package, current_auth, country=country, proxy=proxy)
+        vc = version_code if version_code is not None else details.version_code
+        delivery_token = purchase(
+            package, vc, current_auth, country=country, proxy=proxy
+        )
+        delivery = get_delivery(
+            package,
+            vc,
+            current_auth,
+            country=country,
+            proxy=proxy,
+            delivery_token=delivery_token,
+        )
+        return details, vc, delivery
+
+    def retry_with(profiles):
+        for key, _profile_data in profiles:
+            retry_auth = fetch_token(
+                dispenser_url=dispenser,
+                arch=arch,
+                proxy=proxy,
+                country=country,
+                profile=key,
+            )
+            if not retry_auth:
+                continue
+            try:
+                return flow(retry_auth)
+            except PlayAPIError:
+                continue
+        return None
+
+    try:
+        try:
+            return flow(auth_data)
+        except AuthExpiredError:
+            replacement = replace_pool_token(
+                auth_data,
+                arch=arch,
+                country=country,
+                proxy=proxy,
+                dispenser_url=dispenser,
+                profile=profile,
+            )
+            if not replacement:
+                raise PlayAPIError("Token expired and replacement failed.") from None
+            return flow(replacement)
+    except (AppNotSupportedError, AppNotAvailableError) as exc:
+        profiles = (
+            get_compat_profiles(arch)[:6]
+            if isinstance(exc, AppNotSupportedError)
+            else get_discovery_profiles(arch)
+        )
+        result = retry_with(profiles)
+        if result:
+            return result
+        raise
+
+
 @app.command()
 def download(
     package: str = typer.Argument(..., help="Package name (e.g. com.whatsapp)."),
     output: Path = typer.Option(".", "--output", "-o", help="Output directory."),
     arch: str = typer.Option(
-        "arm64", "--arch", "-a", help="Architecture: arm64 or armv7."
+        "arm64",
+        "--arch",
+        "-a",
+        help="Device type: arm64, armv7, x86, x86_64 or tv. Comma-separate several.",
     ),
     version: str | None = typer.Option(
         None,
@@ -647,6 +744,27 @@ def download(
     ),
 ) -> None:
     """Download an APK (with splits + additional files) from Google Play."""
+    archs = _parse_archs(arch)
+    if len(archs) > 1:
+        for index, arch_item in enumerate(archs):
+            download(
+                package=package,
+                output=output,
+                arch=arch_item,
+                version=version,
+                dispenser=dispenser,
+                no_splits=no_splits,
+                no_extras=no_extras,
+                country=country,
+                proxy=proxy,
+                profile=profile,
+                integrity_manifest=(
+                    integrity_manifest if index == len(archs) - 1 else None
+                ),
+            )
+        return
+    arch = archs[0]
+
     auth_data = pick_pool_token(
         arch=arch,
         country=country,
@@ -669,7 +787,10 @@ def download(
     resolved_vc: int | None = None
     if version is not None:
         if version.isdigit():
-            resolved_vc = int(version)
+            try:
+                resolved_vc = int(version)
+            except ValueError:
+                raise typer.BadParameter("Invalid version code.") from None
         else:
             try:
                 resolved_vc, auth_data = _resolve_version_string(
@@ -682,52 +803,20 @@ def download(
                 err.print(f"[red]{exc}[/red]")
                 raise typer.Exit(code=1) from None
 
-    # ── details + purchase + delivery (with auto-retry on expired token) ─
     try:
-        try:
-            with console.status(f"Fetching details for [bold]{package}[/bold]..."):
-                details = get_details(package, auth_data, country=country, proxy=proxy)
-            vc = resolved_vc if resolved_vc is not None else details.version_code
-            with console.status("Acquiring app and fetching download URLs..."):
-                delivery_token = purchase(
-                    package, vc, auth_data, country=country, proxy=proxy
-                )
-                delivery = get_delivery(
-                    package,
-                    vc,
-                    auth_data,
-                    country=country,
-                    proxy=proxy,
-                    delivery_token=delivery_token,
-                )
-        except AuthExpiredError:
-            new_token = replace_pool_token(
+        with console.status(
+            f"Fetching delivery for [bold]{package}[/bold] ({arch})..."
+        ):
+            details, vc, delivery = _acquire_delivery(
+                package,
+                resolved_vc,
+                arch,
                 auth_data,
-                arch=arch,
-                country=country,
-                proxy=proxy,
-                dispenser_url=dispenser,
-                profile=profile,
+                dispenser,
+                country,
+                proxy,
+                profile,
             )
-            if not new_token:
-                err.print("[red]Token expired and replacement failed.[/red]")
-                raise typer.Exit(code=AUTH_UNAVAILABLE_EXIT_CODE) from None
-            auth_data = new_token
-            with console.status(f"Fetching details for [bold]{package}[/bold]..."):
-                details = get_details(package, auth_data, country=country, proxy=proxy)
-            vc = resolved_vc if resolved_vc is not None else details.version_code
-            with console.status("Acquiring app and fetching download URLs..."):
-                delivery_token = purchase(
-                    package, vc, auth_data, country=country, proxy=proxy
-                )
-                delivery = get_delivery(
-                    package,
-                    vc,
-                    auth_data,
-                    country=country,
-                    proxy=proxy,
-                    delivery_token=delivery_token,
-                )
     except VersionUnavailableError as exc:
         err.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=VERSION_UNAVAILABLE_EXIT_CODE) from None
@@ -842,7 +931,10 @@ def fast_download(
     package: str = typer.Argument(..., help="Package name (e.g. com.whatsapp)."),
     output: Path = typer.Option(".", "--output", "-o", help="Output directory."),
     arch: str = typer.Option(
-        "arm64", "--arch", "-a", help="Architecture: arm64 or armv7."
+        "arm64",
+        "--arch",
+        "-a",
+        help="Device type: arm64, armv7, x86, x86_64 or tv.",
     ),
     dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
