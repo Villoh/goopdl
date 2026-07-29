@@ -67,6 +67,13 @@ class SplitInfo:
 
 
 @dataclass
+class DexMetadata:
+    url: str = ""
+    size: int = 0
+    sha256: str = ""
+
+
+@dataclass
 class AdditionalFile:
     file_type: int = 0  # 0 = main OBB, 1 = patch OBB, 2 = asset pack APK
     version_code: int = 0
@@ -100,6 +107,7 @@ class DeliveryResult:
     cookies: list[dict] = field(default_factory=list)
     splits: list[SplitInfo] = field(default_factory=list)
     additional_files: list[AdditionalFile] = field(default_factory=list)
+    dex_metadata: DexMetadata | None = None
 
 
 class PlayAPIError(Exception):
@@ -635,6 +643,17 @@ def _extract_delivery_from_fields(fields: list[tuple[int, int, Any]]) -> Deliver
             )
         )
 
+    for dex_bytes in _all_bytes(fields, 21):
+        dex_fields = ProtoDecoder(dex_bytes).read_all_ordered()
+        url = _safe_cdn_url(_first_string(dex_fields, 3))
+        if url:
+            result.dex_metadata = DexMetadata(
+                url=url,
+                size=_first_int(dex_fields, 1) or 0,
+                sha256=_first_ascii(dex_fields, 2),
+            )
+            break
+
     return result
 
 
@@ -870,6 +889,7 @@ def _build_specs(
     delivery: DeliveryResult,
     no_splits: bool,
     no_extras: bool,
+    dm: bool = False,
 ) -> list[DownloadSpec]:
     """Turn a DeliveryResult into the DownloadSpec list download_batch expects."""
     base_name = f"{package}-{vc}.apk"
@@ -901,6 +921,18 @@ def _build_specs(
                     sha256=split.sha256,
                 )
             )
+    if dm and delivery.dex_metadata:
+        name = f"{package}-{vc}.dm"
+        specs.append(
+            DownloadSpec(
+                url=delivery.dex_metadata.url,
+                dest=output / name,
+                label=name,
+                integrity_required=True,
+                expected_size=delivery.dex_metadata.size,
+                sha256=delivery.dex_metadata.sha256,
+            )
+        )
     if not no_extras and delivery.additional_files:
         for af in delivery.additional_files:
             name = (
