@@ -13,7 +13,6 @@ import re
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 import httpx
 from rich.progress import (
@@ -83,8 +82,22 @@ def _decode_digest(value: str, algorithm: str) -> bytes:
 def _select_digest(spec: DownloadSpec) -> tuple[str, str, bytes]:
     algorithm, encoded = ("sha256", spec.sha256) if spec.sha256 else ("sha1", spec.sha1)
     if spec.expected_size <= 0 or not encoded:
-        raise IntegrityError(f"missing integrity metadata for {spec.label or spec.dest.name}")
+        raise IntegrityError(
+            f"missing integrity metadata for {spec.label or spec.dest.name}"
+        )
     return algorithm, encoded, _decode_digest(encoded, algorithm)
+
+
+def _file_matches(
+    path: Path, expected_size: int, algorithm: str, digest: bytes
+) -> bool:
+    if not path.is_file() or path.stat().st_size != expected_size:
+        return False
+    calculated = hashlib.new(algorithm)
+    with path.open("rb") as existing:
+        while chunk := existing.read(1024 * 1024):
+            calculated.update(chunk)
+    return hmac.compare_digest(calculated.digest(), digest)
 
 
 async def _download_one(
@@ -101,12 +114,28 @@ async def _download_one(
             headers["Cookie"] = "; ".join(parts)
 
         label = spec.label or spec.dest.name
-        task_id = progress.add_task("download", filename=label, total=None)
         integrity = (
             _select_digest(spec)
-            if (spec.integrity_required or spec.expected_size or spec.sha1 or spec.sha256)
+            if (
+                spec.integrity_required
+                or spec.expected_size
+                or spec.sha1
+                or spec.sha256
+            )
             else None
         )
+        if integrity and await asyncio.to_thread(
+            _file_matches, spec.dest, spec.expected_size, integrity[0], integrity[2]
+        ):
+            progress.add_task(
+                "download",
+                filename=f"{label} [dim](already downloaded)[/dim]",
+                total=spec.expected_size,
+                completed=spec.expected_size,
+            )
+            return spec.dest
+
+        task_id = progress.add_task("download", filename=label, total=None)
         calculated = hashlib.new(integrity[0]) if integrity else None
         written = 0
         temporary = spec.dest.with_name(spec.dest.name + ".part")
@@ -124,7 +153,9 @@ async def _download_one(
 
                 with temporary.open("wb") as downloaded:
                     async for chunk in resp.aiter_bytes(chunk_size=CHUNK_SIZE):
-                        output = decompressor.decompress(chunk) if decompressor else chunk
+                        output = (
+                            decompressor.decompress(chunk) if decompressor else chunk
+                        )
                         downloaded.write(output)
                         written += len(output)
                         if calculated:
@@ -140,6 +171,7 @@ async def _download_one(
 
             if integrity:
                 _, _, expected = integrity
+                assert calculated is not None
                 if written != spec.expected_size:
                     raise IntegrityError(f"size mismatch for {label}")
                 if not hmac.compare_digest(calculated.digest(), expected):
@@ -163,7 +195,9 @@ async def _run_downloads(specs: list[DownloadSpec]) -> None:
 
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         with progress:
-            await asyncio.gather(*[_download_one(s, client, progress, sem) for s in specs])
+            await asyncio.gather(
+                *[_download_one(s, client, progress, sem) for s in specs]
+            )
 
 
 def _write_manifest(path: Path, specs: list[DownloadSpec]) -> None:
@@ -192,7 +226,7 @@ def _write_manifest(path: Path, specs: list[DownloadSpec]) -> None:
 
 
 def download_batch(
-    specs: list[DownloadSpec], integrity_manifest: Optional[Path] = None
+    specs: list[DownloadSpec], integrity_manifest: Path | None = None
 ) -> None:
     """Download files and optionally write manifest after every file verifies."""
     if integrity_manifest:
