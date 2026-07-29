@@ -177,12 +177,10 @@ async def _download_one(
                 if not hmac.compare_digest(calculated.digest(), expected):
                     raise IntegrityError(f"digest mismatch for {label}")
             os.replace(temporary, spec.dest)
-        except httpx.HTTPError:
+        except httpx.HTTPError as exc:
+            raise IntegrityError(f"download failed for {label}") from exc
+        finally:
             temporary.unlink(missing_ok=True)
-            raise IntegrityError(f"download failed for {label}") from None
-        except BaseException:
-            temporary.unlink(missing_ok=True)
-            raise
 
     return spec.dest
 
