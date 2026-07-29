@@ -628,6 +628,11 @@ def _parse_archs(value: str) -> list[str]:
     return archs
 
 
+def _adb_install_command(package: str, version_code: int, dm: bool = False) -> str:
+    command = f"adb install-multiple {package}-{version_code}*.apk"
+    return f"{command} {package}-{version_code}.dm" if dm else command
+
+
 def _parse_locales(value: str | None) -> list[str] | None:
     if not value:
         return None
@@ -963,9 +968,12 @@ def download(
     console.print(files_table)
 
     if delivery.splits and not no_splits:
+        command = _adb_install_command(
+            package, vc, dm=bool(dm and delivery.dex_metadata)
+        )
         rprint(
-            "\n[dim]Tip: install split APKs to a device with "
-            "[bold]adb install-multiple *.apk[/bold][/dim]"
+            "\n[dim]Tip: install split APKs to a device with[/dim]\n"
+            f"[dim]  [bold]{command}[/bold][/dim]"
         )
 
     rprint("\n[green bold]Download complete![/green bold]")
