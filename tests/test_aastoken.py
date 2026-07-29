@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 from typer.testing import CliRunner
 
 from goopdl.aastoken import AASTokenError, encrypt_password, fetch_aas_token
+from goopdl.browser_oauth import _oauth_token, _profile_email
 from goopdl.cli import app
 
 
@@ -51,9 +52,7 @@ class AASTokenTest(unittest.TestCase):
 
     @patch("goopdl.cli.fetch_aas_token", return_value="aas-token")
     def test_argument_mode(self, fetch: Mock) -> None:
-        result = CliRunner().invoke(
-            app, ["aastoken", "user@example.com", "secret"]
-        )
+        result = CliRunner().invoke(app, ["aastoken", "user@example.com", "secret"])
 
         self.assertEqual(0, result.exit_code)
         self.assertIn("AASToken: aas-token", result.output)
@@ -61,9 +60,7 @@ class AASTokenTest(unittest.TestCase):
 
     @patch("goopdl.cli.fetch_aas_token", side_effect=AASTokenError("BadAuthentication"))
     def test_bad_authentication_explains_app_password(self, fetch: Mock) -> None:
-        result = CliRunner().invoke(
-            app, ["aastoken", "user@example.com", "wrong"]
-        )
+        result = CliRunner().invoke(app, ["aastoken", "user@example.com", "wrong"])
 
         self.assertEqual(1, result.exit_code)
         self.assertIn("BadAuthentication", result.output)
@@ -82,6 +79,57 @@ class AASTokenTest(unittest.TestCase):
         self.assertIn("AASToken: aas-token", result.output)
         self.assertNotIn("one-time-token", result.output)
         fetch.assert_called_once_with("user@example.com", "oauth2_4/one-time-token")
+
+    @patch("goopdl.cli.fetch_aas_token", return_value="aas-token")
+    @patch(
+        "goopdl.cli.capture_oauth_credentials",
+        return_value=("user@example.com", "oauth2_4/one-time-token"),
+    )
+    def test_browser_mode_captures_email_and_oauth_token(
+        self, capture: Mock, fetch: Mock
+    ) -> None:
+        result = CliRunner().invoke(app, ["aastoken", "--browser"])
+
+        self.assertEqual(0, result.exit_code)
+        self.assertIn("AASToken: aas-token", result.output)
+        self.assertNotIn("one-time-token", result.output)
+        capture.assert_called_once_with()
+        fetch.assert_called_once_with("user@example.com", "oauth2_4/one-time-token")
+
+    @patch("goopdl.cli.fetch_aas_token")
+    @patch(
+        "goopdl.cli.capture_oauth_credentials",
+        return_value=("other@example.com", "oauth2_4/one-time-token"),
+    )
+    def test_browser_mode_rejects_explicit_email_mismatch(
+        self, capture: Mock, fetch: Mock
+    ) -> None:
+        result = CliRunner().invoke(app, ["aastoken", "user@example.com", "--browser"])
+
+        self.assertEqual(2, result.exit_code)
+        self.assertIn("other@example.com", result.output)
+        fetch.assert_not_called()
+        capture.assert_called_once_with()
+
+    def test_browser_cookie_filter_ignores_unrelated_cookies(self) -> None:
+        cookies = [
+            {"name": "oauth_token", "value": "oauth2_4/wrong", "domain": "example.com"},
+            {"name": "SID", "value": "secret", "domain": ".accounts.google.com"},
+            {
+                "name": "oauth_token",
+                "value": "oauth2_4/right",
+                "domain": ".accounts.google.com",
+            },
+        ]
+
+        self.assertEqual("oauth2_4/right", _oauth_token(cookies))
+
+    def test_browser_profile_email_reads_runtime_value(self) -> None:
+        response = {
+            "result": {"result": {"type": "string", "value": "user@example.com"}}
+        }
+
+        self.assertEqual("user@example.com", _profile_email(response))
 
     @patch("goopdl.cli.fetch_aas_token", return_value="aas-token")
     def test_interactive_mode_hides_password_and_creates_no_files(
