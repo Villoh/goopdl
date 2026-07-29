@@ -655,9 +655,12 @@ def get_delivery(
     country: str | None = None,
     proxy: str | None = None,
     delivery_token: str = "",
+    locales: list[str] | None = None,
 ) -> DeliveryResult:
     """Fetch download URLs for base APK, splits, and OBB files."""
     headers = _proto_headers(auth, country=country)
+    if locales:
+        headers["X-DFE-UserLanguages"] = ",".join(locales)
     url = f"{DELIVERY_URL}?doc={package}&ot=1&vc={version_code}"
     if delivery_token:
         url += f"&dtok={delivery_token}"

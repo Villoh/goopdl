@@ -628,6 +628,17 @@ def _parse_archs(value: str) -> list[str]:
     return archs
 
 
+def _parse_locales(value: str | None) -> list[str] | None:
+    if not value:
+        return None
+    return list(
+        dict.fromkeys(
+            ["en-US"]
+            + [item.strip().replace("_", "-") for item in value.split(",") if item.strip()]
+        )
+    )
+
+
 def _acquire_delivery(
     package: str,
     version_code: int | None,
@@ -637,6 +648,7 @@ def _acquire_delivery(
     country: str | None,
     proxy: str | None,
     profile: str | None,
+    locales: list[str] | None = None,
 ):
     def flow(current_auth: dict):
         details = get_details(package, current_auth, country=country, proxy=proxy)
@@ -651,6 +663,7 @@ def _acquire_delivery(
             country=country,
             proxy=proxy,
             delivery_token=delivery_token,
+            locales=locales,
         )
         return details, vc, delivery
 
@@ -714,6 +727,12 @@ def download(
         "-v",
         help="Version code (e.g. 384009971) or version string (e.g. 434.0.0.44.74).",
     ),
+    locale: str | None = typer.Option(
+        None,
+        "--locale",
+        "-l",
+        help="Extra language splits, comma-separated (e.g. de,fr,zh-CN).",
+    ),
     dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
     ),
@@ -752,6 +771,7 @@ def download(
                 output=output,
                 arch=arch_item,
                 version=version,
+                locale=locale,
                 dispenser=dispenser,
                 no_splits=no_splits,
                 no_extras=no_extras,
@@ -816,6 +836,7 @@ def download(
                 country,
                 proxy,
                 profile,
+                _parse_locales(locale),
             )
     except VersionUnavailableError as exc:
         err.print(f"[red]{exc}[/red]")

@@ -199,6 +199,7 @@ goopdl download com.whatsapp -a arm64,armv7           # Several device builds
 goopdl download com.google.android.katniss -a tv      # Android TV build
 goopdl download com.whatsapp -v 231205015             # Specific version code
 goopdl download com.instagram.android -v 434.0.0.44.74  # Specific version string
+goopdl download com.whatsapp -l de,fr,zh-CN           # Extra language splits
 goopdl download com.whatsapp --no-splits              # Skip split APKs
 goopdl download com.whatsapp --no-extras              # Skip OBB / asset packs
 goopdl download com.whatsapp -d https://...           # Use custom dispenser
@@ -212,6 +213,7 @@ goopdl download com.whatsapp --profile "Galaxy S25 Ultra"  # Specific device pro
 | `--output` | `-o` | `.` (current dir) | Output directory |
 | `--arch` | `-a` | `arm64` | Device type(s): `arm64`, `armv7`, `x86`, `x86_64`, or `tv`; comma-separated |
 | `--version` | `-v` | latest | Version code (e.g. `384009971`) **or** version string (e.g. `434.0.0.44.74`). When a version string is given, the tool probes fresh GSF IDs until it finds a cohort that sees that version |
+| `--locale` | `-l` | English | Extra language splits, comma-separated (e.g. `de,fr,zh-CN`) |
 | `--dispenser` | `-d` | Aurora Store | Custom token dispenser URL |
 | `--no-splits` | | `false` | Skip downloading split APKs |
 | `--no-extras` | | `false` | Skip downloading OBB files and asset packs |
