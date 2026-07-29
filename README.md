@@ -137,23 +137,39 @@ goopdl aastoken user@example.com password
 
 Google commonly rejects both account passwords and 16-character app passwords with `BadAuthentication`. Keep 2-Step Verification enabled and use OAuth mode instead.
 
-#### OAuth mode (recommended)
+#### Browser OAuth mode (recommended)
+
+```bash
+goopdl aastoken --browser
+```
+
+Sign in and select **I agree** in the isolated Chrome, Edge, Chromium, or Brave
+window that opens. goopdl captures the signed-in email and one-time
+`oauth_token`, closes the temporary browser profile, and exchanges them for the
+AAS token. Set `GOOPDL_BROWSER` to the browser executable if it is not detected
+automatically.
+
+The browser profile, cookies, credentials, and tokens are never reused or saved
+by goopdl. The resulting AAS token is printed to the console.
+
+#### Manual OAuth mode
 
 ```bash
 goopdl aastoken --oauth
 ```
 
-Get the required one-time `oauth_token`:
+If browser automation is unavailable:
 
 1. Open [Google EmbeddedSetup](https://accounts.google.com/EmbeddedSetup).
 2. Sign in and select **I agree**.
-3. The page may remain frozen/loading forever. This is expected; the cookie is normally already available.
-4. Open browser developer tools (`F12`).
-5. In Chrome or Edge, open **Application → Cookies → `https://accounts.google.com`**.
-6. Copy the value of the `oauth_token` cookie. It starts with `oauth2_4/`.
-7. Run `goopdl aastoken --oauth`, enter the same email, then paste the token. Both inputs are handled interactively and the token is hidden.
+3. Open browser developer tools (`F12`).
+4. In Chrome or Edge, open **Application → Cookies →
+   `https://accounts.google.com`**.
+5. Copy the `oauth_token` cookie value, which starts with `oauth2_4/`.
+6. Run `goopdl aastoken --oauth`, enter the same email, then paste the token.
 
-The `oauth_token` is short-lived and single-use. The resulting AAS token is printed to the console. Credentials and tokens are used in memory only; no `credentials.txt` or `token.txt` files are created.
+The `oauth_token` is short-lived and single-use. Credentials and tokens are
+used in memory only; no `credentials.txt` or `token.txt` files are created.
 
 ---
 

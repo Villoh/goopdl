@@ -42,6 +42,7 @@ from goopdl.auth import (
     replace_pool_token,
     save_auth,
 )
+from goopdl.browser_oauth import BrowserOAuthError, capture_oauth_credentials
 from goopdl.download import DownloadSpec, download_batch
 from goopdl.profiles import (
     VALID_ARCHS,
@@ -201,15 +202,35 @@ def aastoken(
         "--oauth",
         help="Prompt for a one-time EmbeddedSetup oauth_token instead of a password.",
     ),
+    browser: bool = typer.Option(
+        False,
+        "--browser",
+        help="Open an isolated Chrome/Edge window and capture the email and oauth_token automatically.",
+    ),
 ) -> None:
     """Print a Google account AAS token without saving credentials or token files."""
-    if email is None:
-        email = typer.prompt("Email")
-    if oauth and password is not None:
-        err.print(
-            "[red]Do not pass PASSWORD with --oauth; token input is prompted.[/red]"
-        )
+    if oauth and browser:
+        err.print("[red]Use either --oauth or --browser, not both.[/red]")
         raise typer.Exit(code=2) from None
+    if (oauth or browser) and password is not None:
+        err.print("[red]Do not pass PASSWORD with --oauth or --browser.[/red]")
+        raise typer.Exit(code=2) from None
+    if browser:
+        console.print(
+            "Sign in to Google in the new browser window and select [bold]I agree[/bold]."
+        )
+        try:
+            captured_email, password = capture_oauth_credentials()
+        except BrowserOAuthError as exc:
+            err.print(f"[red]Browser OAuth capture failed:[/red] {exc}")
+            raise typer.Exit(code=1) from None
+        if email is not None and email.casefold() != captured_email.casefold():
+            err.print(f"[red]Browser signed in as {captured_email}, not {email}.[/red]")
+            raise typer.Exit(code=2) from None
+        email = captured_email
+    else:
+        if email is None:
+            email = typer.prompt("Email")
     if oauth:
         password = typer.prompt("OAuth token", hide_input=True)
         assert password is not None
