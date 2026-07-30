@@ -125,6 +125,9 @@ No CLI flags, config files, or secret files are used. The AAS token is a persist
 
 ### `aastoken` — Print a Google account AAS token
 
+Use a throwaway Google account, not your main one. The AAS token grants full
+Play Store device access under that account.
+
 #### Password or app-password mode
 
 ```bash
@@ -376,7 +379,7 @@ Profiles are stored as `.properties` files in the `goopdl/profiles/` directory.
 ## Architecture Support
 
 | Flag | ABI | Devices |
-|------|-----|---------|
+| ------ | ----- | --------- |
 | `arm64` (default) | arm64-v8a | Modern phones (2017+) |
 | `armv7` | armeabi-v7a | Older 32-bit phones |
 | `x86` | x86 | Intel/AMD 32-bit emulators, devices |
