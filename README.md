@@ -379,6 +379,12 @@ Profiles are stored as `.properties` files in the `goopdl/profiles/` directory.
 |------|-----|---------|
 | `arm64` (default) | arm64-v8a | Modern phones (2017+) |
 | `armv7` | armeabi-v7a | Older 32-bit phones |
+| `x86` | x86 | Intel/AMD 32-bit emulators, devices |
+| `x86_64` | x86_64 | Intel/AMD 64-bit emulators, devices |
+| `tv` | arm64-v8a / armeabi-v7a | Android TV boxes, streaming devices |
+
+Multiple values accepted comma-separated (e.g. `-a arm64,armv7`) — `download` retries
+each until one succeeds.
 
 ### Verified integrity manifest
 
