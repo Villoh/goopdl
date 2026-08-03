@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "goopdl"
-version = "0.0.0"
+version = "1.2.0"
 description = "Download APKs from Google Play Store with anonymous authentication"
 readme = "README.md"
 license = "MIT"
