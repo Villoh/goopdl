@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from pathlib import Path
@@ -739,6 +740,59 @@ def _acquire_delivery(
         if result:
             return result
         raise
+
+
+@app.command("inspect-delivery")
+def inspect_delivery_cmd(
+    package: str = typer.Argument(..., help="Package name."),
+    version: int = typer.Option(..., "--version", "-v", help="Version code."),
+    arch: str = typer.Option("arm64", "--arch", help="Device architecture."),
+    dispenser: str | None = typer.Option(None, "--dispenser", "-d"),
+    country: str | None = typer.Option(None, "--country", "-c"),
+    proxy: str | None = typer.Option(None, "--proxy", "-p"),
+    profile: str | None = typer.Option(None, "--profile"),
+    json_output: bool = typer.Option(False, "--json", help="Print JSON output."),
+    output: Path | None = typer.Option(
+        None, "--output", "-o", help="Write JSON to this file."
+    ),
+) -> None:
+    """Inspect version delivery metadata without downloading APK files."""
+    auth_data = _require_auth(
+        arch, dispenser, country=country, proxy=proxy, profile=profile
+    )
+    try:
+        details, version_code, delivery = _acquire_delivery(
+            package,
+            version,
+            arch,
+            auth_data,
+            dispenser,
+            country,
+            proxy,
+            profile,
+        )
+    except PlayAPIError as exc:
+        err.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=VERSION_UNAVAILABLE_EXIT_CODE) from None
+    payload = {
+        "package": package,
+        "architecture": arch,
+        "version": {"name": details.version_string, "code": version_code},
+        "splits": ["base", *(split.name for split in delivery.splits)],
+    }
+    encoded = json.dumps(payload, sort_keys=True)
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(encoded + "\n", encoding="utf-8")
+    if json_output and output is None:
+        print(encoded)
+    elif not json_output:
+        rprint(
+            f"[bold]{package}[/bold] {details.version_string} ({version_code}) "
+            f"[{arch}]"
+        )
+        for split in payload["splits"]:
+            rprint(f"- {split}")
 
 
 @app.command()
