@@ -206,6 +206,45 @@ goopdl latest com.instagram.android -s 4 -c US -p socks5://host:1080
 
 ---
 
+### `inspect-delivery` — Inspect version delivery without downloading
+
+Fetches Google Play delivery metadata for an exact version code without
+requesting APK files. Use this to confirm that a device profile receives a
+compatible ABI before starting a large download.
+
+```bash
+goopdl inspect-delivery com.whatsapp --arch armv7 --version 231205015 --json
+goopdl inspect-delivery com.whatsapp --arch arm64 --version 231205015 \
+  --output delivery.json
+```
+
+Example JSON:
+
+```json
+{
+  "architecture": "armv7",
+  "package": "com.whatsapp",
+  "splits": ["base", "config.armeabi_v7a", "config.en"],
+  "version": {"code": 231205015, "name": "2.23.26.15"}
+}
+```
+
+| Flag | Short | Default | Description |
+| ------ | ------- | --------- | ----------- |
+| `--version` | `-v` | required | Exact Google Play version code |
+| `--arch` | | `arm64` | Device architecture |
+| `--json` | | `false` | Print machine-readable JSON |
+| `--output` | `-o` | — | Write JSON to a file instead of stdout |
+| `--dispenser` | `-d` | Aurora Store | Custom token dispenser URL |
+| `--country` | `-c` | — | 2-letter country code |
+| `--proxy` | `-p` | — | Proxy URL for FDFE calls |
+| `--profile` | | — | Device profile key or name substring |
+
+The command performs authentication, version purchase, and delivery metadata
+lookup. It does not download or publish APK files.
+
+---
+
 ### `download` — Download APKs
 
 By default, `download` fetches the base APK, all split APKs, and any additional files (OBB expansion files, Play Asset Delivery packs).
