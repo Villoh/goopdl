@@ -21,6 +21,7 @@ from goopdl.api import (
     AppNotSupportedError,
     AuthExpiredError,
     PlayAPIError,
+    RateLimitedError,
     VersionUnavailableError,
     download_app,
     fetch_app_item,
@@ -61,6 +62,7 @@ err = Console(stderr=True)
 # from "this artifact cannot be trusted" without parsing human-readable output.
 AUTH_UNAVAILABLE_EXIT_CODE = 3
 VERSION_UNAVAILABLE_EXIT_CODE = 4
+RATE_LIMIT_EXIT_CODE = 5
 
 
 app = typer.Typer(
@@ -98,6 +100,7 @@ def main(
         "list-splits",
         "download",
         "fast-download",
+        "inspect-delivery",
     }:
         try:
             direct_auth_enabled()
@@ -711,6 +714,8 @@ def _acquire_delivery(
                 continue
             try:
                 return flow(retry_auth)
+            except RateLimitedError:
+                raise
             except PlayAPIError:
                 continue
         return None
@@ -771,9 +776,18 @@ def inspect_delivery_cmd(
             proxy,
             profile,
         )
-    except PlayAPIError as exc:
+    except RateLimitedError:
+        err.print(
+            "[red]Google Play rate limited delivery requests (HTTP 429); "
+            "retry later.[/red]"
+        )
+        raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
+    except VersionUnavailableError as exc:
         err.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=VERSION_UNAVAILABLE_EXIT_CODE) from None
+    except PlayAPIError as exc:
+        err.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None
     payload = {
         "package": package,
         "architecture": arch,
@@ -788,8 +802,7 @@ def inspect_delivery_cmd(
         print(encoded)
     elif not json_output:
         rprint(
-            f"[bold]{package}[/bold] {details.version_string} ({version_code}) "
-            f"[{arch}]"
+            f"[bold]{package}[/bold] {details.version_string} ({version_code}) [{arch}]"
         )
         for split in payload["splits"]:
             rprint(f"- {split}")
@@ -926,6 +939,12 @@ def download(
                 profile,
                 _parse_locales(locale),
             )
+    except RateLimitedError:
+        err.print(
+            "[red]Google Play rate limited delivery requests (HTTP 429); "
+            "retry later.[/red]"
+        )
+        raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
     except VersionUnavailableError as exc:
         err.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=VERSION_UNAVAILABLE_EXIT_CODE) from None
@@ -1112,6 +1131,12 @@ def fast_download(
             no_splits=no_splits,
             no_extras=no_extras,
         )
+    except RateLimitedError:
+        err.print(
+            "[red]Google Play rate limited delivery requests (HTTP 429); "
+            "retry later.[/red]"
+        )
+        raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
     except PlayAPIError as exc:
         err.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from None

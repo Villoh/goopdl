@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from goopdl import cli
+from goopdl.api import RateLimitedError, VersionUnavailableError
 
 
 class InspectDeliveryTest(unittest.TestCase):
@@ -48,6 +49,60 @@ class InspectDeliveryTest(unittest.TestCase):
                     "version": {"code": 1561052632, "name": "21.04.223"},
                 },
             )
+
+    def test_rate_limit_uses_dedicated_exit_code(self) -> None:
+        with (
+            patch("goopdl.cli._require_auth", return_value={}),
+            patch(
+                "goopdl.cli._acquire_delivery",
+                side_effect=RateLimitedError("rate limited"),
+            ),
+        ):
+            try:
+                cli.inspect_delivery_cmd(
+                    package="com.google.android.youtube",
+                    version=1,
+                    arch="arm64",
+                    dispenser=None,
+                    country=None,
+                    proxy=None,
+                    profile=None,
+                    json_output=True,
+                    output=None,
+                )
+            except cli.typer.Exit as raised:
+                exit_code = raised.exit_code
+            else:
+                self.fail("inspect-delivery did not exit")
+
+        self.assertEqual(cli.RATE_LIMIT_EXIT_CODE, exit_code)
+
+    def test_unavailable_version_keeps_version_exit_code(self) -> None:
+        with (
+            patch("goopdl.cli._require_auth", return_value={}),
+            patch(
+                "goopdl.cli._acquire_delivery",
+                side_effect=VersionUnavailableError("version unavailable"),
+            ),
+        ):
+            try:
+                cli.inspect_delivery_cmd(
+                    package="com.google.android.youtube",
+                    version=1,
+                    arch="arm64",
+                    dispenser=None,
+                    country=None,
+                    proxy=None,
+                    profile=None,
+                    json_output=True,
+                    output=None,
+                )
+            except cli.typer.Exit as raised:
+                exit_code = raised.exit_code
+            else:
+                self.fail("inspect-delivery did not exit")
+
+        self.assertEqual(cli.VERSION_UNAVAILABLE_EXIT_CODE, exit_code)
 
 
 if __name__ == "__main__":
