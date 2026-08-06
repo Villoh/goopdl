@@ -7,6 +7,7 @@ validated against gpapi's googleplay.proto definitions.
 
 from __future__ import annotations
 
+import math
 import random
 import re
 import struct
@@ -116,6 +117,17 @@ class PlayAPIError(Exception):
 
 class AuthExpiredError(PlayAPIError):
     """Raised when the API returns 401 — token needs refresh."""
+
+
+class RateLimitedError(PlayAPIError):
+    """Raised when Google Play temporarily throttles delivery requests."""
+
+    status_code = 429
+
+    def __init__(self, message: str, *, retry_after: float | None = None):
+        super().__init__(message)
+        self.status_code = 429
+        self.retry_after = retry_after
 
 
 class VersionUnavailableError(PlayAPIError):
@@ -532,6 +544,23 @@ _GOOGLE_CDN_SUFFIXES = (
     ".ggpht.com",
     ".googleusercontent.com",
 )
+_DELIVERY_RETRIES = 2
+_DELIVERY_BACKOFF = (1.0, 3.0)
+_RETRY_AFTER_MAX = 30.0
+
+
+def _parse_retry_after(headers: Any) -> float | None:
+    """Return a safe numeric Retry-After delay, if supplied."""
+    try:
+        raw = headers.get("Retry-After")
+        if raw is None:
+            raw = headers.get("retry-after")
+        value = float(str(raw or "").strip())
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or value < 0 or value > _RETRY_AFTER_MAX:
+        return None
+    return value
 
 
 def _safe_cdn_url(url: str) -> str:
@@ -685,14 +714,32 @@ def get_delivery(
         url += f"&dtok={delivery_token}"
     if country:
         url += f"&gl={country.upper()}"
-    resp = httpx.get(url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy))
-    if resp.status_code == 401:
-        raise AuthExpiredError("Auth token expired.")
-    if resp.status_code == 404:
-        raise VersionUnavailableError("Requested version code is unavailable.")
-    if resp.status_code != 200:
-        raise PlayAPIError(f"Delivery failed (HTTP {resp.status_code}).")
+    resp: Any = None
+    for attempt in range(_DELIVERY_RETRIES + 1):
+        resp = httpx.get(
+            url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy)
+        )
+        if resp.status_code == 401:
+            raise AuthExpiredError("Auth token expired.")
+        if resp.status_code == 404:
+            raise VersionUnavailableError("Requested version code is unavailable.")
+        if resp.status_code == 429:
+            retry_after = _parse_retry_after(getattr(resp, "headers", {}))
+            if attempt == _DELIVERY_RETRIES:
+                raise RateLimitedError(
+                    "Google Play rate limited delivery requests (HTTP 429).",
+                    retry_after=retry_after,
+                )
+            time.sleep(
+                retry_after if retry_after is not None else _DELIVERY_BACKOFF[attempt]
+            )
+            continue
+        if resp.status_code != 200:
+            raise PlayAPIError(f"Delivery failed (HTTP {resp.status_code}).")
+        break
 
+    if resp is None:
+        raise PlayAPIError("Delivery request did not return a response.")
     result = _parse_delivery(resp.content)
 
     if not result.download_url:

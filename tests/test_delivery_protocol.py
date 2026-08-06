@@ -3,13 +3,16 @@ from pathlib import Path
 from unittest.mock import patch
 
 import httpx
-
 from goopdl.api import (
     AppNotPurchasedError,
     AppNotSupportedError,
+    AuthExpiredError,
     DeliveryResult,
     DexMetadata,
+    PlayAPIError,
+    RateLimitedError,
     SplitInfo,
+    VersionUnavailableError,
     _build_specs,
     _extract_delivery_from_fields,
     get_delivery,
@@ -34,6 +37,15 @@ def encoded_field(number, wire_type, value):
 
 
 class DeliveryProtocolTest(unittest.TestCase):
+    @staticmethod
+    def _successful_response() -> httpx.Response:
+        url = encoded_field(3, 2, b"https://play.googleapis.com/base")
+        payload = encoded_field(2, 2, url)
+        return httpx.Response(
+            200,
+            content=encoded_field(1, 2, encoded_field(21, 2, payload)),
+        )
+
     def test_parses_compressed_base_splits_and_field_five_cookies(self):
         compressed_base = b"".join(
             [
@@ -145,6 +157,65 @@ class DeliveryProtocolTest(unittest.TestCase):
         post.return_value = httpx.Response(200, content=token)
 
         self.assertEqual(purchase("pkg", 1, {"authToken": "token"}), "dtok")
+
+    @patch("goopdl.api.time.sleep")
+    @patch("goopdl.api.httpx.get")
+    def test_429_retries_and_recovers(self, get, sleep):
+        get.side_effect = [
+            httpx.Response(429, headers={"Retry-After": "2.5"}),
+            self._successful_response(),
+        ]
+
+        result = get_delivery("pkg", 1, {"authToken": "token"})
+
+        self.assertEqual(result.download_url, "https://play.googleapis.com/base")
+        sleep.assert_called_once_with(2.5)
+        self.assertEqual(get.call_count, 2)
+
+    @patch("goopdl.api.time.sleep")
+    @patch("goopdl.api.httpx.get")
+    def test_repeated_429_stops_after_two_retries(self, get, sleep):
+        get.side_effect = [httpx.Response(429) for _ in range(3)]
+
+        with self.assertRaises(RateLimitedError) as raised:
+            get_delivery("pkg", 1, {"authToken": "token"})
+
+        self.assertEqual(raised.exception.status_code, 429)
+        self.assertNotIsInstance(raised.exception, VersionUnavailableError)
+        self.assertIsNone(raised.exception.retry_after)
+        self.assertEqual(get.call_count, 3)
+        self.assertEqual(sleep.call_args_list[0].args, (1.0,))
+        self.assertEqual(sleep.call_args_list[1].args, (3.0,))
+
+    @patch("goopdl.api.time.sleep")
+    @patch("goopdl.api.httpx.get")
+    def test_invalid_retry_after_is_ignored(self, get, sleep):
+        get.side_effect = [
+            httpx.Response(429, headers={"Retry-After": "999"}),
+            httpx.Response(429, headers={"Retry-After": "not-a-number"}),
+            httpx.Response(429, headers={"Retry-After": "-1"}),
+        ]
+
+        with self.assertRaises(RateLimitedError) as raised:
+            get_delivery("pkg", 1, {"authToken": "token"})
+
+        self.assertIsNone(raised.exception.retry_after)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.0, 3.0])
+
+    @patch("goopdl.api.httpx.get")
+    def test_401_404_and_other_statuses_keep_their_error_types(self, get):
+        get.return_value = httpx.Response(401)
+        with self.assertRaises(AuthExpiredError):
+            get_delivery("pkg", 1, {"authToken": "token"})
+
+        get.return_value = httpx.Response(404)
+        with self.assertRaises(VersionUnavailableError):
+            get_delivery("pkg", 1, {"authToken": "token"})
+
+        get.return_value = httpx.Response(503)
+        with self.assertRaises(PlayAPIError) as raised:
+            get_delivery("pkg", 1, {"authToken": "token"})
+        self.assertNotIsInstance(raised.exception, RateLimitedError)
 
     @patch("goopdl.api.httpx.get")
     def test_delivery_token_is_sent_and_status_is_distinguished(self, get):

@@ -298,6 +298,10 @@ adb install-multiple com.whatsapp-231205015*.apk
 
 Use package/version prefix shown by CLI. Bare `*.apk` can mix unrelated apps or versions.
 
+#### Google Play rate limits
+
+Google Play may temporarily return HTTP 429 while acquiring delivery URLs. goopdl retries delivery acquisition up to two times with bounded backoff; APK file downloads are not retried. Persistent throttling exits with code `5`, while an unavailable version (HTTP 404 or confirmed unavailable response) exits with code `4`. Retry later or use a different provider, account, or network if throttling persists.
+
 ---
 
 ### `info` — Show app details
