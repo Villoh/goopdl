@@ -4,6 +4,8 @@ Loads Aurora Store .properties files from the profiles/ directory.
 Profiles are rotated during token acquisition for reliability.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 PROFILES_DIR = Path(__file__).resolve().parent / "profiles"
