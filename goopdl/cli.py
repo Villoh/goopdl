@@ -788,10 +788,16 @@ def inspect_delivery_cmd(
     except PlayAPIError as exc:
         err.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from None
+    # Play Store details describe the current listing, not necessarily this version.
+    version_name = (
+        details.version_string or None
+        if details.version_code == version_code
+        else None
+    )
     payload = {
         "package": package,
         "architecture": arch,
-        "version": {"name": details.version_string, "code": version_code},
+        "version": {"name": version_name, "code": version_code},
         "splits": ["base", *(split.name for split in delivery.splits)],
     }
     encoded = json.dumps(payload, sort_keys=True)
@@ -802,7 +808,8 @@ def inspect_delivery_cmd(
         print(encoded)
     elif not json_output:
         rprint(
-            f"[bold]{package}[/bold] {details.version_string} ({version_code}) [{arch}]"
+            f"[bold]{package}[/bold] {version_name or 'version name unknown'} "
+            f"({version_code}) [{arch}]"
         )
         for split in payload["splits"]:
             rprint(f"- {split}")
