@@ -5,8 +5,16 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from typer.testing import CliRunner
+
 from goopdl import cli
-from goopdl.api import RateLimitedError, VersionUnavailableError
+from goopdl.api import (
+    AppDetails,
+    DeliveryResult,
+    RateLimitedError,
+    SplitInfo,
+    VersionUnavailableError,
+)
 
 
 class InspectDeliveryTest(unittest.TestCase):
@@ -18,7 +26,11 @@ class InspectDeliveryTest(unittest.TestCase):
                 patch(
                     "goopdl.cli._acquire_delivery",
                     return_value=(
-                        SimpleNamespace(version_string="21.04.223"),
+                        AppDetails(
+                            "com.google.android.youtube",
+                            version_string="21.04.223",
+                            version_code=1561052632,
+                        ),
                         1561052632,
                         SimpleNamespace(
                             splits=[
@@ -49,6 +61,73 @@ class InspectDeliveryTest(unittest.TestCase):
                     "version": {"code": 1561052632, "name": "21.04.223"},
                 },
             )
+
+    def test_only_reports_version_name_for_matching_details(self) -> None:
+        for requested_code, listed_name, expected_name in (
+            (2463, "6.99.4", None),
+            (2470, "6.99.4", None),
+            (2468, "6.99.4", "6.99.4"),
+            (2468, "", None),
+        ):
+            for mode in ("text", "json", "file"):
+                with self.subTest(
+                    requested_code=requested_code, listed_name=listed_name, mode=mode
+                ), tempfile.TemporaryDirectory() as directory:
+                    output = Path(directory) / "delivery.json"
+                    args = [
+                        "inspect-delivery",
+                        "com.duolingo",
+                        "--arch", "arm64",
+                        "--version", str(requested_code),
+                    ]
+                    if mode == "json":
+                        args.append("--json")
+                    elif mode == "file":
+                        args.extend(["--json", "--output", str(output)])
+                    with (
+                        patch("goopdl.cli.direct_auth_enabled", return_value=False),
+                        patch("goopdl.cli._require_auth", return_value={}),
+                        patch(
+                            "goopdl.cli.get_details",
+                            return_value=AppDetails(
+                                "com.duolingo",
+                                version_code=2468,
+                                version_string=listed_name,
+                            ),
+                        ),
+                        patch("goopdl.cli.purchase", return_value="delivery-token"),
+                        patch(
+                            "goopdl.cli.get_delivery",
+                            return_value=DeliveryResult(
+                                splits=[SplitInfo(name="config.arm64_v8a")]
+                            ),
+                        ) as get_delivery,
+                    ):
+                        result = CliRunner().invoke(cli.app, args)
+
+                    self.assertEqual(result.exit_code, 0, result.output)
+                    self.assertEqual(get_delivery.call_args.args[1], requested_code)
+                    if mode == "text":
+                        self.assertIn(
+                            f"com.duolingo {expected_name or 'version name unknown'} "
+                            f"({requested_code})",
+                            result.stdout,
+                        )
+                        self.assertIn("- base", result.stdout)
+                        self.assertIn("- config.arm64_v8a", result.stdout)
+                    else:
+                        payload = json.loads(
+                            output.read_text(encoding="utf-8")
+                            if mode == "file"
+                            else result.stdout
+                        )
+                        self.assertEqual(
+                            payload["version"],
+                            {"code": requested_code, "name": expected_name},
+                        )
+                        self.assertEqual(
+                            payload["splits"], ["base", "config.arm64_v8a"]
+                        )
 
     def test_rate_limit_uses_dedicated_exit_code(self) -> None:
         with (
