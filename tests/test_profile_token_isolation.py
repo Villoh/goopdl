@@ -46,6 +46,21 @@ class ProfileTokenIsolationTest(unittest.TestCase):
         return {path.name: path.read_bytes() for path in self.directory.iterdir()
                 if not (path.name.startswith("token-pool-") and path.suffix == ".lock")}
 
+    def test_auth_clear_removes_all_token_caches_but_preserves_locks(self) -> None:
+        for profile in (None, "Pv", "D2"):
+            auth.save_auth(self.token("legacy"), country="US", profile=profile)
+            self.seed_pool(profile, [self.token("pooled")])
+            auth._write_index(2, "arm64", "US", profile)
+        unrelated = self.directory / "preferences.json"
+        unrelated.write_text('{"keep": true}')
+        locks = {path.name: path.read_bytes() for path in self.directory.glob("*.lock")}
+        result = CliRunner().invoke(app, ["auth", "--clear"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(self.snapshot(), {unrelated.name: unrelated.read_bytes()})
+        self.assertEqual(
+            locks, {path.name: path.read_bytes() for path in self.directory.glob("*.lock")}
+        )
+
     def test_warm_default_and_other_profile_pool_are_not_reused(self) -> None:
         self.seed_pool(None, [self.token("legacy")])
         self.seed_pool("Pv", [self.token("pixel")])
