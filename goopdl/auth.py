@@ -562,6 +562,8 @@ def fetch_token(
                 console.print(
                     f"  [yellow]Dispenser returned HTTP {resp.status_code} for {device}[/yellow]"
                 )
+                if resp.status_code == 429:
+                    return None
         except Exception as exc:
             console.print(
                 f"  [red]Dispenser request failed for {device}: "
