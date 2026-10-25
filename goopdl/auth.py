@@ -124,9 +124,9 @@ def load_cached_auth(
 
 
 def clear_auth() -> None:
-    """Remove all cached auth files."""
-    if _CONFIG_DIR.exists():
-        for f in _CONFIG_DIR.glob("auth-*.json"):
+    """Remove cached credentials and indexes, preserving stable lock sidecars."""
+    for pattern in ("auth-*.json", "token-pool-*.json", "pool-index-*.json"):
+        for f in _CONFIG_DIR.glob(pattern):
             f.unlink(missing_ok=True)
 
 
