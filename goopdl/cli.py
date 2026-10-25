@@ -47,7 +47,12 @@ from goopdl.auth import (
     save_auth,
 )
 from goopdl.browser_oauth import BrowserOAuthError, capture_oauth_credentials
-from goopdl.download import DownloadSpec, IntegrityError, download_batch
+from goopdl.download import (
+    DownloadSpec,
+    IntegrityError,
+    download_batch,
+    write_manifest,
+)
 from goopdl.profiles import (
     VALID_ARCHS,
     find_profile,
@@ -880,29 +885,46 @@ def download(
     ),
 ) -> None:
     """Download an APK (with splits + additional files) from Google Play."""
-    archs = _parse_archs(arch)
-    if len(archs) > 1:
-        for index, arch_item in enumerate(archs):
-            download(
-                package=package,
-                output=output,
-                arch=arch_item,
-                version=version,
-                locale=locale,
-                dispenser=dispenser,
-                no_splits=no_splits,
-                no_extras=no_extras,
-                dm=dm,
-                country=country,
-                proxy=proxy,
-                profile=profile,
-                integrity_manifest=(
-                    integrity_manifest if index == len(archs) - 1 else None
-                ),
-            )
-        return
-    arch = archs[0]
+    specs: list[DownloadSpec] = []
+    for arch_item in _parse_archs(arch):
+        specs += _download_arch(
+            package,
+            output,
+            arch_item,
+            version,
+            locale,
+            dm,
+            dispenser,
+            no_splits,
+            no_extras,
+            country,
+            proxy,
+            profile,
+            require_integrity=integrity_manifest is not None,
+        )
+    if integrity_manifest:
+        # Only digest-verified files (no OBB/asset packs); one entry per path,
+        # since archs can share files such as the base APK.
+        verified = {s.dest: s for s in specs if s.integrity_required}
+        write_manifest(integrity_manifest, list(verified.values()))
 
+
+def _download_arch(
+    package: str,
+    output: Path,
+    arch: str,
+    version: str | None,
+    locale: str | None,
+    dm: bool,
+    dispenser: str | None,
+    no_splits: bool,
+    no_extras: bool,
+    country: str | None,
+    proxy: str | None,
+    profile: str | None,
+    require_integrity: bool,
+) -> list[DownloadSpec]:
+    """Download one architecture's files and return their specs."""
     auth_data = pick_pool_token(
         arch=arch,
         country=country,
@@ -1047,7 +1069,7 @@ def download(
     file_label = f"{total_files} file{'s' if total_files > 1 else ''}"
     rprint(f"\n[bold]Downloading {file_label}[/bold]  [dim]({_fmt(total_size)})[/dim]")
     try:
-        download_batch(all_specs, integrity_manifest=integrity_manifest)
+        download_batch(all_specs, require_integrity=require_integrity)
     except IntegrityError as exc:
         err.print(str(exc), style="red", markup=False)
         raise typer.Exit(code=1) from None
@@ -1091,6 +1113,7 @@ def download(
         )
 
     rprint("\n[green bold]Download complete![/green bold]")
+    return all_specs
 
 
 # ── fast-download ────────────────────────────────────────────────────────────

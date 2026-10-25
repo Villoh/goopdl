@@ -198,7 +198,7 @@ async def _run_downloads(specs: list[DownloadSpec]) -> None:
             )
 
 
-def _write_manifest(path: Path, specs: list[DownloadSpec]) -> None:
+def write_manifest(path: Path, specs: list[DownloadSpec]) -> None:
     files = []
     for spec in specs:
         algorithm, encoded, _ = _select_digest(spec)
@@ -223,13 +223,11 @@ def _write_manifest(path: Path, specs: list[DownloadSpec]) -> None:
     os.replace(temporary, path)
 
 
-def download_batch(
-    specs: list[DownloadSpec], integrity_manifest: Path | None = None
-) -> None:
-    """Download files and optionally write manifest after every file verifies."""
-    if integrity_manifest:
+def download_batch(specs: list[DownloadSpec], require_integrity: bool = False) -> None:
+    """Download files; with require_integrity, refuse to start unless every
+    integrity-required file (APKs, .dm) has digests. OBB/asset packs never do."""
+    if require_integrity:
         for spec in specs:
-            _select_digest(spec)
+            if spec.integrity_required:
+                _select_digest(spec)
     asyncio.run(_run_downloads(specs))
-    if integrity_manifest:
-        _write_manifest(integrity_manifest, specs)
