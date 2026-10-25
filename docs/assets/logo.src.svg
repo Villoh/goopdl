@@ -1,0 +1,13 @@
+<!-- Editable source of logo.svg (text as text, needs the Geist font: https://vercel.com/font).
+     Regenerate: usvg --use-fonts-dir <geist-ttf-dir> logo.src.svg logo.svg
+     then re-add viewBox="0 0 960 280", role="img" and the <title> to logo.svg. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="280" viewBox="0 0 960 280">
+  <rect width="960" height="280" rx="28" fill="#F3F0E8"/>
+  <g transform="translate(96 60) scale(0.6667)">
+    <rect width="240" height="240" rx="56" fill="#121212"/>
+    <path d="M120 36 C120 36 56 100 56 142 A64 64 0 0 0 184 142 C184 100 120 36 120 36 Z" fill="#FF5A1F"/>
+    <path d="M94 136 L120 162 L146 136" fill="none" stroke="#121212" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="290" y="158" font-family="Geist" font-weight="700" font-size="112" letter-spacing="-6" fill="#121212">goopdl</text>
+  <text x="294" y="206" font-family="Geist" font-weight="400" font-size="27" fill="#6F6A5F">Google Play APKs, straight from your terminal</text>
+</svg>
