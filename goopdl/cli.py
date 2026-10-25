@@ -45,7 +45,7 @@ from goopdl.auth import (
     save_auth,
 )
 from goopdl.browser_oauth import BrowserOAuthError, capture_oauth_credentials
-from goopdl.download import DownloadSpec, download_batch
+from goopdl.download import DownloadSpec, IntegrityError, download_batch
 from goopdl.profiles import (
     VALID_ARCHS,
     find_profile,
@@ -1037,7 +1037,11 @@ def download(
         total_size += sum(af.size for af in delivery.additional_files)
     file_label = f"{total_files} file{'s' if total_files > 1 else ''}"
     rprint(f"\n[bold]Downloading {file_label}[/bold]  [dim]({_fmt(total_size)})[/dim]")
-    download_batch(all_specs, integrity_manifest=integrity_manifest)
+    try:
+        download_batch(all_specs, integrity_manifest=integrity_manifest)
+    except IntegrityError as exc:
+        err.print(str(exc), style="red", markup=False)
+        raise typer.Exit(code=1) from None
 
     # ── summary ──────────────────────────────────────────────────────────
     rprint()
@@ -1139,6 +1143,9 @@ def fast_download(
             no_splits=no_splits,
             no_extras=no_extras,
         )
+    except IntegrityError as exc:
+        err.print(str(exc), style="red", markup=False)
+        raise typer.Exit(code=1) from None
     except RateLimitedError:
         err.print(
             "[red]Google Play rate limited delivery requests (HTTP 429); "
