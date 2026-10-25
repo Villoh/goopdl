@@ -8,11 +8,11 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/goopdl/"><img src="https://img.shields.io/pypi/v/goopdl?style=flat-square&logo=pypi&logoColor=white&color=00b0ff" alt="Versión en PyPI"></a>
+  <a href="https://pypi.org/project/goopdl/"><img src="https://img.shields.io/pypi/v/goopdl?style=flat-square&logo=pypi&logoColor=white&color=0077cc" alt="Versión en PyPI"></a>
   <a href="https://pypi.org/project/goopdl/"><img src="https://img.shields.io/badge/python-3.10%2B-7c4dff?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+"></a>
   <a href="https://github.com/Villoh/goopdl/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Villoh/goopdl/ci.yml?branch=main&style=flat-square&logo=github&label=CI" alt="Estado de CI"></a>
-  <a href="https://pypistats.org/packages/goopdl"><img src="https://img.shields.io/pypi/dm/goopdl?style=flat-square&color=00e5a0" alt="Descargas mensuales"></a>
-  <a href="https://github.com/Villoh/goopdl/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-00e5a0?style=flat-square" alt="Licencia MIT"></a>
+  <a href="https://pypistats.org/packages/goopdl"><img src="https://img.shields.io/pypi/dm/goopdl?style=flat-square&color=00875a" alt="Descargas mensuales"></a>
+  <a href="https://github.com/Villoh/goopdl/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-00875a?style=flat-square" alt="Licencia MIT"></a>
 </p>
 
 <p align="center">
