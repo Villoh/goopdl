@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240" role="img" aria-labelledby="title"><title id="title">goopdl</title>
+  <rect width="240" height="240" rx="56" fill="#121212"/>
+  <path d="M120 36 C120 36 56 100 56 142 A64 64 0 0 0 184 142 C184 100 120 36 120 36 Z" fill="#FF5A1F"/>
+  <path d="M94 136 L120 162 L146 136" fill="none" stroke="#121212" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
