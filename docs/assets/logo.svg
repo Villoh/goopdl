@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="280" viewBox="0 0 960 280" role="img" aria-labelledby="title">
+  <title id="title">goopdl — Google Play APKs, straight from your terminal</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a0f1f"/>
+      <stop offset="1" stop-color="#161c36"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#00e5a0"/>
+      <stop offset="0.5" stop-color="#00b0ff"/>
+      <stop offset="1" stop-color="#7c4dff"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.2" cy="0.5" r="0.55">
+      <stop offset="0" stop-color="#00b0ff" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#00b0ff" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#ffffff" stroke-opacity="0.045"/>
+    </pattern>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#00b0ff" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <rect width="960" height="280" rx="28" fill="url(#bg)"/>
+  <rect width="960" height="280" rx="28" fill="url(#grid)"/>
+  <rect width="960" height="280" rx="28" fill="url(#glow)"/>
+
+  <!-- Icon: play button carrying a download arrow -->
+  <g transform="translate(112 60)">
+    <rect width="160" height="160" rx="40" fill="url(#brand)" filter="url(#shadow)"/>
+    <path d="M58 40 L120 80 L58 120 Z" fill="#ffffff" stroke="#ffffff" stroke-width="16" stroke-linejoin="round"/>
+    <path d="M80 60 V96 M68 84 L80 96 L92 84" fill="none" stroke="#0a0f1f" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="310" y="150" font-family="ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="88" font-weight="700" fill="#ffffff"><tspan fill="#00e5a0">&gt;</tspan><tspan dx="28">goopdl</tspan><tspan fill="#00b0ff">_<animate attributeName="opacity" values="1;1;0;0" keyTimes="0;0.5;0.5;1" dur="1.1s" repeatCount="indefinite"/></tspan></text>
+  <text x="314" y="208" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="26" fill="#9aa4bf">Google Play APKs, straight from your terminal</text>
+</svg>
