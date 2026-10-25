@@ -307,7 +307,26 @@ def get_details_raw(
 ) -> dict:
     """Return the full protobuf response decoded as a nested dict."""
     raw = _fetch_details_raw(package, auth, country=country, proxy=proxy)
-    return proto_to_dict(raw)
+    decoded = proto_to_dict(raw)
+    try:
+        doc = decoded["1"]["2"]["4"]
+    except (KeyError, TypeError):
+        return decoded
+    if isinstance(doc, dict):
+        # DocV2.creator is text, even when its bytes also parse as protobuf.
+        # Keep the generic decoder nested-first so unknown submessages survive.
+        creator_fields = [
+            (wt, value)
+            for number, wt, value in _navigate(raw, 1, 2, 4)
+            if number == 6
+        ]
+        if creator_fields and all(wt == 2 for wt, _ in creator_fields):
+            try:
+                creators = [value.decode("utf-8") for _, value in creator_fields]
+            except UnicodeDecodeError:
+                return decoded
+            doc["6"] = creators[0] if len(creators) == 1 else creators
+    return decoded
 
 
 def fetch_app_item(
