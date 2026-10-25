@@ -22,6 +22,7 @@ import httpx
 
 from goopdl.auth import (
     _build_httpx_proxy,
+    _load_pool,
     build_headers,
     direct_auth_enabled,
     pick_pool_token,
@@ -1036,10 +1037,10 @@ def download_app(
 ) -> tuple[Path, str]:
     """Download the latest APK a token can see, using one reused-or-fresh token.
 
-    Reuses a valid token from the country's pool if one exists; otherwise
-    fetches exactly one fresh token via *profile*, or — if *profile* is
-    unset — a random pick from the two newest device profiles. The fresh
-    dispenser call rotates proxy regions automatically (see fetch_token);
+    Reuses a valid token from the country's profile pool if one exists;
+    otherwise fetches exactly one fresh token. If *profile* is unset, picks
+    randomly from the two newest profiles, preferring warm anonymous pools.
+    The fresh dispenser call rotates proxy regions automatically (see fetch_token);
     *proxy* itself is passed through unpatched to the Google FDFE calls.
     Returns (apk_path, dotted version string) — not the numeric version code.
     """
@@ -1049,6 +1050,9 @@ def download_app(
         candidates = get_latest_probe_profiles(arch, n=2)
         if not candidates:
             raise PlayAPIError("No device profiles available.")
+        if not direct_auth_enabled():
+            warm = [p for p in candidates if _load_pool(arch, country, p[0])]
+            candidates = warm or candidates
         chosen_profile = random.choice(candidates)[0]
 
     auth = _acquire_single_token(arch, country, proxy, dispenser_url, chosen_profile)
