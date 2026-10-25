@@ -21,6 +21,10 @@
 
 ---
 
+> [!NOTE]
+> goopdl is an independent project, not affiliated with, endorsed by, or
+> sponsored by Google. Google and Google Play are trademarks of Google LLC.
+
 ## Features
 
 - **No account required.** Anonymous tokens come from Aurora Store's public

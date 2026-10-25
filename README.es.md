@@ -21,6 +21,10 @@
 
 ---
 
+> [!NOTE]
+> goopdl es un proyecto independiente, sin afiliación, respaldo ni patrocinio
+> de Google. Google y Google Play son marcas comerciales de Google LLC.
+
 ## Características
 
 - **Sin cuenta.** Los tokens anónimos salen del dispensador público de Aurora
