@@ -42,7 +42,9 @@ class ProfileTokenIsolationTest(unittest.TestCase):
             auth.ensure_pool(country="US", profile=profile, size=len(tokens))
 
     def snapshot(self) -> dict:
-        return {path.name: path.read_bytes() for path in self.directory.iterdir()}
+        # Stable transaction sidecars are coordination state, not cached credentials.
+        return {path.name: path.read_bytes() for path in self.directory.iterdir()
+                if not (path.name.startswith("token-pool-") and path.suffix == ".lock")}
 
     def test_warm_default_and_other_profile_pool_are_not_reused(self) -> None:
         self.seed_pool(None, [self.token("legacy")])

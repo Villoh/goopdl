@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import random
 import re
+import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 from urllib.parse import urlparse, urlunparse
 
 import httpx
@@ -587,23 +590,131 @@ def _pool_path(
     return _CONFIG_DIR / f"token-pool-{arch}{suffix}.json"
 
 
+_POOL_LOCK_TIMEOUT = 180.0  # seconds; a cold five-token pool can take 5 x 30s
+
+
+def _pool_cache_error(exc: OSError) -> None:
+    detail = ("lock acquisition timed out: TimeoutError"
+              if isinstance(exc, TimeoutError) else type(exc).__name__)
+    console.print(
+        f"[red]Token pool cache unavailable ({detail}); "
+        "anonymous token acquisition stopped.[/red]"
+    )
+
+
+@contextmanager
+def _pool_lock(
+    arch: str, country: Optional[str], profile: Optional[str] = None,
+    *, blocking: bool = True,
+) -> Iterator[bool]:
+    """Local, per-pool transaction lock. Never unlink/replace the stable sidecar.
+
+    Independent open handles serialize threads as well as processes. Closing the
+    handle releases the native lock, including on exceptions or process death.
+    """
+    path = _pool_path(arch, country, profile).with_suffix(".lock")
+    handle = None
+    acquired = False
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = path.open("a+b", buffering=0)
+        if os.name == "nt":
+            import msvcrt
+        else:
+            import fcntl
+        deadline = time.monotonic() + _POOL_LOCK_TIMEOUT
+        while True:
+            try:
+                handle.seek(0)
+                if os.name == "nt":
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except OSError as exc:
+                contention = ((errno.EACCES,) if os.name == "nt"
+                              else (errno.EACCES, errno.EAGAIN))
+                if exc.errno not in contention:
+                    raise
+                if not blocking:
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Token pool lock acquisition timed out") from exc
+                time.sleep(min(0.05, remaining))
+        # Windows permits locking beyond EOF. Initialize only AFTER acquisition,
+        # otherwise a simultaneous first opener could write another owner's byte.
+        if acquired and os.fstat(handle.fileno()).st_size == 0:
+            handle.write(b"\0")
+    except OSError as exc:
+        if handle is not None:
+            handle.close()
+        _pool_cache_error(exc)
+        yield False
+        return
+    except BaseException:
+        if handle is not None:
+            handle.close()
+        raise
+    if not acquired:
+        handle.close()
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        handle.close()
+
+
 def _load_pool(
     arch: str, country: Optional[str], profile: Optional[str] = None
 ) -> list[dict]:
-    """Return unexpired tokens for this arch+country+profile."""
+    """Read a snapshot without minting; a busy pool is silently unavailable.
+
+    Coordination prevents an advisory Windows reader from blocking os.replace.
+    """
+    with _pool_lock(arch, country, profile, blocking=False) as acquired:
+        if acquired:
+            try:
+                return _load_pool_unlocked(arch, country, profile)
+            except OSError as exc:
+                _pool_cache_error(exc)
+    return []
+
+
+def _load_pool_unlocked(
+    arch: str, country: Optional[str], profile: Optional[str] = None
+) -> list[dict]:
     try:
         tokens: list[dict] = json.loads(_pool_path(arch, country, profile).read_text())
-    except (OSError, json.JSONDecodeError):
+    except (FileNotFoundError, json.JSONDecodeError):
         return []
     now = time.time()
     return [t for t in tokens if now - t.get("_cached_at", 0) < _MAX_TOKEN_AGE]
 
 
+def _atomic_pool_json(path: Path, data: object) -> None:
+    """Publish a whole pool/index document; caller owns the pool lock."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent,
+            prefix=path.name + ".", suffix=".tmp", delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            json.dump(data, stream)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def _save_pool(
     tokens: list[dict], arch: str, country: Optional[str], profile: Optional[str] = None
 ) -> None:
-    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    _pool_path(arch, country, profile).write_text(json.dumps(tokens))
+    _atomic_pool_json(_pool_path(arch, country, profile), tokens)
 
 
 def ensure_pool(
@@ -632,13 +743,29 @@ def ensure_pool(
             tokens.append(token)
         return tokens
 
-    pool = _load_pool(arch, country, profile)
+    with _pool_lock(arch, country, profile) as acquired:
+        if acquired:
+            try:
+                return _ensure_pool_unlocked(
+                    arch, country, proxy, dispenser_url, profile, size
+                )
+            except OSError as exc:
+                _pool_cache_error(exc)
+    return []
+
+
+def _ensure_pool_unlocked(
+    arch: str, country: Optional[str], proxy: Optional[str],
+    dispenser_url: Optional[str], profile: Optional[str], size: int,
+) -> list[dict]:
+    pool = _load_pool_unlocked(arch, country, profile)
     deficit = size - len(pool)
     if deficit > 0:
         label = country or "default"
         console.print(
             f"[dim]  Pool [{label}]: {len(pool)}/{size} valid — fetching {deficit} more...[/dim]"
         )
+        _save_pool(pool, arch, country, profile)
         for _ in range(deficit):
             t = fetch_token(
                 dispenser_url=dispenser_url,
@@ -651,7 +778,8 @@ def ensure_pool(
                 break
             t.setdefault("_cached_at", time.time())
             pool.append(t)
-        _save_pool(pool, arch, country, profile)
+            # Preserve each paid mint even if a later request is interrupted.
+            _save_pool(pool, arch, country, profile)
     return pool
 
 
@@ -668,15 +796,14 @@ def _read_index(
 ) -> int:
     try:
         return json.loads(_index_path(arch, country, profile).read_text()).get("i", 0)
-    except (OSError, json.JSONDecodeError):
+    except (FileNotFoundError, json.JSONDecodeError):
         return 0
 
 
 def _write_index(
     i: int, arch: str, country: Optional[str], profile: Optional[str] = None
 ) -> None:
-    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    _index_path(arch, country, profile).write_text(json.dumps({"i": i}))
+    _atomic_pool_json(_index_path(arch, country, profile), {"i": i})
 
 
 def pick_pool_token(
@@ -695,20 +822,21 @@ def pick_pool_token(
     if direct_auth_enabled():
         return fetch_token(arch=arch, country=country, proxy=proxy, profile=profile)
 
-    pool = ensure_pool(
-        arch=arch,
-        country=country,
-        proxy=proxy,
-        dispenser_url=dispenser_url,
-        profile=profile,
-        size=size,
-    )
-    if not pool:
-        return None
-    i = _read_index(arch, country, profile)
-    token = pool[i % len(pool)]
-    _write_index(i + 1, arch, country, profile)
-    return token
+    with _pool_lock(arch, country, profile) as acquired:
+        if acquired:
+            try:
+                pool = _ensure_pool_unlocked(
+                    arch, country, proxy, dispenser_url, profile, size
+                )
+                if not pool:
+                    return None
+                i = _read_index(arch, country, profile)
+                token = pool[i % len(pool)]
+                _write_index(i + 1, arch, country, profile)
+                return token
+            except OSError as exc:
+                _pool_cache_error(exc)
+    return None
 
 
 def replace_pool_token(
@@ -722,26 +850,37 @@ def replace_pool_token(
     """Remove *failed_token* from the pool and replace it with a fresh one.
 
     Called when a mid-request AuthExpiredError reveals a token died early.
-    Returns the new token, or None if the dispenser is unavailable.
+    Reuses a current member if another caller already removed that credential.
+    Returns None if replacement or cache access fails.
     """
     if direct_auth_enabled():
         return fetch_token(arch=arch, country=country, proxy=proxy, profile=profile)
 
-    pool = _load_pool(arch, country, profile)
-    failed_gsf = failed_token.get("gsfId")
-    pool = [t for t in pool if t.get("gsfId") != failed_gsf]
-    new_token = fetch_token(
-        dispenser_url=dispenser_url,
-        arch=arch,
-        proxy=proxy,
-        profile=profile,
-        country=country,
-    )
-    if new_token:
-        new_token["_cached_at"] = time.time()
-        pool.append(new_token)
-    _save_pool(pool, arch, country, profile)
-    return new_token
+    with _pool_lock(arch, country, profile) as acquired:
+        if acquired:
+            try:
+                pool = _load_pool_unlocked(arch, country, profile)
+                failed = (failed_token.get("gsfId"), failed_token.get("authToken"))
+                survivors = [
+                    t for t in pool
+                    if (t.get("gsfId"), t.get("authToken")) != failed
+                ]
+                if len(survivors) == len(pool) and survivors:
+                    # Another caller already replaced this exact credential.
+                    return survivors[0]
+                _save_pool(survivors, arch, country, profile)
+                new_token = fetch_token(
+                    dispenser_url=dispenser_url, arch=arch, proxy=proxy,
+                    profile=profile, country=country,
+                )
+                if new_token:
+                    new_token["_cached_at"] = time.time()
+                    survivors.append(new_token)
+                    _save_pool(survivors, arch, country, profile)
+                return new_token
+            except OSError as exc:
+                _pool_cache_error(exc)
+    return None
 
 
 def ensure_auth(
