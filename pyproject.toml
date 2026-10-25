@@ -9,7 +9,7 @@ description = "Download APKs from Google Play Store with anonymous authenticatio
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [{ name = "Mikel Villota", email = "mikelvillotatic@gmail.com" }]
 keywords = ["google-play", "apk", "downloader", "android"]
 classifiers = [
