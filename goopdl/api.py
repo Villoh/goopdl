@@ -340,7 +340,12 @@ def fetch_app_item(
         raw = get_details_raw(package, auth, country=country, proxy=proxy)
     except AuthExpiredError:
         replace_pool_token(
-            auth, arch=arch, country=country, proxy=proxy, dispenser_url=dispenser_url
+            auth,
+            arch=arch,
+            country=country,
+            proxy=proxy,
+            dispenser_url=dispenser_url,
+            profile=profile,
         )
         auth = pick_pool_token(
             arch=arch,

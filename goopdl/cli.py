@@ -183,7 +183,7 @@ def auth(
         rprint("[bold green]Authenticated[/bold green]")
         return
 
-    path = save_auth(data, arch, country)
+    path = save_auth(data, arch, country, profile)
     rprint(
         Panel.fit(
             f"[bold green]Authenticated[/bold green]\n"
@@ -503,6 +503,7 @@ def info(
                         country=country,
                         proxy=proxy,
                         dispenser_url=dispenser,
+                        profile=profile,
                     )
                     auth_data = _require_auth(
                         arch, dispenser, country=country, proxy=proxy, profile=profile

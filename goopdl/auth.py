@@ -71,25 +71,47 @@ def _sanitize_country(country: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", country.upper())[:4]
 
 
-def _auth_path(arch: str, country: Optional[str] = None) -> Path:
+def _profile_suffix(arch: str, profile: Optional[str]) -> str:
+    """Use the canonical profile key for aliases; reject unsafe filename keys."""
+    if not profile:
+        return ""
+    match = find_profile(profile, arch)
+    key = match[0] if match else profile
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", key):
+        raise ValueError("Invalid profile cache key")
+    # Unknown names must not alias a valid key on case-insensitive filesystems.
+    return f"-profile-{key}" if match else f"-unknown-profile-{key}"
+
+
+def _auth_path(
+    arch: str, country: Optional[str] = None, profile: Optional[str] = None
+) -> Path:
     suffix = f"-{_sanitize_country(country)}" if country else ""
+    suffix += _profile_suffix(arch, profile)
     return _CONFIG_DIR / f"auth-{arch}{suffix}.json"
 
 
-def save_auth(data: dict, arch: str = "arm64", country: Optional[str] = None) -> Path:
+def save_auth(
+    data: dict,
+    arch: str = "arm64",
+    country: Optional[str] = None,
+    profile: Optional[str] = None,
+) -> Path:
     """Persist auth data to disk and return the file path."""
     _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     data["_cached_at"] = time.time()
-    path = _auth_path(arch, country)
+    path = _auth_path(arch, country, profile)
     path.write_text(json.dumps(data, indent=2))
     return path
 
 
 def load_cached_auth(
-    arch: str = "arm64", country: Optional[str] = None
+    arch: str = "arm64",
+    country: Optional[str] = None,
+    profile: Optional[str] = None,
 ) -> Optional[dict]:
     """Return cached auth dict or None."""
-    path = _auth_path(arch, country)
+    path = _auth_path(arch, country, profile)
     if not path.exists():
         return None
     try:
@@ -557,24 +579,31 @@ _MAX_TOKEN_AGE = 50 * 60  # 50 minutes — refresh before the ~1h Google expiry
 DEFAULT_PROBES = 5
 
 
-def _pool_path(arch: str, country: Optional[str]) -> Path:
+def _pool_path(
+    arch: str, country: Optional[str], profile: Optional[str] = None
+) -> Path:
     suffix = f"-{_sanitize_country(country)}" if country else ""
+    suffix += _profile_suffix(arch, profile)
     return _CONFIG_DIR / f"token-pool-{arch}{suffix}.json"
 
 
-def _load_pool(arch: str, country: Optional[str]) -> list[dict]:
-    """Return unexpired tokens from the on-disk pool for this arch+country."""
+def _load_pool(
+    arch: str, country: Optional[str], profile: Optional[str] = None
+) -> list[dict]:
+    """Return unexpired tokens for this arch+country+profile."""
     try:
-        tokens: list[dict] = json.loads(_pool_path(arch, country).read_text())
+        tokens: list[dict] = json.loads(_pool_path(arch, country, profile).read_text())
     except (OSError, json.JSONDecodeError):
         return []
     now = time.time()
     return [t for t in tokens if now - t.get("_cached_at", 0) < _MAX_TOKEN_AGE]
 
 
-def _save_pool(tokens: list[dict], arch: str, country: Optional[str]) -> None:
+def _save_pool(
+    tokens: list[dict], arch: str, country: Optional[str], profile: Optional[str] = None
+) -> None:
     _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    _pool_path(arch, country).write_text(json.dumps(tokens))
+    _pool_path(arch, country, profile).write_text(json.dumps(tokens))
 
 
 def ensure_pool(
@@ -585,7 +614,7 @@ def ensure_pool(
     profile: Optional[str] = None,
     size: int = DEFAULT_PROBES,
 ) -> list[dict]:
-    """Ensure the regional pool has exactly *size* valid tokens.
+    """Ensure the arch+country+profile pool has exactly *size* valid tokens.
 
     Only hits the Aurora dispenser for the deficit — if the pool already has
     *size* unexpired tokens, no network call is made at all.
@@ -603,7 +632,7 @@ def ensure_pool(
             tokens.append(token)
         return tokens
 
-    pool = _load_pool(arch, country)
+    pool = _load_pool(arch, country, profile)
     deficit = size - len(pool)
     if deficit > 0:
         label = country or "default"
@@ -622,25 +651,32 @@ def ensure_pool(
                 break
             t.setdefault("_cached_at", time.time())
             pool.append(t)
-        _save_pool(pool, arch, country)
+        _save_pool(pool, arch, country, profile)
     return pool
 
 
-def _index_path(arch: str, country: Optional[str]) -> Path:
+def _index_path(
+    arch: str, country: Optional[str], profile: Optional[str] = None
+) -> Path:
     suffix = f"-{_sanitize_country(country)}" if country else ""
+    suffix += _profile_suffix(arch, profile)
     return _CONFIG_DIR / f"pool-index-{arch}{suffix}.json"
 
 
-def _read_index(arch: str, country: Optional[str]) -> int:
+def _read_index(
+    arch: str, country: Optional[str], profile: Optional[str] = None
+) -> int:
     try:
-        return json.loads(_index_path(arch, country).read_text()).get("i", 0)
+        return json.loads(_index_path(arch, country, profile).read_text()).get("i", 0)
     except (OSError, json.JSONDecodeError):
         return 0
 
 
-def _write_index(i: int, arch: str, country: Optional[str]) -> None:
+def _write_index(
+    i: int, arch: str, country: Optional[str], profile: Optional[str] = None
+) -> None:
     _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    _index_path(arch, country).write_text(json.dumps({"i": i}))
+    _index_path(arch, country, profile).write_text(json.dumps({"i": i}))
 
 
 def pick_pool_token(
@@ -669,9 +705,9 @@ def pick_pool_token(
     )
     if not pool:
         return None
-    i = _read_index(arch, country)
+    i = _read_index(arch, country, profile)
     token = pool[i % len(pool)]
-    _write_index(i + 1, arch, country)
+    _write_index(i + 1, arch, country, profile)
     return token
 
 
@@ -691,7 +727,7 @@ def replace_pool_token(
     if direct_auth_enabled():
         return fetch_token(arch=arch, country=country, proxy=proxy, profile=profile)
 
-    pool = _load_pool(arch, country)
+    pool = _load_pool(arch, country, profile)
     failed_gsf = failed_token.get("gsfId")
     pool = [t for t in pool if t.get("gsfId") != failed_gsf]
     new_token = fetch_token(
@@ -704,7 +740,7 @@ def replace_pool_token(
     if new_token:
         new_token["_cached_at"] = time.time()
         pool.append(new_token)
-    _save_pool(pool, arch, country)
+    _save_pool(pool, arch, country, profile)
     return new_token
 
 
@@ -718,7 +754,7 @@ def ensure_auth(
 ) -> Optional[dict]:
     """Return cached auth or fetch a new token transparently.
 
-    Each country gets its own cache file so tokens stay region-bound.
+    Each arch+country+profile gets its own cache file.
     Proactively refreshes tokens older than 50 minutes.
     Pass *force_refresh=True* to ignore cache entirely (e.g. after a 401).
     """
@@ -726,7 +762,7 @@ def ensure_auth(
         return fetch_token(arch=arch, country=country, proxy=proxy, profile=profile)
 
     if not force_refresh:
-        cached = load_cached_auth(arch, country)
+        cached = load_cached_auth(arch, country, profile)
         if cached and cached.get("authToken"):
             age = time.time() - cached.get("_cached_at", 0)
             if age < _MAX_TOKEN_AGE:
@@ -743,7 +779,7 @@ def ensure_auth(
         profile=profile,
     )
     if data:
-        save_auth(data, arch, country)
+        save_auth(data, arch, country, profile)
     return data
 
 
