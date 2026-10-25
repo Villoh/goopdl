@@ -6,17 +6,27 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import cast
+from unittest.mock import AsyncMock, patch
 
 import httpx
+from typer.testing import CliRunner
 
-from goopdl.api import _extract_delivery_from_fields
+from goopdl import cli
+from goopdl.api import (
+    AdditionalFile,
+    AppDetails,
+    DeliveryResult,
+    SplitInfo,
+    _extract_delivery_from_fields,
+)
 from goopdl.download import (
     DownloadSpec,
     IntegrityError,
     _download_one,
     _select_digest,
-    _write_manifest,
+    download_batch,
     make_progress,
+    write_manifest,
 )
 
 
@@ -116,7 +126,7 @@ class DeliveryIntegrityTest(unittest.TestCase):
                 sha256=encoded,
             )
             manifest = root / "manifest.json"
-            _write_manifest(manifest, [spec])
+            write_manifest(manifest, [spec])
             data = json.loads(manifest.read_text(encoding="utf-8"))
             self.assertEqual(
                 data,
@@ -232,6 +242,91 @@ class IncrementalDownloadTest(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertEqual(path.read_bytes(), b"good")
+
+
+class RequireIntegrityTest(unittest.TestCase):
+    @patch("goopdl.download._run_downloads", new_callable=AsyncMock)
+    def test_skips_files_google_sends_without_digest(self, run):
+        apk = DownloadSpec(
+            url="https://play.googleapis.com/base",
+            dest=Path("base.apk"),
+            integrity_required=True,
+        )
+        obb = DownloadSpec(url="https://play.googleapis.com/obb", dest=Path("x.obb"))
+
+        download_batch([obb], require_integrity=True)
+        run.assert_awaited_once()
+        with self.assertRaises(IntegrityError):
+            download_batch([apk, obb], require_integrity=True)
+
+
+class MultiArchManifestTest(unittest.TestCase):
+    def test_manifest_covers_every_architecture(self):
+        def delivery(split):
+            return DeliveryResult(
+                download_url="https://play.googleapis.com/base",
+                download_size=4,
+                sha256=digest(b"base", "sha256"),
+                splits=[
+                    SplitInfo(
+                        split,
+                        url=f"https://play.googleapis.com/{split}",
+                        size=5,
+                        sha256=digest(split.encode(), "sha256"),
+                    )
+                ],
+            )
+
+        deliveries = {
+            "arm64": delivery("config.arm64_v8a"),
+            "armv7": delivery("config.armeabi_v7a"),
+        }
+        # Google sends no digest for OBB files; they must not block the manifest.
+        deliveries["arm64"].additional_files.append(
+            AdditionalFile(size=3, url="https://play.googleapis.com/obb")
+        )
+
+        def fake_batch(specs, require_integrity=False):
+            self.assertTrue(require_integrity)
+            for spec in specs:
+                spec.dest.write_bytes(b"x")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "manifest.json"
+            with (
+                patch("goopdl.cli.pick_pool_token", return_value={"authToken": "t"}),
+                patch(
+                    "goopdl.cli._acquire_delivery",
+                    side_effect=lambda package, vc, arch, *rest: (
+                        AppDetails(package, version_string="1.0"),
+                        7,
+                        deliveries[arch],
+                    ),
+                ),
+                patch("goopdl.cli.download_batch", side_effect=fake_batch),
+            ):
+                result = CliRunner().invoke(
+                    cli.app,
+                    [
+                        "download", "pkg", "-a", "arm64,armv7", "--splits", "--extras",
+                        "-o", str(root), "--integrity-manifest", str(manifest),
+                    ],
+                )
+
+            self.assertEqual(result.exit_code, 0, result.output)
+            paths = [
+                entry["path"]
+                for entry in json.loads(manifest.read_text(encoding="utf-8"))["files"]
+            ]
+            self.assertEqual(
+                paths,
+                [
+                    "pkg-7.apk",
+                    "pkg-7-config.arm64_v8a.apk",
+                    "pkg-7-config.armeabi_v7a.apk",
+                ],
+            )
 
 
 if __name__ == "__main__":
