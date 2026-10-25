@@ -91,6 +91,7 @@ def _browser_candidates() -> list[Path]:
         "microsoft-edge",
         "microsoft-edge-stable",
         "brave-browser",
+        "brave",
     )
     candidates = [Path(path) for name in names if (path := shutil.which(name))]
 
@@ -205,7 +206,16 @@ def _wait_for_oauth_credentials(
                     return email, token
             _WAIT.wait(0.5)
     finally:
-        websocket.close()
+        try:
+            # Launcher wrappers may fork; close the browser itself without awaiting a reply.
+            websocket.send(json.dumps({"id": request_id + 1, "method": "Browser.close"}))
+            process.wait(timeout=5)
+        except (OSError, WebSocketException, TimeoutExpired):
+            pass
+        try:
+            websocket.close()
+        except (OSError, WebSocketException):
+            pass
     raise BrowserOAuthError("Google sign-in timed out before completion.")
 
 
