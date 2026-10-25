@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shlex
 import time
 from pathlib import Path
 
@@ -654,9 +656,16 @@ def _parse_archs(value: str) -> list[str]:
     return archs
 
 
-def _adb_install_command(package: str, version_code: int, dm: bool = False) -> str:
-    command = f"adb install-multiple {package}-{version_code}*.apk"
-    return f"{command} {package}-{version_code}.dm" if dm else command
+def _adb_install_command(specs: list[DownloadSpec]) -> str:
+    """Quote selected installable files for POSIX shells or Windows PowerShell."""
+    paths = [str(spec.dest) for spec in specs if spec.dest.suffix in {".apk", ".dm"}]
+    if os.name == "nt":
+        # PowerShell also treats U+2018–U+201B as single-quote delimiters.
+        return "adb install-multiple " + " ".join(
+            "'" + re.sub(r"['\u2018-\u201b]", lambda m: m.group() * 2, path) + "'"
+            for path in paths
+        )
+    return shlex.join(["adb", "install-multiple", *paths])
 
 
 def _parse_locales(value: str | None) -> list[str] | None:
@@ -1074,12 +1083,11 @@ def download(
     console.print(files_table)
 
     if delivery.splits and not no_splits:
-        command = _adb_install_command(
-            package, vc, dm=bool(dm and delivery.dex_metadata)
-        )
-        rprint(
-            "\n[dim]Tip: install split APKs to a device with[/dim]\n"
-            f"[dim]  [bold]{command}[/bold][/dim]"
+        command = _adb_install_command(all_specs)
+        shell = " (PowerShell)" if os.name == "nt" else ""
+        rprint(f"\n[dim]Tip: install split APKs to a device with{shell}[/dim]")
+        console.print(
+            f"  {command}", style="dim bold", markup=False, highlight=False, soft_wrap=True
         )
 
     rprint("\n[green bold]Download complete![/green bold]")
