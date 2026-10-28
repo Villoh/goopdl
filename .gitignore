@@ -16,3 +16,4 @@ env/
 .mypy_cache/
 .ruff_cache/
 .DS_Store
+result

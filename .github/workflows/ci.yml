@@ -50,3 +50,13 @@ jobs:
       - run: uv sync --locked
       - run: uv run python -m unittest discover -s tests
       - run: uv run python -m compileall -q goopdl tests
+
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@2126ae7fc54c9df00dd18f7f18754393182c73cd # v31.9.1
+      - run: nix flake check
+      - run: nix build .#default --print-build-logs
