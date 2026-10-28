@@ -20,6 +20,17 @@ Try it once without installing anything:
 uvx goopdl --help
 ```
 
+## With Nix
+
+The repository is a flake:
+
+```bash
+nix run github:Villoh/goopdl -- --help
+```
+
+To install it declaratively, add it as an input and use `inputs.goopdl.packages.${system}.default`.
+`overlays.default` adds `goopdl` to every Python package set, for flakes that use it as a library.
+
 ## As a library
 
 Install it into the current environment:
