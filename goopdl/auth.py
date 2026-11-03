@@ -1,4 +1,13 @@
-"""Token dispenser authentication and Google Play header construction."""
+"""Token dispenser authentication and Google Play header construction.
+
+Tokens are cached as 0600 JSON files (auth-*, token-pool-*, pool-index-*)
+in a 0700 directory resolved by :func:`get_config_dir`: ``$GOOPDL_CONFIG_DIR``,
+else ``$XDG_CONFIG_HOME/goopdl``, else ``~/.config/goopdl``.
+
+Note: older releases always used ``~/.config/goopdl``. If XDG_CONFIG_HOME
+points elsewhere, existing cached tokens are not found there and are minted
+again; move the files or set GOOPDL_CONFIG_DIR=~/.config/goopdl to keep them.
+"""
 
 from __future__ import annotations
 
