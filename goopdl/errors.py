@@ -30,6 +30,7 @@ _LAZY = {
     "DirectAuthConfigurationError": "goopdl.auth",
     "DispenserRateLimitedError": "goopdl.auth",
     "DispenserUnavailableError": "goopdl.auth",
+    "PoolBusyError": "goopdl.auth",
     "InvalidArchError": "goopdl.auth",
     "AASTokenError": "goopdl.aastoken",
     "BrowserOAuthError": "goopdl.browser_oauth",
@@ -52,6 +53,7 @@ __all__ = [
     "DirectAuthConfigurationError",
     "DispenserRateLimitedError",
     "DispenserUnavailableError",
+    "PoolBusyError",
     "InvalidArchError",
     "AASTokenError",
     "BrowserOAuthError",
@@ -78,6 +80,7 @@ if TYPE_CHECKING:
         DispenserRateLimitedError,
         DispenserUnavailableError,
         InvalidArchError,
+        PoolBusyError,
     )
     from goopdl.browser_oauth import BrowserOAuthError
     from goopdl.download import DownloadError, IntegrityError

@@ -29,6 +29,7 @@ __all__ = [
     "DirectAuthConfigurationError",
     "DispenserRateLimitedError",
     "DispenserUnavailableError",
+    "PoolBusyError",
     "InvalidArchError",
     "AASTokenError",
     "BrowserOAuthError",
@@ -54,6 +55,7 @@ if TYPE_CHECKING:
         InvalidPackageError,
         NetworkError,
         PlayAPIError,
+        PoolBusyError,
         RateLimitedError,
         VersionUnavailableError,
     )

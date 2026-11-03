@@ -27,6 +27,7 @@ from goopdl.auth import (
     DirectAuthError,
     DispenserRateLimitedError,
     DispenserUnavailableError,
+    PoolBusyError,
     _build_httpx_proxy,
     _load_pool,
     build_headers,
@@ -1047,9 +1048,13 @@ def _acquire_single_token(
                 size=1,
                 raise_on_error=True,
             )
-        except DispenserRateLimitedError:
+        except PoolBusyError:
             raise
         except DirectAuthError as exc:
+            if exc.status in (400, 401, 403, 429) or (
+                isinstance(exc, DispenserUnavailableError) and exc.status is None
+            ):
+                raise
             auth, last_error = None, exc
         if auth:
             return auth
@@ -1222,7 +1227,14 @@ def download_app(
         raise PlayAPIError(str(exc), status_code=exc.status) from exc
     except DirectAuthError as exc:
         # DirectAuthError messages name only a non-secret protocol stage.
-        raise PlayAPIError(f"Direct Google authentication failed at {exc}.") from None
+        if exc.status == 429:
+            raise RateLimitedError(
+                f"Direct Google authentication failed at {exc}.",
+                retry_after=exc.retry_after,
+            ) from None
+        raise PlayAPIError(
+            f"Direct Google authentication failed at {exc}.", status_code=exc.status
+        ) from None
     if not auth:
         message = (
             "Direct Google authentication failed."
