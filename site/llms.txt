@@ -1,0 +1,35 @@
+# goopdl
+
+> goopdl is an open-source (MIT) command-line tool, written in Python, that downloads APKs from Google Play without a Google account. It fetches the base APK plus split APKs, OBB expansion files and Play Asset Delivery packs, for ARM64, ARMv7, x86, x86_64 and Android TV.
+
+Key facts:
+
+- Install: `uv tool install goopdl` or `pipx install goopdl`. Try once with `uvx goopdl --help`. Needs Python 3.10+. Also `nix run github:Villoh/goopdl`.
+- No account needed: anonymous tokens come from Aurora Store's public token dispenser and are pooled (5 per architecture and country, 50-minute lifetime). Signing in with a Google account (AAS token) is optional.
+- Main commands: `goopdl download <package>` (add `--splits` for split APKs, `--extras` for OBB files and asset packs), `goopdl latest` (newest version in a staged rollout), `goopdl info`, `goopdl search`, `goopdl list-splits`, `goopdl inspect-delivery`, `goopdl profiles`.
+- Any version: `-v` takes a version code (`231205015`) or a version string (`434.0.0.44.74`).
+- Regional builds: `--country` plus `--proxy`. Verified downloads: `--integrity-manifest` checks files against Google's SHA-256 digests.
+- After a split download it prints the matching `adb install-multiple` command.
+- Independent project, not affiliated with or endorsed by Google. Hard fork of appknox/gplaydl.
+
+## Docs
+
+- [Installation](https://villoh.github.io/goopdl/docs/installation.md): uv, pipx, pip, Nix, Docker, pinning versions, building from source
+- [Command reference](https://villoh.github.io/goopdl/docs/commands.md): every command and flag, output file names, integrity manifest, exit codes
+- [Authentication](https://villoh.github.io/goopdl/docs/authentication.md): anonymous tokens, custom dispensers, Google account mode, getting an AAS token
+- [How it works](https://villoh.github.io/goopdl/docs/how-it-works.md): download pipeline, token pool, staged rollouts, device profiles, architectures
+
+Every guide is also a web page at https://villoh.github.io/goopdl/docs/<name>/ (Spanish: /es/docs/<name>/). The full English text in one file: https://villoh.github.io/goopdl/llms-full.txt
+
+## Docs in Spanish
+
+- [Instalación](https://villoh.github.io/goopdl/docs/es/installation.md)
+- [Referencia de comandos](https://villoh.github.io/goopdl/docs/es/commands.md)
+- [Autenticación](https://villoh.github.io/goopdl/docs/es/authentication.md)
+- [Cómo funciona](https://villoh.github.io/goopdl/docs/es/how-it-works.md)
+
+## Optional
+
+- [Source code](https://github.com/Villoh/goopdl)
+- [PyPI package](https://pypi.org/project/goopdl/)
+- [README](https://github.com/Villoh/goopdl/blob/main/README.md)
