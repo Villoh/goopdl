@@ -383,7 +383,10 @@ def get_details_raw(
     proxy: str | None = None,
 ) -> dict:
     """Return the full protobuf response decoded as a nested dict."""
-    raw = _fetch_details_raw(package, auth, country=country, proxy=proxy)
+    try:
+        raw = _fetch_details_raw(package, auth, country=country, proxy=proxy)
+    finally:
+        proxy = None
     decoded = proto_to_dict(raw)
     try:
         doc = decoded["1"]["2"]["4"]

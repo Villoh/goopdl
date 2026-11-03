@@ -161,6 +161,24 @@ def _wait_for_oauth_credentials(
     process: subprocess.Popen[Any],
     timeout: float,
 ) -> tuple[str, str]:
+    failure = None
+    try:
+        return _capture_credentials(websocket_url, origin, process, timeout)
+    except BrowserOAuthError as exc:
+        failure = BrowserOAuthError(str(exc))
+    except Exception:
+        failure = BrowserOAuthError("Browser debugging connection failed.")
+    finally:
+        del websocket_url, origin, process
+    raise failure from None
+
+
+def _capture_credentials(
+    websocket_url: str,
+    origin: str,
+    process: subprocess.Popen[Any],
+    timeout: float,
+) -> tuple[str, str]:
     deadline = time.monotonic() + timeout
     request_id = 0
     try:
@@ -263,10 +281,9 @@ def _cdp_request(
 
 
 def _raise_cdp_error(response: dict[str, Any], action: str) -> None:
-    if error := response.get("error"):
-        raise BrowserOAuthError(
-            f"Browser rejected {action}: {error.get('message', 'unknown error')}"
-        )
+    if response.get("error"):
+        del response
+        raise BrowserOAuthError(f"Browser rejected {action}.")
 
 
 def _profile_email(response: dict[str, Any]) -> str | None:
