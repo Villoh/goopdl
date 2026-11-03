@@ -249,15 +249,19 @@ class DispenserRateLimitedError(DirectAuthError):
 
 
 class DispenserUnavailableError(DirectAuthError):
-    """No dispenser attempt yielded a token; *status* is the last HTTP error."""
+    """No token was issued; *reason* distinguishes profile and endpoint failures."""
 
-    def __init__(self, status: Optional[int] = None):
+    def __init__(self, status: Optional[int] = None, *, reason: Optional[str] = None):
         super().__init__(
             f"Token dispenser unavailable (HTTP {status})."
             if status
             else "Token dispenser unavailable."
         )
         self.status = status
+        self.reason = reason or (
+            "transport" if status is None else
+            "server" if status >= 500 else "profile_rejected"
+        )
 
 
 def _direct_credentials() -> Optional[tuple[str, str]]:
@@ -617,8 +621,8 @@ def fetch_token(
     """Obtain direct Google auth when configured, otherwise use the dispenser.
 
     Anonymous mode rotates profiles until one yields an authToken, stopping on
-    throttling or repeated transport failures. With *country*, patches device
-    operators to register in that region. Returns the full auth dict on success,
+    throttling, server errors or repeated transport failures. With *country*,
+    patches device operators to register in that region. Returns the auth dict on success,
     None on failure or an unknown profile. With *raise_on_error*, raises
     DispenserRateLimitedError (429), DispenserUnavailableError (failed attempts)
     or DirectAuthError (direct mode), without retaining credential frames.
@@ -632,7 +636,7 @@ def fetch_token(
     except DispenserRateLimitedError as exc:
         error = DispenserRateLimitedError(exc.retry_after)
     except DispenserUnavailableError as exc:
-        error = DispenserUnavailableError(exc.status)
+        error = DispenserUnavailableError(exc.status, reason=exc.reason)
     except DirectAuthError as exc:
         error = DirectAuthError(
             str(exc), stage=exc.stage, status=exc.status, retry_after=exc.retry_after
@@ -706,6 +710,7 @@ def _fetch_token_impl(
     # the same region (index 0) and pile all their requests on one exit IP
     region_start = random.randrange(len(DISPENSER_PROXY_REGIONS))
     last_status: Optional[int] = None
+    last_reason = "transport"
     transport_failures = 0
     for idx, (profile_name, profile_data) in enumerate(profiles):
         device = profile_data.get("UserReadableName", profile_name)
@@ -722,6 +727,11 @@ def _fetch_token_impl(
                 url, json=payload, headers=headers, timeout=30, proxy=httpx_proxy
             )
             transport_failures = 0
+            last_status = resp.status_code
+            last_reason = "server" if resp.status_code >= 500 else "profile_rejected"
+            if resp.status_code >= 500:
+                logger.warning("Dispenser returned HTTP %s", resp.status_code)
+                break  # changing device profiles cannot repair the endpoint
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("authToken"):
@@ -733,7 +743,6 @@ def _fetch_token_impl(
                 logger.warning(
                     "Dispenser returned HTTP %s for %s", resp.status_code, device
                 )
-                last_status = resp.status_code
                 if resp.status_code == 429:
                     if raise_on_error:
                         from goopdl.api import _parse_retry_after  # api imports auth
@@ -747,6 +756,7 @@ def _fetch_token_impl(
         except httpx.TransportError as exc:
             logger.warning("Dispenser transport failed: %s", type(exc).__name__)
             last_status = None
+            last_reason = "transport"
             transport_failures += 1
             if transport_failures >= _MAX_DISPENSER_TRANSPORT_FAILURES:
                 break
@@ -757,7 +767,7 @@ def _fetch_token_impl(
             continue
 
     if raise_on_error:
-        raise DispenserUnavailableError(last_status)
+        raise DispenserUnavailableError(last_status, reason=last_reason)
     return None
 
 
