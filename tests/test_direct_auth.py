@@ -455,6 +455,46 @@ class DirectAuthTest(unittest.TestCase):
             self.assertNotIn(secret, result.output)
         save_auth.assert_not_called()
 
+    def test_raised_error_carries_no_credential_frames(self) -> None:
+        environment = {
+            "GOOPDL_ACCOUNT_EMAIL": "account@example.test",
+            "GOOPDL_AAS_TOKEN": "aas_et/persistent-secret",
+        }
+        failures = {
+            "stage": Mock(status_code=403, content=b""),
+            "unexpected": RuntimeError("boom"),
+        }
+        for name, failure in failures.items():
+            with (
+                self.subTest(name),
+                patch.dict(os.environ, environment, clear=True),
+                patch("goopdl.auth.httpx.post", side_effect=[failure]),
+                patch("goopdl.auth.logger"),
+            ):
+                # Not assertRaises: it strips the traceback under test.
+                try:
+                    fetch_token(raise_on_error=True)
+                except DirectAuthError as exc:
+                    error = exc
+                else:
+                    self.fail("fetch_token did not raise")
+
+            self.assertIsNone(error.__cause__)
+            self.assertIsNone(error.__context__)
+            if name == "stage":
+                self.assertEqual("checkin (HTTP 403)", str(error))
+            tb = error.__traceback__
+            assert tb is not None
+            tb = tb.tb_next  # skip this test's own frame (it holds the env dict)
+            self.assertIsNotNone(tb)
+            while tb is not None:
+                frame_locals = tb.tb_frame.f_locals
+                self.assertNotIn("aas_token", frame_locals)
+                self.assertIsNone(frame_locals.get("credentials"))
+                for value in frame_locals.values():
+                    self.assertNotIn("persistent-secret", repr(value))
+                tb = tb.tb_next
+
 
 if __name__ == "__main__":
     unittest.main()
