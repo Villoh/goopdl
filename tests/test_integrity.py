@@ -2,6 +2,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -276,6 +277,11 @@ class RequireIntegrityTest(unittest.TestCase):
 
 
 class MultiArchManifestTest(unittest.TestCase):
+    def setUp(self):
+        environment = patch.dict(os.environ, {}, clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def test_manifest_covers_every_architecture(self):
         def delivery(split):
             return DeliveryResult(
