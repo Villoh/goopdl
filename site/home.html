@@ -1,0 +1,175 @@
+  <main id="top">
+    <!-- ── hero ─────────────────────────────────────────────── -->
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="lockup" aria-hidden="true">
+          <svg class="mark" viewBox="0 0 240 240" width="88" height="88">
+            <rect class="mark-sq" width="240" height="240" rx="56" fill="#121212"/>
+            <path class="mark-drop" d="M120 36 C120 36 56 100 56 142 A64 64 0 0 0 184 142 C184 100 120 36 120 36 Z" fill="#FF5A1F"/>
+            <path class="mark-chev" d="M94 136 L120 162 L146 136" fill="none" stroke="#121212" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="word"><i>g</i><i>o</i><i>o</i><i>p</i><i>d</i><i>l</i></span>
+        </div>
+        <h1 class="rise" style="--d:1.5s" data-i18n="hero.title">Google Play APKs,<br><em>straight from your terminal.</em></h1>
+        <p class="lead rise" style="--d:1.65s" data-i18n="hero.lead">Download any app from Google Play from the command line. No Google account needed. Split APKs, OBB files and asset packs included.</p>
+        <div class="cta rise" style="--d:1.8s">
+          <button class="pill copy" data-copy="uv tool install goopdl">
+            <span class="muted">$</span> uv tool install goopdl <span class="copy-label" data-i18n="copy">Copy</span>
+          </button>
+          <a class="btn btn-ghost" href="docs/installation/" data-i18n="hero.docs">Read the docs →</a>
+        </div>
+      </div>
+
+      <div class="term rise" style="--d:.6s" id="term" aria-label="Terminal demo: goopdl download com.whatsapp --splits">
+        <div class="term-bar"><i></i><i></i><i></i><span>~/apks</span></div>
+        <div class="term-body">
+          <p><b class="o">&gt;</b> <span id="cmd"></span><span class="caret"></span></p>
+          <div class="step box"><span class="box-title">com.whatsapp</span><b>WhatsApp Messenger</b><span class="muted">2.26.41.77 &nbsp;(vc 264107700)</span></div>
+          <p class="step"><b>Downloading 3 files</b></p>
+          <div class="step rows">
+            <div class="row" style="--t:2.4s"><span class="ic"></span><span class="fn">com.whatsapp-264107700.apk</span><span class="bar"><i></i></span><span class="pc">0%</span></div>
+            <div class="row" style="--t:1.5s"><span class="ic"></span><span class="fn">…-config.arm64_v8a.apk</span><span class="bar"><i></i></span><span class="pc">0%</span></div>
+            <div class="row" style="--t:.9s"><span class="ic"></span><span class="fn">…-config.xxhdpi.apk</span><span class="bar"><i></i></span><span class="pc">0%</span></div>
+          </div>
+          <p class="step"><b class="o">Download complete!</b></p>
+          <p class="step muted small">adb install-multiple com.whatsapp-264107700.apk …</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── marquee ─────────────────────────────────────────── -->
+    <div class="marquee" aria-hidden="true">
+      <div class="marquee-track" data-i18n="marquee">
+        <span>base APK</span><span>split APKs</span><span>OBB files</span><span>asset packs</span><span>DEX metadata</span><span>integrity manifest</span><span>staged rollouts</span><span>regional builds</span>
+        <span>base APK</span><span>split APKs</span><span>OBB files</span><span>asset packs</span><span>DEX metadata</span><span>integrity manifest</span><span>staged rollouts</span><span>regional builds</span>
+      </div>
+    </div>
+
+    <!-- ── no account ──────────────────────────────────────── -->
+    <section class="split reveal" id="account">
+      <div>
+        <p class="eyebrow" data-i18n="account.eyebrow">Authentication</p>
+        <h2 data-i18n="account.title">No Google<br><em>account.</em></h2>
+        <p class="lead" data-i18n="account.lead">goopdl fetches an anonymous token from Aurora Store's public dispenser on first use. No <code>goopdl auth</code>, no sign-in. You can still <a href="docs/authentication/#google-account">use your own Google account</a> if you prefer.</p>
+      </div>
+      <div class="stage account-stage">
+        <div class="signin">
+          <b data-i18n="signin.title">Sign in</b>
+          <span class="field" data-i18n="signin.email">Email</span>
+          <span class="field" data-i18n="signin.password">Password</span>
+          <span class="signin-next" data-i18n="signin.next">Next</span>
+          <svg class="strike" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M4 6 L96 94"/></svg>
+        </div>
+        <div class="token">
+          <span class="tick"><svg viewBox="0 0 24 24"><path d="M6 12.5 L10 16.5 L18 8"/></svg></span>
+          <code><b>aas_et/</b><span>••••••••••</span></code>
+          <small data-i18n="token.ready">anonymous token · ready</small>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── any device ──────────────────────────────────────── -->
+    <section class="split reveal" id="devices">
+      <div>
+        <p class="eyebrow" data-i18n="devices.eyebrow">Architectures</p>
+        <h2 data-i18n="devices.title">Any device.</h2>
+        <p class="slot-line"><span class="muted">-a</span> <span class="slot"><span class="slot-track" id="slot"><b>arm64</b><b>armv7</b><b>x86</b><b>x86_64</b><b>tv</b></span></span></p>
+        <p class="lead" data-i18n="devices.lead">ARM64, ARMv7, x86, x86_64 and Android TV. Bundled device profiles rotate automatically, so Google serves the right build. Comma-separate several to get one download each.</p>
+      </div>
+      <div class="stage device-stage">
+        <div class="device" id="device">
+          <svg viewBox="0 0 240 240"><path d="M120 36 C120 36 56 100 56 142 A64 64 0 0 0 184 142 C184 100 120 36 120 36 Z" fill="#FF5A1F"/><path d="M94 136 L120 162 L146 136" fill="none" stroke="#1E1E1C" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <span class="device-label" id="device-label">arm64-v8a</span>
+      </div>
+    </section>
+
+    <!-- ── features ────────────────────────────────────────── -->
+    <section id="features" class="section">
+      <p class="eyebrow reveal" data-i18n="features.eyebrow">Features</p>
+      <h2 class="reveal" data-i18n="features.title">The whole app,<br><em>any version.</em></h2>
+      <div class="grid">
+        <article class="card reveal"><span class="num">01</span><h3 data-i18n="f1.h">No account required</h3><p data-i18n="f1.p">Anonymous tokens from Aurora Store's dispenser, pooled and reused so you stay under its rate limit.</p></article>
+        <article class="card reveal"><span class="num">02</span><h3 data-i18n="f2.h">The whole app</h3><p data-i18n="f2.p">Base APK, split APKs, OBB expansion files and Play Asset Delivery packs, streamed in parallel.</p></article>
+        <article class="card reveal"><span class="num">03</span><h3 data-i18n="f3.h">Any version</h3><p data-i18n="f3.p">Download by version code or version string, or find the newest one Google is rolling out with <code>goopdl latest</code>.</p></article>
+        <article class="card reveal"><span class="num">04</span><h3 data-i18n="f4.h">Any device</h3><p data-i18n="f4.p">ARM64, ARMv7, x86, x86_64 and Android TV, with bundled device profiles that rotate automatically.</p></article>
+        <article class="card reveal"><span class="num">05</span><h3 data-i18n="f5.h">Regional builds</h3><p data-i18n="f5.p">Combine <code>--country</code> and <code>--proxy</code> to get a specific region's variant of an app.</p></article>
+        <article class="card reveal"><span class="num">06</span><h3 data-i18n="f6.h">Verified downloads</h3><p data-i18n="f6.p">Check every file against Google's SHA-256 digests and write an integrity manifest with <code>--integrity-manifest</code>.</p></article>
+      </div>
+    </section>
+
+    <!-- ── pipeline ────────────────────────────────────────── -->
+    <section id="how" class="section dark">
+      <p class="eyebrow reveal" data-i18n="how.eyebrow">How it works</p>
+      <h2 class="reveal" data-i18n="how.title">Five steps,<br><em>one command.</em></h2>
+      <ol class="pipeline reveal">
+        <li><span>1</span><h3 data-i18n="s1.h">Authenticate</h3><p data-i18n="s1.p">Anonymous token from the dispenser, rotating device profiles until one works. Or your Google account.</p></li>
+        <li><span>2</span><h3 data-i18n="s2.h">Fetch details</h3><p data-i18n="s2.p">Version, size and splits from Google Play's protobuf API.</p></li>
+        <li><span>3</span><h3 data-i18n="s3.h">Purchase</h3><p data-i18n="s3.p">"Buy" the free app to get download authorization.</p></li>
+        <li><span>4</span><h3 data-i18n="s4.h">Get delivery</h3><p data-i18n="s4.p">Download URLs for base APK, splits, OBB files and asset packs.</p></li>
+        <li><span>5</span><h3 data-i18n="s5.h">Download</h3><p data-i18n="s5.p">Stream from Google's CDN in parallel. Asset packs are decompressed on the fly.</p></li>
+      </ol>
+      <div class="stats">
+        <div class="stat reveal"><b data-count="5">0</b><span data-i18n="stat1">tokens pooled per arch &amp; country</span></div>
+        <div class="stat reveal"><b data-count="50" data-suffix=" min">0</b><span data-i18n="stat2">token lifetime, refreshed only when missing</span></div>
+        <div class="stat reveal"><b data-count="5">0</b><span data-i18n="stat3">architectures, including Android TV</span></div>
+        <div class="stat reveal"><b data-count="0">0</b><span data-i18n="stat4">Google accounts needed to get started</span></div>
+      </div>
+    </section>
+
+    <!-- ── video ───────────────────────────────────────────── -->
+    <section class="section video-section">
+      <p class="eyebrow reveal" data-i18n="video.eyebrow">20 seconds</p>
+      <h2 class="reveal" data-i18n="video.title">See it <em>in motion.</em></h2>
+      <div class="video reveal">
+        <video src="{{root}}assets/goopdl-launch.mp4" poster="{{root}}assets/poster.jpg" controls playsinline preload="none" width="1920" height="1080"></video>
+      </div>
+    </section>
+
+    <!-- ── commands ────────────────────────────────────────── -->
+    <section id="commands" class="section">
+      <p class="eyebrow reveal" data-i18n="cmds.eyebrow">Quick start</p>
+      <h2 class="reveal" data-i18n="cmds.title">Ten commands.<br><em>Start with one.</em></h2>
+      <div class="cmds">
+        <div class="cmd reveal"><code>goopdl download com.whatsapp</code><span data-i18n="cmd1">Latest base APK</span></div>
+        <div class="cmd reveal"><code>goopdl download com.whatsapp --splits --extras -o ./apks</code><span data-i18n="cmd2">Base, splits, OBB files and asset packs</span></div>
+        <div class="cmd reveal"><code>goopdl search "file manager"</code><span data-i18n="cmd3">Find a package name</span></div>
+        <div class="cmd reveal"><code>goopdl info com.whatsapp</code><span data-i18n="cmd4">App details</span></div>
+        <div class="cmd reveal"><code>goopdl latest com.instagram.android</code><span data-i18n="cmd5">Newest version in staged rollout</span></div>
+        <div class="cmd reveal"><code>goopdl download com.whatsapp -v 231205015</code><span data-i18n="cmd6">A specific version</span></div>
+        <div class="cmd reveal"><code>goopdl download com.whatsapp -a armv7</code><span data-i18n="cmd7">A 32-bit ARM build</span></div>
+        <div class="cmd reveal"><code>goopdl download com.whatsapp -c IN -p socks5://host:1080</code><span data-i18n="cmd8">A regional variant</span></div>
+      </div>
+      <p class="more reveal"><a href="docs/commands/" data-i18n="cmds.more">Full command reference →</a></p>
+    </section>
+
+    <!-- ── faq: the build also turns these into FAQPage JSON-LD ───── -->
+    <section id="faq" class="section faq">
+      <p class="eyebrow reveal" data-i18n="faq.eyebrow">FAQ</p>
+      <h2 class="reveal" data-i18n="faq.title">Questions,<br><em>answered.</em></h2>
+      <div class="faq-list">
+        <details class="faq-item reveal"><summary data-i18n="faq.q1">Is goopdl free?</summary><div class="faq-a" data-i18n="faq.a1">Yes. goopdl is free and open source under the MIT license. Install it with <code>uv tool install goopdl</code> or <code>pipx install goopdl</code>. It needs Python 3.10 or newer and runs on Linux, macOS and Windows.</div></details>
+        <details class="faq-item reveal"><summary data-i18n="faq.q2">Do I need a Google account to download APKs?</summary><div class="faq-a" data-i18n="faq.a2">No. On first use goopdl gets an anonymous token from Aurora Store's public token dispenser. If you prefer, you can sign in with a throwaway Google account and its AAS token.</div></details>
+        <details class="faq-item reveal"><summary data-i18n="faq.q3">How do I download split APKs, OBB files and asset packs?</summary><div class="faq-a" data-i18n="faq.a3">Run <code>goopdl download com.example.app --splits --extras</code>. <code>--splits</code> adds the split APKs and <code>--extras</code> adds OBB expansion files and Play Asset Delivery packs.</div></details>
+        <details class="faq-item reveal"><summary data-i18n="faq.q4">How do I install split APKs on my phone?</summary><div class="faq-a" data-i18n="faq.a4">After a split download, goopdl prints the exact <code>adb install-multiple</code> command for the files it downloaded. Connect your device and run it.</div></details>
+        <details class="faq-item reveal"><summary data-i18n="faq.q5">Can I download an older or a specific version?</summary><div class="faq-a" data-i18n="faq.a5">Yes. Pass a version code (<code>-v 231205015</code>) or a version string (<code>-v 434.0.0.44.74</code>). For a version string, goopdl tries fresh GSF IDs until one of them sees that version.</div></details>
+        <details class="faq-item reveal"><summary data-i18n="faq.q6">How do I get the newest version during a staged rollout?</summary><div class="faq-a" data-i18n="faq.a6">Run <code>goopdl latest com.example.app</code>. Google rolls updates out by device cohort, so goopdl asks through several GSF IDs and keeps the highest version code it sees.</div></details>
+        <details class="faq-item reveal"><summary data-i18n="faq.q7">Which devices and architectures are supported?</summary><div class="faq-a" data-i18n="faq.a7"><code>arm64</code> (the default), <code>armv7</code>, <code>x86</code>, <code>x86_64</code> and Android TV (<code>tv</code>), chosen with <code>--arch</code>. Comma-separate several to get one download per architecture.</div></details>
+        <details class="faq-item reveal"><summary data-i18n="faq.q8">How do I get the version of an app for another country?</summary><div class="faq-a" data-i18n="faq.a8">Combine <code>--country</code> with a <code>--proxy</code> located in that country. <code>--country</code> on its own only changes the region headers.</div></details>
+        <details class="faq-item reveal"><summary data-i18n="faq.q9">Can I verify the downloaded files?</summary><div class="faq-a" data-i18n="faq.a9">Yes. <code>--integrity-manifest</code> checks every base and split APK against Google's digests (SHA-256, or SHA-1 when that's all Google sends) and writes a JSON manifest. Google sends no digests for OBB files and asset packs, so those aren't verified.</div></details>
+        <details class="faq-item reveal"><summary data-i18n="faq.q10">What happens if I get rate-limited?</summary><div class="faq-a" data-i18n="faq.a10">goopdl keeps a pool of 5 anonymous tokens per architecture and country and only asks for missing ones, which keeps it under the dispenser's limit of about 20 requests per hour. If Google Play answers HTTP 429, goopdl retries the delivery request twice, then exits with code 5. For high-volume use there is <code>goopdl fast-download</code>.</div></details>
+      </div>
+    </section>
+
+    <!-- ── final cta ───────────────────────────────────────── -->
+    <section class="final reveal">
+      <img src="{{root}}assets/icon.svg" alt="" width="96" height="96" class="final-mark">
+      <h2 data-i18n="final.title">Get goopdl.</h2>
+      <div class="installs">
+        <button class="pill copy" data-copy="uv tool install goopdl"><span class="muted">$</span> uv tool install goopdl <span class="copy-label" data-i18n="copy">Copy</span></button>
+        <button class="pill pill-light copy" data-copy="pipx install goopdl"><span class="muted">$</span> pipx install goopdl <span class="copy-label" data-i18n="copy">Copy</span></button>
+        <button class="pill pill-light copy" data-copy="nix run github:Villoh/goopdl -- --help"><span class="muted">$</span> nix run github:Villoh/goopdl <span class="copy-label" data-i18n="copy">Copy</span></button>
+      </div>
+      <p class="muted" data-i18n="final.note">Python 3.10+ · or try it once with <code>uvx goopdl --help</code></p>
+    </section>
+  </main>
