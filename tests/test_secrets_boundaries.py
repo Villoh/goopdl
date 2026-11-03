@@ -185,5 +185,45 @@ class AccountBoundariesTest(BoundaryCase):
         self.assert_sanitized(error)
 
 
+class LockBoundariesTest(BoundaryCase):
+    def test_new_lock_is_private_even_with_permissive_umask(self):
+        if os.name == "nt":
+            self.skipTest("POSIX permissions")
+        with tempfile.TemporaryDirectory() as tmp, patch.object(auth, "_CONFIG_DIR", Path(tmp)):
+            previous = os.umask(0)
+            try:
+                with auth._pool_lock("arm64", None, "Pv") as acquired:
+                    self.assertTrue(acquired)
+                lock = auth._pool_path("arm64", None, "Pv").with_suffix(".lock")
+                self.assertEqual(lock.stat().st_mode & 0o777, 0o600)
+            finally:
+                os.umask(previous)
+
+    def test_existing_lock_permissions_are_tightened(self):
+        if os.name == "nt":
+            self.skipTest("POSIX permissions")
+        with tempfile.TemporaryDirectory() as tmp, patch.object(auth, "_CONFIG_DIR", Path(tmp)):
+            lock = auth._pool_path("arm64", None, "Pv").with_suffix(".lock")
+            lock.touch(mode=0o644)
+            with auth._pool_lock("arm64", None, "Pv") as acquired:
+                self.assertTrue(acquired)
+            self.assertEqual(lock.stat().st_mode & 0o777, 0o600)
+
+    def test_symlink_lock_does_not_write_to_external_file(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(auth, "_CONFIG_DIR", Path(tmp) / "config"):
+            auth._CONFIG_DIR.mkdir()
+            target = Path(tmp) / "external"
+            target.touch()
+            lock = auth._pool_path("arm64", None, "Pv").with_suffix(".lock")
+            try:
+                lock.symlink_to(target)
+            except OSError:
+                self.skipTest("symlinks unavailable")
+            with auth._pool_lock("arm64", None, "Pv") as acquired:
+                self.assertFalse(acquired)
+            self.assertEqual(target.read_bytes(), b"")
+            self.assertTrue(lock.is_symlink())
+
+
 if __name__ == "__main__":
     unittest.main()
