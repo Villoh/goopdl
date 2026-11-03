@@ -47,15 +47,18 @@ class DownloadError(IntegrityError):
     ``status_code`` is the HTTP status (None for transport errors/timeouts).
     ``retryable`` is True when retrying the same URL later may succeed (429, 408,
     5xx, timeouts, dropped connections); a 403 usually means the signed URL expired and the delivery
-    must be requested again. The message never contains the signed URL.
+    must be requested again. ``retry_after`` is the CDN's Retry-After delay in
+    seconds for HTTP 429/503, or None. The message never contains the signed URL.
     """
 
     def __init__(
-        self, message: str, status_code: int | None = None, retryable: bool = False
+        self, message: str, status_code: int | None = None, retryable: bool = False,
+        retry_after: float | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.retryable = retryable
+        self.retry_after = retry_after
 
 
 # Transient transport failures only; UnsupportedProtocol, ProxyError and
@@ -69,11 +72,17 @@ _TRANSIENT_ERRORS = (
 
 def _download_error(label: str, exc: httpx.HTTPError) -> DownloadError:
     if isinstance(exc, httpx.HTTPStatusError):
+        # api imports download; resolve this helper only once both are loaded.
+        from goopdl.api import _parse_retry_after
+
         status = exc.response.status_code
         return DownloadError(
             f"download failed for {label} (HTTP {status})",
             status_code=status,
             retryable=status in (408, 429) or status >= 500,
+            retry_after=(
+                _parse_retry_after(exc.response.headers) if status in (429, 503) else None
+            ),
         )
     return DownloadError(
         f"download failed for {label} ({type(exc).__name__})",
@@ -170,84 +179,129 @@ async def _download_one(
     sem: asyncio.Semaphore,
 ) -> Path:
     """Stream-download one file, verify final bytes, then publish it atomically."""
-    async with sem:
-        headers: dict[str, str] = {}
-        if spec.cookies:
-            parts = [f"{c['name']}={c['value']}" for c in spec.cookies]
-            headers["Cookie"] = "; ".join(parts)
+    async def transfer(
+        spec: DownloadSpec,
+        client: httpx.AsyncClient,
+        on_progress: ProgressCallback | None,
+    ) -> Path:
+        from goopdl.api import _safe_cdn_url
 
-        label = spec.label or spec.dest.name
-        integrity = (
-            _select_digest(spec)
-            if (
-                spec.integrity_required
-                or spec.expected_size
-                or spec.sha1
-                or spec.sha256
+        async with sem:
+            headers: dict[str, str] = {}
+            if spec.cookies:
+                headers["Cookie"] = "; ".join(
+                    f"{c['name']}={c['value']}" for c in spec.cookies
+                )
+
+            label = spec.label or spec.dest.name
+            integrity = (
+                _select_digest(spec)
+                if spec.integrity_required or spec.sha1 or spec.sha256
+                else None
             )
-            else None
-        )
-        if integrity and await asyncio.to_thread(
-            _file_matches, spec.dest, spec.expected_size, integrity[0], integrity[2]
-        ):
-            if on_progress:
-                on_progress(label, spec.expected_size, spec.expected_size)
-            return spec.dest
-
-        calculated = hashlib.new(integrity[0]) if integrity else None
-        written = 0
-        temporary = _temporary_path(spec.dest)
-
-        try:
-            decompressor = (
-                zlib.decompressobj(zlib.MAX_WBITS | 16) if spec.gzipped else None
-            )
-            async with client.stream("GET", spec.url, headers=headers) as resp:
-                resp.raise_for_status()
-                total = int(resp.headers.get("Content-Length", 0)) or None
-                received = 0
+            if integrity and await asyncio.to_thread(
+                _file_matches, spec.dest, spec.expected_size, integrity[0], integrity[2]
+            ):
                 if on_progress:
-                    on_progress(label, received, total)
+                    on_progress(label, spec.expected_size, spec.expected_size)
+                return spec.dest
 
-                with temporary.open("wb") as downloaded:
-                    async for chunk in resp.aiter_bytes(chunk_size=CHUNK_SIZE):
-                        output = (
-                            decompressor.decompress(chunk) if decompressor else chunk
-                        )
-                        downloaded.write(output)
-                        written += len(output)
-                        if calculated:
-                            calculated.update(output)
-                        received += len(chunk)
+            calculated = hashlib.new(integrity[0]) if integrity else None
+            written = 0
+            temporary = _temporary_path(spec.dest)
+            failure = None
+            try:
+                decompressor = (
+                    zlib.decompressobj(zlib.MAX_WBITS | 16) if spec.gzipped else None
+                )
+                # Override even an injected client's follow_redirects=True.
+                async with client.stream(
+                    "GET", spec.url, headers=headers, follow_redirects=False
+                ) as initial:
+                    resp = initial
+                    try:
+                        redirects = 0
+                        while getattr(resp, "has_redirect_location", False):
+                            request = resp.next_request
+                            if (
+                                redirects >= 5
+                                or request is None
+                                or not _safe_cdn_url(str(request.url))
+                            ):
+                                raise DownloadError(f"unsafe or excessive CDN redirect for {label}")
+                            if request.url.netloc != httpx.URL(spec.url).netloc:
+                                for name in ("Authorization", "Proxy-Authorization", "Cookie"):
+                                    request.headers.pop(name, None)
+                            await resp.aclose()
+                            resp = await client.send(
+                                request, stream=True, follow_redirects=False, auth=None
+                            )
+                            redirects += 1
+                        resp.raise_for_status()
+                        total = int(resp.headers.get("Content-Length", 0)) or None
+                        received = 0
                         if on_progress:
                             on_progress(label, received, total)
 
-                    if decompressor:
-                        output = decompressor.flush()
-                        downloaded.write(output)
-                        written += len(output)
-                        if calculated:
-                            calculated.update(output)
+                        with temporary.open("wb") as downloaded:
+                            async for chunk in resp.aiter_bytes(chunk_size=CHUNK_SIZE):
+                                pending = chunk
+                                while pending:
+                                    if decompressor:
+                                        # One probe byte detects overrun without expanding a bomb.
+                                        limit = (
+                                            min(CHUNK_SIZE, spec.expected_size - written + 1)
+                                            if spec.expected_size > 0 else CHUNK_SIZE
+                                        )
+                                        output = decompressor.decompress(pending, limit)
+                                        pending = decompressor.unconsumed_tail
+                                    else:
+                                        output, pending = pending, b""
+                                    if spec.expected_size > 0 and written + len(output) > spec.expected_size:
+                                        raise IntegrityError(f"size mismatch for {label}")
+                                    downloaded.write(output)
+                                    written += len(output)
+                                    if calculated:
+                                        calculated.update(output)
+                                received += len(chunk)
+                                if on_progress:
+                                    on_progress(label, received, total)
 
-            if integrity:
-                _, _, expected = integrity
-                assert calculated is not None
-                if written != spec.expected_size:
+                            if decompressor and not decompressor.eof:
+                                raise DownloadError(
+                                    f"truncated gzip stream for {label}", retryable=True
+                                )
+                    finally:
+                        # The context manager closes the initial response.
+                        if resp is not initial:
+                            await resp.aclose()
+
+                if spec.expected_size > 0 and written != spec.expected_size:
                     raise IntegrityError(f"size mismatch for {label}")
-                if not hmac.compare_digest(calculated.digest(), expected):
-                    raise IntegrityError(f"digest mismatch for {label}")
-            os.replace(temporary, spec.dest)
-        except httpx.HTTPError as exc:
-            # from None: the httpx error (and its traceback) carries the signed URL.
-            raise _download_error(label, exc) from None
-        except zlib.error as exc:
-            raise DownloadError(
-                f"corrupt gzip data for {label}", retryable=False
-            ) from exc
-        finally:
-            temporary.unlink(missing_ok=True)
+                if integrity:
+                    assert calculated is not None
+                    if not hmac.compare_digest(calculated.digest(), integrity[2]):
+                        raise IntegrityError(f"digest mismatch for {label}")
+                os.replace(temporary, spec.dest)
+            except httpx.HTTPError as exc:
+                failure = _download_error(label, exc)
+            except zlib.error:
+                failure = DownloadError(f"corrupt gzip data for {label}")
+            finally:
+                temporary.unlink(missing_ok=True)
+            # Raising outside except prevents retaining the original exception.
+            if failure is not None:
+                raise failure from None
+            return spec.dest
 
-    return spec.dest
+    failure = None
+    try:
+        return await transfer(spec, client, on_progress)
+    except DownloadError as exc:
+        failure = exc.with_traceback(None)
+    # The transfer traceback and these inputs contain signed URLs/cookies.
+    del transfer, spec, client, on_progress
+    raise failure from None
 
 
 async def _run_downloads(
@@ -259,7 +313,7 @@ async def _run_downloads(
     """Download all files in parallel (up to max_concurrent at once)."""
     if client is None:
         timeout = httpx.Timeout(connect=15.0, read=300.0, write=30.0, pool=30.0)
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as own:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as own:
             await _run_downloads(specs, on_progress, max_concurrent, own)
         return
     sem = asyncio.Semaphore(max_concurrent)
@@ -297,7 +351,9 @@ async def download_files(
     Raises IntegrityError (missing metadata, size/digest mismatch) or
     DownloadError (HTTP/network failure). With require_integrity, refuses to
     start unless every integrity-required file (APKs, .dm) has digests.
-    ``client`` is used as-is and not closed; by default a fresh one is created.
+    ``client`` is not closed; by default a fresh one is created. Redirects are
+    followed manually (at most five), only to HTTPS Google CDN URLs. Cross-host
+    redirects never forward authorization headers or cookies.
 
     ``on_progress`` runs inline in the download loop: if it raises, that
     download is aborted, the other downloads are cancelled and the callback's
@@ -308,7 +364,15 @@ async def download_files(
         raise ValueError(f"max_concurrent must be >= 1, got {max_concurrent}")
     if require_integrity:
         _check_required_integrity(specs)
-    await _run_downloads(specs, on_progress, max_concurrent, client)
+    failure = None
+    try:
+        await _run_downloads(specs, on_progress, max_concurrent, client)
+    except DownloadError as exc:
+        failure = exc.with_traceback(None)
+    if failure is not None:
+        # Do not retain the batch/client or task tracebacks containing signed URLs.
+        del specs, client, on_progress
+        raise failure from None
 
 
 def _rich_callback(progress: Progress) -> ProgressCallback:
@@ -376,8 +440,16 @@ def download_batch(specs: list[DownloadSpec], require_integrity: bool = False) -
         )
     if require_integrity:
         _check_required_integrity(specs)
-    with make_progress() as progress:
-        asyncio.run(download_files(specs, on_progress=_rich_callback(progress)))
+    failure = None
+    progress = None
+    try:
+        with make_progress() as progress:
+            asyncio.run(download_files(specs, on_progress=_rich_callback(progress)))
+    except DownloadError as exc:
+        failure = exc.with_traceback(None)
+    if failure is not None:
+        del specs, progress
+        raise failure from None
 
 
 def __getattr__(name: str):
