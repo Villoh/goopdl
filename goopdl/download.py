@@ -10,6 +10,7 @@ import hmac
 import json
 import os
 import re
+import uuid
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -140,8 +141,11 @@ async def _download_one(
         task_id = progress.add_task("download", filename=label, total=None)
         calculated = hashlib.new(integrity[0]) if integrity else None
         written = 0
-        temporary = spec.dest.with_name(spec.dest.name + ".part")
-        temporary.unlink(missing_ok=True)
+        # Unique per call: concurrent downloads of the same dest must not share
+        # (or delete) each other's partial file.
+        temporary = spec.dest.with_name(
+            f"{spec.dest.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.part"
+        )
 
         try:
             decompressor = (
