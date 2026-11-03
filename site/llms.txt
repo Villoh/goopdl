@@ -4,7 +4,7 @@
 
 Key facts:
 
-- Install: `uv tool install goopdl` or `pipx install goopdl`. Try once with `uvx goopdl --help`. Needs Python 3.10+. Also `nix run github:Villoh/goopdl`.
+- Install: prebuilt binary, no Python needed (Linux/macOS: `curl -fsSL https://villoh.github.io/goopdl/install.sh | sh`; Windows: `irm https://villoh.github.io/goopdl/install.ps1 | iex`), or `uv tool install goopdl` / `pipx install goopdl` (Python 3.10+). Try once with `uvx goopdl --help`. Also `nix run github:Villoh/goopdl`.
 - No account needed: anonymous tokens come from Aurora Store's public token dispenser and are pooled (5 per architecture and country, 50-minute lifetime). Signing in with a Google account (AAS token) is optional.
 - Main commands: `goopdl download <package>` (add `--splits` for split APKs, `--extras` for OBB files and asset packs), `goopdl latest` (newest version in a staged rollout), `goopdl info`, `goopdl search`, `goopdl list-splits`, `goopdl inspect-delivery`, `goopdl profiles`.
 - Any version: `-v` takes a version code (`231205015`) or a version string (`434.0.0.44.74`).

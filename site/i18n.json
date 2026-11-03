@@ -91,7 +91,7 @@
     "faq.eyebrow": "Preguntas frecuentes",
     "faq.title": "Preguntas,<br><em>respondidas.</em>",
     "faq.q1": "¿goopdl es gratis?",
-    "faq.a1": "Sí. goopdl es gratuito y de código abierto, con licencia MIT. Instálalo con <code>uv tool install goopdl</code> o <code>pipx install goopdl</code>. Necesita Python 3.10 o posterior y funciona en Linux, macOS y Windows.",
+    "faq.a1": "Sí. goopdl es gratuito y de código abierto, con licencia MIT. Instala un binario precompilado con el instalador de una línea (sin Python), o usa <code>uv tool install goopdl</code> / <code>pipx install goopdl</code> (Python 3.10 o posterior). Funciona en Linux, macOS y Windows.",
     "faq.q2": "¿Necesito una cuenta de Google para descargar APKs?",
     "faq.a2": "No. La primera vez que lo usas, goopdl consigue un token anónimo del dispensador público de tokens de Aurora Store. Si lo prefieres, puedes usar una cuenta de Google desechable y su token AAS.",
     "faq.q3": "¿Cómo descargo los split APKs, los archivos OBB y los asset packs?",

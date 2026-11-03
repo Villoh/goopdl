@@ -33,7 +33,9 @@ jobs:
         run: |
           VERSION="${INPUT_VERSION:-${GITHUB_REF_NAME#v}}"
           sed -i "s/version = \"0.0.0\"/version = \"$VERSION\"/" pyproject.toml
-          sed -i "s/__version__ = \"0.0.0\"/__version__ = \"$VERSION\"/" goopdl/__init__.py
+          sed -i \
+            "s/__version__ = \"0.0.0\"/__version__ = \"$VERSION\"/" \
+            goopdl/__init__.py
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Install build tools
@@ -47,6 +49,66 @@ jobs:
         with:
           name: dist
           path: dist/
+
+  binaries:
+    needs: build
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # Linux builds on 22.04 so the binary runs on older glibc.
+          - target: linux-x86_64
+            os: ubuntu-22.04
+            ext: ""
+          - target: linux-arm64
+            os: ubuntu-22.04-arm
+            ext: ""
+          - target: macos-arm64
+            os: macos-latest
+            ext: ""
+          - target: windows-x86_64
+            os: windows-latest
+            ext: ".exe"
+          - target: windows-arm64
+            os: windows-11-arm
+            ext: ".exe"
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Set version from tag
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          VERSION="${INPUT_VERSION:-${GITHUB_REF_NAME#v}}"
+          sed -i.bak \
+            "s/__version__ = \"0.0.0\"/__version__ = \"$VERSION\"/" \
+            goopdl/__init__.py
+
+      - name: Build binary
+        env:
+          EXT: ${{ matrix.ext }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          pip install pyinstaller .
+          pyinstaller --onefile --name goopdl \
+            --collect-data goopdl goopdl/__main__.py
+          mv "dist/goopdl${EXT}" "goopdl-${TARGET}${EXT}"
+
+      - name: Smoke test
+        run: ./goopdl-${{ matrix.target }}${{ matrix.ext }} --version
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bin-${{ matrix.target }}
+          path: goopdl-${{ matrix.target }}${{ matrix.ext }}
 
   publish:
     needs: build
@@ -69,7 +131,7 @@ jobs:
           skip-existing: true
 
   release:
-    needs: build
+    needs: [build, binaries]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
@@ -84,6 +146,16 @@ jobs:
         with:
           name: dist
           path: dist/
+
+      - name: Download binaries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: bin-*
+          merge-multiple: true
+          path: bin/
+
+      - name: Checksums
+        run: cd bin && sha256sum goopdl-* > SHA256SUMS
 
       - name: Get previous tag
         id: previous
@@ -102,3 +174,5 @@ jobs:
           tag_name: ${{ needs.build.outputs.tag }}
           previous_tag: ${{ steps.previous.outputs.tag }}
           generate_release_notes: true
+          files: |
+            bin/*

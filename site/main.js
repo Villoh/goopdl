@@ -3,6 +3,34 @@ document.documentElement.classList.add("js");
 const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const sleep = (ms) => new Promise((r) => setTimeout(r, still ? 0 : ms));
 
+// ── install tabs: pick the visitor's OS first, others one click away ─────
+const guess = { Win: "windows", Mac: "macos" }[navigator.userAgent.match(/Win|Mac/)?.[0]] ?? "linux";
+document.querySelectorAll(".install").forEach((box) => {
+  const strip = box.querySelector(".tabs");
+  const tabs = [...strip.querySelectorAll('[role="tab"]')];
+  const panels = [...box.querySelectorAll('[role="tabpanel"]')];
+  const current = () => tabs.find((b) => b.ariaSelected === "true");
+  // The thumb slides to the selected tab; the new command slides in from that side.
+  const thumb = () => {
+    strip.style.setProperty("--x", `${current().offsetLeft}px`);
+    strip.style.setProperty("--w", `${current().offsetWidth}px`);
+  };
+  const select = (t) => {
+    const from = tabs.indexOf(t) < tabs.indexOf(current()) ? "-28px" : "28px";
+    tabs.forEach((b) => b.setAttribute("aria-selected", b === t));
+    panels.forEach((p) => {
+      p.style.setProperty("--from", from);
+      p.hidden = p.dataset.tab !== t.dataset.tab;
+    });
+    thumb();
+  };
+  tabs.forEach((t) => t.addEventListener("click", () => t !== current() && select(t)));
+  select(tabs.find((t) => t.dataset.tab === guess) ?? tabs[0]);
+  document.fonts.ready.then(thumb); // tab widths change once the font loads
+  addEventListener("resize", thumb);
+  requestAnimationFrame(() => strip.classList.add("ready")); // no slide on first paint
+});
+
 // ── scroll reveal: adds .in once an element enters the viewport ───────────
 const seen = new IntersectionObserver((entries) => {
   for (const e of entries) {

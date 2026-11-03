@@ -2,7 +2,27 @@
 
 **English** · [Español](es/installation.md)
 
-goopdl needs Python 3.10 or newer.
+## Prebuilt binary (no Python needed)
+
+Linux and macOS (x86_64 and arm64 on Linux, arm64 on macOS):
+
+```bash
+curl -fsSL https://villoh.github.io/goopdl/install.sh | sh
+```
+
+Windows (x86_64 and arm64), in PowerShell:
+
+```powershell
+irm https://villoh.github.io/goopdl/install.ps1 | iex
+```
+
+The script downloads the binary from the GitHub release, checks its SHA-256,
+and copies it to `~/.local/bin` (Linux/macOS) or `%LOCALAPPDATA%\goopdl\bin`
+(Windows). It never edits your `PATH`; it prints the command to add the
+directory if needed. Set `GOOPDL_VERSION=1.3.1` to pin a version and
+`GOOPDL_INSTALL_DIR` to change the destination. To update, run it again.
+
+The rest of this page assumes Python 3.10 or newer.
 
 ## As a CLI tool
 

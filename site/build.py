@@ -382,6 +382,8 @@ def main() -> int:
     for name in STATIC:
         src = SRC / name
         (shutil.copytree if src.is_dir() else shutil.copy2)(src, OUT / name)
+    for name in ("install.sh", "install.ps1"):  # served at <site>/install.{sh,ps1}
+        shutil.copy2(REPO / name, OUT / name)
     # raw Markdown too (docs/*.md, docs/es/*.md); docs/assets is README art, not used by the site
     shutil.copytree(REPO / "docs", OUT / "docs", ignore=shutil.ignore_patterns("assets"))
     for lang in LANGS:
