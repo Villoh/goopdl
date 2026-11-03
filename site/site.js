@@ -9,6 +9,7 @@
   };
 
   addEventListener("scroll", () => document.querySelector(".nav").classList.toggle("scrolled", scrollY > 10), { passive: true });
+  addEventListener("load", () => root.classList.add("loaded")); // enables smooth scrolling, see style.css
 
   // ── theme: the <head> script already applied it before paint ────────────
   const button = document.querySelector(".theme");

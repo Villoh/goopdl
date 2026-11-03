@@ -48,9 +48,12 @@
 
 * { box-sizing: border-box; }
 /* clip on html, not body: phones scroll the viewport, and body's overflow doesn't stop that */
-html { scroll-behavior: smooth; overflow-x: clip; }
+html { overflow-x: clip; scroll-padding-top: var(--nav-h); }
+/* smooth only after load (site.js): a smooth jump to a #fragment on load ends off target once the web fonts reflow the text */
+html.loaded { scroll-behavior: smooth; }
 body {
   margin: 0;
+  padding-top: var(--nav-h); /* room for the fixed .nav */
   background: var(--paper);
   color: var(--ink);
   font: 400 18px/1.55 var(--sans);
@@ -70,10 +73,13 @@ h3 { font-size: 24px; letter-spacing: -.02em; font-weight: 600; }
 .lead { font-size: clamp(18px, 1.6vw, 22px); color: var(--muted); max-width: 34em; }
 
 /* ── nav ───────────────────────────────────────────── */
+/* fixed, not sticky: Chrome on Android draws sticky elements shifted up by the URL bar's height in
+   view-transition snapshots, so a sticky nav vanished during the theme switch while the URL bar showed */
+:root { --nav-h: 69px; }
 .nav {
-  position: sticky; top: 0; z-index: 10;
+  position: fixed; top: 0; left: 0; right: 0; z-index: 10; height: var(--nav-h);
   display: flex; align-items: center; justify-content: space-between;
-  padding: 14px clamp(20px, 4vw, 56px);
+  padding: 0 clamp(20px, 4vw, 56px);
   background: color-mix(in srgb, var(--paper) 80%, transparent);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid transparent;
@@ -413,14 +419,15 @@ h3 { font-size: 24px; letter-spacing: -.02em; font-weight: 600; }
 }
 
 .md { max-width: 780px; font-size: 17px; line-height: 1.7; }
-.md { animation: rise .6s var(--out) both; }
+.md { animation: fadein .5s var(--out) both; } /* no movement: it would shift #anchors after the jump */
+@keyframes fadein { from { opacity: 0; } }
 .md > :first-child { margin-top: 0; }
 .md h1 { font-size: clamp(40px, 5vw, 64px); margin: 0 0 24px; }
 .md h2 { font-size: clamp(28px, 3vw, 38px); margin: 72px 0 16px; padding-top: 32px; border-top: 1px solid var(--line); }
 .md hr + h2 { border-top: 0; padding-top: 0; }
 .md h3 { margin: 40px 0 12px; }
 .md h4 { font-size: 18px; margin: 28px 0 8px; }
-.md :is(h1, h2, h3, h4) { position: relative; scroll-margin-top: 96px; }
+.md :is(h1, h2, h3, h4) { position: relative; scroll-margin-top: 24px; } /* + html scroll-padding (nav) */
 .md :is(h1, h2, h3, h4) code { color: var(--orange); font-size: .92em; }
 .md .anchor { position: absolute; right: 100%; padding-right: 10px; color: var(--orange); text-decoration: none; opacity: 0; transition: opacity .2s; }
 .md :is(h2, h3, h4):hover .anchor { opacity: 1; }
