@@ -4,6 +4,7 @@ Loads Aurora Store .properties files from the profiles/ directory.
 Profiles are rotated during token acquisition for reliability.
 """
 
+from functools import cache
 from pathlib import Path
 
 PROFILES_DIR = Path(__file__).resolve().parent / "profiles"
@@ -198,30 +199,39 @@ def load_all_profiles() -> dict:
     return profiles
 
 
-_ALL = load_all_profiles()
+@cache
+def _all() -> dict:
+    """Read the bundled profiles on first use, not at import time."""
+    return load_all_profiles()
 
-ARM64_PROFILES: list[tuple[str, dict]] = [
-    (k, d["profile"]) for k, d in _ALL.items() if d["arch"] == "arm64"
-]
-ARMV7_PROFILES: list[tuple[str, dict]] = [
-    (k, d["profile"]) for k, d in _ALL.items() if d["arch"] == "armv7"
-]
-TV_PROFILES: list[tuple[str, dict]] = [
-    (k, d["profile"]) for k, d in _ALL.items() if is_tv_profile(d["profile"])
-]
+
+def _tv_profiles() -> list[tuple[str, dict]]:
+    return [(k, d["profile"]) for k, d in _all().items() if is_tv_profile(d["profile"])]
+
+
+def __getattr__(name: str):
+    # Former import-time constants, kept as lazily computed module attributes.
+    if name == "_ALL":
+        return _all()
+    if name in ("ARM64_PROFILES", "ARMV7_PROFILES"):
+        arch = name.split("_", 1)[0].lower()
+        return [(k, d["profile"]) for k, d in _all().items() if d["arch"] == arch]
+    if name == "TV_PROFILES":
+        return _tv_profiles()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _profiles_supporting(abi_token: str) -> list[tuple[str, dict]]:
     return [
         (key, data["profile"])
-        for key, data in _ALL.items()
+        for key, data in _all().items()
         if abi_token in data["profile"].get("Platforms", "")
     ]
 
 
 def _pool_for_arch(arch: str) -> list[tuple[str, dict]]:
     if arch == "tv":
-        return TV_PROFILES
+        return _tv_profiles()
     return _profiles_supporting(ABI_TOKENS.get(arch, ABI_TOKENS["arm64"]))
 
 
@@ -310,7 +320,7 @@ def get_compat_profiles(arch: str = "arm64") -> list[tuple[str, dict]]:
 
 def get_discovery_profiles(arch: str = "arm64") -> list[tuple[str, dict]]:
     """Try one compatible device from each form factor and ABI family."""
-    candidates = get_compat_profiles(arch)[:1] + TV_PROFILES
+    candidates = get_compat_profiles(arch)[:1] + _tv_profiles()
     for other in ("armv7", "arm64", "x86_64"):
         if other != arch:
             candidates += get_compat_profiles(other)[:1]
