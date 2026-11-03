@@ -832,7 +832,24 @@ def _pool_lock(
     acquired = False
     try:
         _ensure_config_dir(path.parent)
-        handle = path.open("a+b", buffering=0)
+        if path.is_symlink():
+            raise OSError(errno.ELOOP, "Token pool lock must not be a symlink")
+        fd = os.open(
+            path,
+            os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0),
+            0o600,
+        )
+        try:
+            # Also check platforms without O_NOFOLLOW before writing or locking.
+            if path.is_symlink() or not os.path.samestat(path.lstat(), os.fstat(fd)):
+                raise OSError(errno.ELOOP, "Token pool lock changed during open")
+            if os.name != "nt":
+                os.fchmod(fd, 0o600)
+            handle = os.fdopen(fd, "r+b", buffering=0)
+        except BaseException:
+            os.close(fd)
+            raise
         if os.name == "nt":
             import msvcrt
         else:
