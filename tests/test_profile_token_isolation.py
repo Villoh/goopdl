@@ -214,7 +214,7 @@ class ProfileTokenIsolationTest(unittest.TestCase):
                 "goopdl.cli.get_details",
                 side_effect=[AuthExpiredError("expired"), AppDetails("example.app")],
             ),
-            patch("goopdl.cli.replace_pool_token") as replace,
+            patch("goopdl.cli.replace_pool_token", return_value=self.token("fresh")) as replace,
         ):
             result = CliRunner().invoke(
                 app, ["info", "example.app", "--country", "US", "--profile", "Pv"]

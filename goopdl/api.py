@@ -1278,14 +1278,17 @@ def download_app(
     try:
         details, delivery = _fetch_latest_delivery(package, auth, country, proxy)
     except AuthExpiredError:
-        auth = replace_pool_token(
-            auth,
-            arch=arch,
-            country=country,
-            proxy=proxy,
-            dispenser_url=dispenser_url,
-            profile=chosen_profile,
-        )
+        try:
+            auth = replace_pool_token(
+                auth,
+                arch=arch,
+                country=country,
+                proxy=proxy,
+                dispenser_url=dispenser_url,
+                profile=chosen_profile,
+            )
+        except DispenserRateLimitedError as exc:
+            raise RateLimitedError(str(exc), retry_after=exc.retry_after) from exc
         if not auth:
             raise PlayAPIError("Token expired and replacement failed.") from None
         details, delivery = _fetch_latest_delivery(package, auth, country, proxy)

@@ -487,12 +487,11 @@ def latest(
                     profile=profile_key,
                     raise_on_error=True,
                 )
-            except DispenserUnavailableError as exc:
-                if exc.reason != "profile_rejected":
-                    _exit_token_error(exc)
-                new_token = None
             except DirectAuthError as exc:
-                _exit_token_error(exc)
+                if exc.status == 429:
+                    _exit_token_error(exc)
+                # The failed token is gone; remaining probes are still valid.
+                new_token = None
             if new_token is None:
                 err.print(
                     f"[dim]  probe {i + 1}: replacement unavailable, skipping[/dim]"
@@ -620,7 +619,7 @@ def info(
                         package, auth_data, country=country, proxy=proxy
                     )
                 except AuthExpiredError:
-                    replace_pool_token(
+                    auth_data = replace_pool_token(
                         auth_data,
                         arch=arch,
                         country=country,
@@ -628,12 +627,13 @@ def info(
                         dispenser_url=dispenser,
                         profile=profile,
                     )
-                    auth_data = _require_auth(
-                        arch, dispenser, country=country, proxy=proxy, profile=profile
-                    )
+                    if not auth_data:
+                        raise PlayAPIError("Token expired and replacement failed.")
                     details = get_details(
                         package, auth_data, country=country, proxy=proxy
                     )
+        except DirectAuthError as exc:
+            _exit_token_error(exc)
         except PlayAPIError as exc:
             err.print(f"[red]{exc}[/red]")
             raise typer.Exit(code=1) from None
@@ -872,6 +872,8 @@ def _acquire_delivery(
             if not replacement:
                 raise PlayAPIError("Token expired and replacement failed.") from None
             return flow(replacement)
+    except DispenserRateLimitedError as exc:
+        raise RateLimitedError(str(exc), retry_after=exc.retry_after) from None
     except (AppNotSupportedError, AppNotAvailableError) as exc:
         profiles = (
             get_compat_profiles(arch)[:6]
