@@ -1,14 +1,31 @@
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
+
+import httpx
 
 import goopdl
 from goopdl import errors
 from goopdl.aastoken import AASTokenError
-from goopdl.api import AuthExpiredError, PlayAPIError
+from goopdl.api import (
+    AuthExpiredError,
+    NetworkError,
+    PlayAPIError,
+    get_delivery,
+    get_details,
+    list_splits,
+    purchase,
+    search_apps,
+)
 from goopdl.auth import DirectAuthConfigurationError, DirectAuthError
 from goopdl.browser_oauth import BrowserOAuthError
 from goopdl.download import IntegrityError
+
+AUTH = {"authToken": "token"}
+DTOK = "signed-dtok-value"
+# Field 1, length-delimited, declares 5 bytes but carries only 1.
+TRUNCATED = b"\x0a\x05x"
 
 
 class HierarchyTest(unittest.TestCase):
@@ -16,6 +33,7 @@ class HierarchyTest(unittest.TestCase):
         cases = [
             (PlayAPIError, Exception),
             (AuthExpiredError, PlayAPIError),
+            (NetworkError, PlayAPIError),
             (IntegrityError, RuntimeError),
             (DirectAuthError, RuntimeError),
             (DirectAuthConfigurationError, ValueError),
@@ -45,6 +63,61 @@ class HierarchyTest(unittest.TestCase):
             [sys.executable, "-c", code], capture_output=True, text=True, check=True
         )
         self.assertEqual(out.stdout.strip(), "[]")
+
+
+class TransportWrappingTest(unittest.TestCase):
+    calls = [
+        ("get", lambda: get_details("pkg", AUTH)),
+        ("get", lambda: get_delivery("pkg", 1, AUTH, delivery_token=DTOK)),
+        ("get", lambda: list_splits("pkg", AUTH)),
+        ("get", lambda: search_apps("q", AUTH)),
+        ("post", lambda: purchase("pkg", 1, AUTH)),
+    ]
+
+    def test_httpx_errors_become_network_error(self):
+        failures = [
+            httpx.ConnectTimeout("timed out"),
+            httpx.ConnectError("refused"),
+            httpx.RemoteProtocolError("broken"),
+        ]
+        for method, call in self.calls:
+            for failure in failures:
+                with self.subTest(method=method, failure=type(failure).__name__):
+                    with (
+                        patch(f"goopdl.api.httpx.{method}", side_effect=failure),
+                        self.assertRaises(NetworkError) as raised,
+                    ):
+                        call()
+                    self.assertIs(raised.exception.__cause__, failure)
+                    self.assertNotIn(DTOK, str(raised.exception))
+
+
+class MalformedProtoTest(unittest.TestCase):
+    @staticmethod
+    def _wrap(payload):
+        # ResponseWrapper(1) whose nested payload is truncated.
+        return b"\x0a" + bytes([len(payload)]) + payload
+
+    def test_decoder_errors_become_play_api_error(self):
+        details = self._wrap(b"\x12\x03" + b"\x22\x05x")  # 1 -> 2 -> 4 truncated
+        delivery = self._wrap(b"\xaa\x01\x03" + b"\x12\x05x")  # 1 -> 21 -> 2 truncated
+        cases = [
+            ("get", details, lambda: get_details("pkg", AUTH)),
+            ("get", details, lambda: list_splits("pkg", AUTH)),
+            ("get", delivery, lambda: get_delivery("pkg", 1, AUTH)),
+            ("post", TRUNCATED, lambda: purchase("pkg", 1, AUTH)),
+        ]
+        for method, content, call in cases:
+            with self.subTest(content=content, method=method):
+                response = httpx.Response(200, content=content)
+                with (
+                    patch(f"goopdl.api.httpx.{method}", return_value=response),
+                    self.assertRaises(PlayAPIError) as raised,
+                ):
+                    call()
+                self.assertIsInstance(
+                    raised.exception.__cause__, (ValueError, EOFError)
+                )
 
 
 if __name__ == "__main__":

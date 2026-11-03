@@ -12,6 +12,8 @@ import random
 import re
 import struct
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -117,6 +119,10 @@ class PlayAPIError(GoopdlError):
     pass
 
 
+class NetworkError(PlayAPIError):
+    """Raised when a Google Play request fails at the transport level."""
+
+
 class AuthExpiredError(PlayAPIError):
     """Raised when the API returns 401 — token needs refresh."""
 
@@ -146,6 +152,28 @@ class AppNotAvailableError(PlayAPIError):
 
 class AppNotPurchasedError(PlayAPIError):
     """Raised when account has not acquired requested app."""
+
+
+def _send(method: Any, *args: Any, **kwargs: Any) -> Any:
+    """Call an httpx request function, wrapping transport failures."""
+    # Messages name only the error type: request URLs may carry tokens.
+    try:
+        return method(*args, **kwargs)
+    except httpx.TimeoutException as exc:
+        raise NetworkError("Google Play request timed out.") from exc
+    except httpx.HTTPError as exc:
+        raise NetworkError(
+            f"Google Play request failed ({type(exc).__name__})."
+        ) from exc
+
+
+@contextmanager
+def _malformed_proto() -> Iterator[None]:
+    """Turn ProtoDecoder failures into PlayAPIError (usable as decorator)."""
+    try:
+        yield
+    except (ValueError, EOFError) as exc:
+        raise PlayAPIError("Malformed protobuf response from Google Play.") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +222,7 @@ def _all_bytes(fields: list[tuple[int, int, Any]], num: int) -> list[bytes]:
     ]
 
 
+@_malformed_proto()
 def _navigate(raw: bytes, *path: int) -> list[tuple[int, int, Any]]:
     """Walk a nested protobuf path, e.g. _navigate(raw, 1, 2, 4)."""
     data = raw
@@ -244,6 +273,7 @@ class _ParsedDetails:
     downloads: str | None = None
 
 
+@_malformed_proto()
 def _parse_details_proto(raw: bytes) -> _ParsedDetails:
     """Parse details protobuf response into structured fields."""
     result = _ParsedDetails()
@@ -291,7 +321,9 @@ def _fetch_details_raw(
     url = f"{DETAILS_URL}?doc={package}"
     if country:
         url += f"&gl={country.upper()}"
-    resp = httpx.get(url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy))
+    resp = _send(
+        httpx.get, url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy)
+    )
     if resp.status_code == 404:
         raise AppNotAvailableError(f"App not found: {package}")
     if resp.status_code == 401:
@@ -539,7 +571,8 @@ def purchase(
     headers = build_headers(auth, country=country)
     headers["Content-Type"] = "application/x-www-form-urlencoded"
     body = f"doc={package}&ot=1&vc={version_code}"
-    resp = httpx.post(
+    resp = _send(
+        httpx.post,
         PURCHASE_URL,
         headers=headers,
         content=body,
@@ -601,6 +634,7 @@ def _safe_cdn_url(url: str) -> str:
     return ""
 
 
+@_malformed_proto()
 def _parse_delivery(raw: bytes) -> DeliveryResult:
     """Parse a delivery response using ProtoDecoder."""
     for payload_fn in (21, 5, 4, 6):
@@ -742,8 +776,8 @@ def get_delivery(
         url += f"&gl={country.upper()}"
     resp: Any = None
     for attempt in range(_DELIVERY_RETRIES + 1):
-        resp = httpx.get(
-            url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy)
+        resp = _send(
+            httpx.get, url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy)
         )
         if resp.status_code == 401:
             raise AuthExpiredError("Auth token expired.")
@@ -804,7 +838,9 @@ def list_splits(
     url = f"{DETAILS_URL}?doc={package}"
     if country:
         url += f"&gl={country.upper()}"
-    resp = httpx.get(url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy))
+    resp = _send(
+        httpx.get, url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy)
+    )
     if resp.status_code == 401:
         raise AuthExpiredError("Auth token expired.")
     if resp.status_code != 200:
@@ -820,16 +856,16 @@ def list_splits(
     if not doc_details_b:
         return []
 
-    dd = ProtoDecoder(doc_details_b).read_all_ordered()
+    dd = _navigate(doc_details_b)
     app_details_b = _first_bytes(dd, 1)
     if not app_details_b:
         return []
 
-    ad = ProtoDecoder(app_details_b).read_all_ordered()
+    ad = _navigate(app_details_b)
 
     # file entries (field 17 in AppDetails, each with splitId at field 9)
     for file_b in _all_bytes(ad, 17):
-        ff = ProtoDecoder(file_b).read_all_ordered()
+        ff = _navigate(file_b)
         sid = _first_string(ff, 9)
         if sid:
             splits.add(sid)
@@ -883,7 +919,9 @@ def search_apps(
     url = f"{SEARCH_URL}?q={query}&c=3"
     if country:
         url += f"&gl={country.upper()}"
-    resp = httpx.get(url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy))
+    resp = _send(
+        httpx.get, url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy)
+    )
     if resp.status_code == 401:
         raise AuthExpiredError("Auth token expired.")
     if resp.status_code != 200:

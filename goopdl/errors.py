@@ -18,6 +18,7 @@ class GoopdlError(Exception):
 
 _LAZY = {
     "PlayAPIError": "goopdl.api",
+    "NetworkError": "goopdl.api",
     "AuthExpiredError": "goopdl.api",
     "RateLimitedError": "goopdl.api",
     "VersionUnavailableError": "goopdl.api",
@@ -34,6 +35,7 @@ _LAZY = {
 __all__ = [
     "GoopdlError",
     "PlayAPIError",
+    "NetworkError",
     "AuthExpiredError",
     "RateLimitedError",
     "VersionUnavailableError",
@@ -54,6 +56,7 @@ if TYPE_CHECKING:
         AppNotPurchasedError,
         AppNotSupportedError,
         AuthExpiredError,
+        NetworkError,
         PlayAPIError,
         RateLimitedError,
         VersionUnavailableError,
