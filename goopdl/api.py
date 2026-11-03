@@ -176,6 +176,20 @@ def _malformed_proto() -> Iterator[None]:
         raise PlayAPIError("Malformed protobuf response from Google Play.") from exc
 
 
+class InvalidPackageError(ValueError):
+    """Raised when a package name is not a valid Android application ID."""
+
+
+_PACKAGE_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+")
+
+
+def validate_package(package: str) -> str:
+    """Return *package* unchanged, or raise InvalidPackageError if malformed."""
+    if not isinstance(package, str) or not _PACKAGE_RE.fullmatch(package):
+        raise InvalidPackageError(f"Invalid package name: {package!r}")
+    return package
+
+
 # ---------------------------------------------------------------------------
 # Protobuf helpers
 # ---------------------------------------------------------------------------
@@ -317,6 +331,7 @@ def _fetch_details_raw(
     proxy: str | None = None,
 ) -> bytes:
     """Fetch raw protobuf details response."""
+    validate_package(package)
     headers = _proto_headers(auth, country=country)
     params = {"doc": package}
     if country:
@@ -385,6 +400,7 @@ def fetch_app_item(
         from goopdl.api import fetch_app_item
         item = fetch_app_item("com.whatsapp", country="US", proxy="http://user:pass@host:port/")
     """
+    validate_package(package)
     auth = pick_pool_token(
         arch=arch,
         country=country,
@@ -573,6 +589,7 @@ def purchase(
     proxy: str | None = None,
 ) -> str:
     """Acquire a free app and return Play's delivery token when present."""
+    validate_package(package)
     headers = build_headers(auth, country=country)
     headers["Content-Type"] = "application/x-www-form-urlencoded"
     body = urlencode({"doc": package, "ot": 1, "vc": version_code})
@@ -771,6 +788,7 @@ def get_delivery(
     locales: list[str] | None = None,
 ) -> DeliveryResult:
     """Fetch download URLs for base APK, splits, and OBB files."""
+    validate_package(package)
     headers = _proto_headers(auth, country=country)
     if locales:
         headers["X-DFE-UserLanguages"] = ",".join(locales)
@@ -844,6 +862,7 @@ def list_splits(
     proxy: str | None = None,
 ) -> list[str]:
     """Return split names from app details metadata."""
+    validate_package(package)
     headers = _proto_headers(auth, country=country)
     params = {"doc": package}
     if country:
@@ -1103,6 +1122,7 @@ def download_app(
     *proxy* itself is passed through unpatched to the Google FDFE calls.
     Returns (apk_path, dotted version string) — not the numeric version code.
     """
+    validate_package(package)
     if profile:
         chosen_profile = profile
     else:

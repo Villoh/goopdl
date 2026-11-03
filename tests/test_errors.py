@@ -67,11 +67,11 @@ class HierarchyTest(unittest.TestCase):
 
 class TransportWrappingTest(unittest.TestCase):
     calls = [
-        ("get", lambda: get_details("pkg", AUTH)),
-        ("get", lambda: get_delivery("pkg", 1, AUTH, delivery_token=DTOK)),
-        ("get", lambda: list_splits("pkg", AUTH)),
+        ("get", lambda: get_details("com.example.pkg", AUTH)),
+        ("get", lambda: get_delivery("com.example.pkg", 1, AUTH, delivery_token=DTOK)),
+        ("get", lambda: list_splits("com.example.pkg", AUTH)),
         ("get", lambda: search_apps("q", AUTH)),
-        ("post", lambda: purchase("pkg", 1, AUTH)),
+        ("post", lambda: purchase("com.example.pkg", 1, AUTH)),
     ]
 
     def test_httpx_errors_become_network_error(self):
@@ -102,10 +102,10 @@ class MalformedProtoTest(unittest.TestCase):
         details = self._wrap(b"\x12\x03" + b"\x22\x05x")  # 1 -> 2 -> 4 truncated
         delivery = self._wrap(b"\xaa\x01\x03" + b"\x12\x05x")  # 1 -> 21 -> 2 truncated
         cases = [
-            ("get", details, lambda: get_details("pkg", AUTH)),
-            ("get", details, lambda: list_splits("pkg", AUTH)),
-            ("get", delivery, lambda: get_delivery("pkg", 1, AUTH)),
-            ("post", TRUNCATED, lambda: purchase("pkg", 1, AUTH)),
+            ("get", details, lambda: get_details("com.example.pkg", AUTH)),
+            ("get", details, lambda: list_splits("com.example.pkg", AUTH)),
+            ("get", delivery, lambda: get_delivery("com.example.pkg", 1, AUTH)),
+            ("post", TRUNCATED, lambda: purchase("com.example.pkg", 1, AUTH)),
         ]
         for method, content, call in cases:
             with self.subTest(content=content, method=method):

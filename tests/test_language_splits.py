@@ -39,7 +39,7 @@ class LanguageSplitTest(unittest.TestCase):
         get.return_value = httpx.Response(200, content=raw)
 
         delivery = get_delivery(
-            "pkg",
+            "com.example.pkg",
             1,
             {"authToken": "token"},
             locales=["en-US", "de", "fr"],

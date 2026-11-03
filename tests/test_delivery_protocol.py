@@ -156,7 +156,7 @@ class DeliveryProtocolTest(unittest.TestCase):
         token = encoded_field(1, 2, encoded_field(4, 2, encoded_field(55, 2, b"dtok")))
         post.return_value = httpx.Response(200, content=token)
 
-        self.assertEqual(purchase("pkg", 1, {"authToken": "token"}), "dtok")
+        self.assertEqual(purchase("com.example.pkg", 1, {"authToken": "token"}), "dtok")
 
     @patch("goopdl.api.time.sleep")
     @patch("goopdl.api.httpx.get")
@@ -166,7 +166,7 @@ class DeliveryProtocolTest(unittest.TestCase):
             self._successful_response(),
         ]
 
-        result = get_delivery("pkg", 1, {"authToken": "token"})
+        result = get_delivery("com.example.pkg", 1, {"authToken": "token"})
 
         self.assertEqual(result.download_url, "https://play.googleapis.com/base")
         sleep.assert_called_once_with(2.5)
@@ -178,7 +178,7 @@ class DeliveryProtocolTest(unittest.TestCase):
         get.side_effect = [httpx.Response(429) for _ in range(3)]
 
         with self.assertRaises(RateLimitedError) as raised:
-            get_delivery("pkg", 1, {"authToken": "token"})
+            get_delivery("com.example.pkg", 1, {"authToken": "token"})
 
         self.assertEqual(raised.exception.status_code, 429)
         self.assertNotIsInstance(raised.exception, VersionUnavailableError)
@@ -197,7 +197,7 @@ class DeliveryProtocolTest(unittest.TestCase):
         ]
 
         with self.assertRaises(RateLimitedError) as raised:
-            get_delivery("pkg", 1, {"authToken": "token"})
+            get_delivery("com.example.pkg", 1, {"authToken": "token"})
 
         self.assertIsNone(raised.exception.retry_after)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.0, 3.0])
@@ -206,15 +206,15 @@ class DeliveryProtocolTest(unittest.TestCase):
     def test_401_404_and_other_statuses_keep_their_error_types(self, get):
         get.return_value = httpx.Response(401)
         with self.assertRaises(AuthExpiredError):
-            get_delivery("pkg", 1, {"authToken": "token"})
+            get_delivery("com.example.pkg", 1, {"authToken": "token"})
 
         get.return_value = httpx.Response(404)
         with self.assertRaises(VersionUnavailableError):
-            get_delivery("pkg", 1, {"authToken": "token"})
+            get_delivery("com.example.pkg", 1, {"authToken": "token"})
 
         get.return_value = httpx.Response(503)
         with self.assertRaises(PlayAPIError) as raised:
-            get_delivery("pkg", 1, {"authToken": "token"})
+            get_delivery("com.example.pkg", 1, {"authToken": "token"})
         self.assertNotIsInstance(raised.exception, RateLimitedError)
 
     @patch("goopdl.api.httpx.get")
@@ -222,7 +222,7 @@ class DeliveryProtocolTest(unittest.TestCase):
         unsupported = encoded_field(1, 2, encoded_field(21, 2, encoded_field(1, 0, 2)))
         get.return_value = httpx.Response(200, content=unsupported)
         with self.assertRaises(AppNotSupportedError):
-            get_delivery("pkg", 1, {"authToken": "token"}, delivery_token="dtok")
+            get_delivery("com.example.pkg", 1, {"authToken": "token"}, delivery_token="dtok")
         self.assertEqual(get.call_args.kwargs["params"]["dtok"], "dtok")
 
         not_purchased = encoded_field(
@@ -230,7 +230,7 @@ class DeliveryProtocolTest(unittest.TestCase):
         )
         get.return_value = httpx.Response(200, content=not_purchased)
         with self.assertRaises(AppNotPurchasedError):
-            get_delivery("pkg", 1, {"authToken": "token"})
+            get_delivery("com.example.pkg", 1, {"authToken": "token"})
 
 
 if __name__ == "__main__":

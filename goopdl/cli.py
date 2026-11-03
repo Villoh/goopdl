@@ -22,6 +22,7 @@ from goopdl.api import (
     AppNotAvailableError,
     AppNotSupportedError,
     AuthExpiredError,
+    InvalidPackageError,
     PlayAPIError,
     RateLimitedError,
     VersionUnavailableError,
@@ -31,6 +32,7 @@ from goopdl.api import (
     get_details,
     purchase,
     search_apps,
+    validate_package,
 )
 from goopdl.api import (
     list_splits as api_list_splits,
@@ -78,6 +80,13 @@ app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
 )
+
+
+def _package_callback(value: str) -> str:
+    try:
+        return validate_package(value)
+    except InvalidPackageError as exc:
+        raise typer.BadParameter(str(exc)) from None
 
 
 def _version_callback(value: bool) -> None:
@@ -306,7 +315,9 @@ def profiles(
 
 @app.command()
 def latest(
-    package: str = typer.Argument(..., help="Package name (e.g. com.whatsapp)."),
+    package: str = typer.Argument(
+        ..., help="Package name (e.g. com.whatsapp).", callback=_package_callback
+    ),
     arch: str = typer.Option("arm64", help="Architecture for token."),
     country: str | None = typer.Option(
         None, "--country", "-c", help="2-letter country code."
@@ -447,7 +458,9 @@ def latest(
 
 @app.command()
 def info(
-    package: str = typer.Argument(..., help="Package name (e.g. com.whatsapp)."),
+    package: str = typer.Argument(
+        ..., help="Package name (e.g. com.whatsapp).", callback=_package_callback
+    ),
     arch: str = typer.Option("arm64", help="Architecture for token."),
     dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
@@ -612,7 +625,9 @@ def search(
 
 @app.command("list-splits")
 def list_splits_cmd(
-    package: str = typer.Argument(..., help="Package name."),
+    package: str = typer.Argument(
+        ..., help="Package name.", callback=_package_callback
+    ),
     arch: str = typer.Option("arm64", help="Architecture for token."),
     dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
@@ -764,7 +779,9 @@ def _acquire_delivery(
 
 @app.command("inspect-delivery")
 def inspect_delivery_cmd(
-    package: str = typer.Argument(..., help="Package name."),
+    package: str = typer.Argument(
+        ..., help="Package name.", callback=_package_callback
+    ),
     version: int = typer.Option(..., "--version", "-v", help="Version code."),
     arch: str = typer.Option("arm64", "--arch", help="Device architecture."),
     dispenser: str | None = typer.Option(None, "--dispenser", "-d"),
@@ -832,7 +849,9 @@ def inspect_delivery_cmd(
 
 @app.command()
 def download(
-    package: str = typer.Argument(..., help="Package name (e.g. com.whatsapp)."),
+    package: str = typer.Argument(
+        ..., help="Package name (e.g. com.whatsapp).", callback=_package_callback
+    ),
     output: Path = typer.Option(".", "--output", "-o", help="Output directory."),
     arch: str = typer.Option(
         "arm64",
@@ -1121,7 +1140,9 @@ def _download_arch(
 
 @app.command("fast-download")
 def fast_download(
-    package: str = typer.Argument(..., help="Package name (e.g. com.whatsapp)."),
+    package: str = typer.Argument(
+        ..., help="Package name (e.g. com.whatsapp).", callback=_package_callback
+    ),
     output: Path = typer.Option(".", "--output", "-o", help="Output directory."),
     arch: str = typer.Option(
         "arm64",

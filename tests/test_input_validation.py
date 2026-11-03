@@ -1,14 +1,38 @@
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import parse_qs
 
 import httpx
+from goopdl import cli
 from goopdl.api import (
+    InvalidPackageError,
     VersionUnavailableError,
+    download_app,
+    fetch_app_item,
     get_delivery,
+    get_details,
+    get_details_raw,
+    list_splits,
     purchase,
     search_apps,
+    validate_package,
 )
+from typer.testing import CliRunner
+
+BAD_PACKAGES = [
+    "../etc/passwd",
+    "com.example/../x",
+    "com.example.app&dtok=x",
+    "com.example.app#x",
+    "com.example.app\n",
+    "noDots",
+    "1com.example",
+    "com..example",
+    "",
+]
+AUTH = {"authToken": "t"}
 
 
 def _recording_get(sent: list[httpx.URL], status: int = 200):
@@ -57,6 +81,52 @@ class QueryEncodingTest(unittest.TestCase):
         self.assertEqual(
             parse_qs(body), {"doc": ["com.example.app"], "ot": ["1"], "vc": ["7"]}
         )
+
+
+class PackageValidationTest(unittest.TestCase):
+    def test_accepts_real_package_names(self):
+        for package in ("com.whatsapp", "com.google.android.youtube", "a.b_C9"):
+            self.assertEqual(validate_package(package), package)
+
+    def test_error_is_a_value_error(self):
+        self.assertTrue(issubclass(InvalidPackageError, ValueError))
+
+    @patch("goopdl.api.pick_pool_token")
+    @patch("goopdl.api.httpx.post")
+    @patch("goopdl.api.httpx.get")
+    def test_public_api_rejects_bad_packages_before_any_request(
+        self, get, post, pick
+    ):
+        calls = [
+            lambda p: get_details(p, AUTH),
+            lambda p: get_details_raw(p, AUTH),
+            lambda p: purchase(p, 1, AUTH),
+            lambda p: get_delivery(p, 1, AUTH, delivery_token="d"),
+            lambda p: list_splits(p, AUTH),
+            lambda p: fetch_app_item(p),
+            lambda p: download_app(p, Path("unused")),
+        ]
+        for package in BAD_PACKAGES:
+            for call in calls:
+                with self.subTest(package=package), self.assertRaises(
+                    InvalidPackageError
+                ):
+                    call(package)
+        get.assert_not_called()
+        post.assert_not_called()
+        pick.assert_not_called()
+
+    def test_cli_rejects_bad_package(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for command in ("download", "fast-download", "info", "list-splits"):
+                with patch("goopdl.cli.pick_pool_token") as pick:
+                    result = CliRunner().invoke(
+                        cli.app, [command, "../../tmp/x", "-o", directory]
+                        if "download" in command
+                        else [command, "../../tmp/x"],
+                    )
+                self.assertEqual(result.exit_code, 2, result.output)
+                pick.assert_not_called()
 
 
 if __name__ == "__main__":
