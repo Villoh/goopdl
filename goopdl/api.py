@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 import httpx
 
@@ -318,11 +318,16 @@ def _fetch_details_raw(
 ) -> bytes:
     """Fetch raw protobuf details response."""
     headers = _proto_headers(auth, country=country)
-    url = f"{DETAILS_URL}?doc={package}"
+    params = {"doc": package}
     if country:
-        url += f"&gl={country.upper()}"
+        params["gl"] = country.upper()
     resp = _send(
-        httpx.get, url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy)
+        httpx.get,
+        DETAILS_URL,
+        params=params,
+        headers=headers,
+        timeout=30,
+        proxy=_build_httpx_proxy(proxy),
     )
     if resp.status_code == 404:
         raise AppNotAvailableError(f"App not found: {package}")
@@ -570,7 +575,7 @@ def purchase(
     """Acquire a free app and return Play's delivery token when present."""
     headers = build_headers(auth, country=country)
     headers["Content-Type"] = "application/x-www-form-urlencoded"
-    body = f"doc={package}&ot=1&vc={version_code}"
+    body = urlencode({"doc": package, "ot": 1, "vc": version_code})
     resp = _send(
         httpx.post,
         PURCHASE_URL,
@@ -769,15 +774,20 @@ def get_delivery(
     headers = _proto_headers(auth, country=country)
     if locales:
         headers["X-DFE-UserLanguages"] = ",".join(locales)
-    url = f"{DELIVERY_URL}?doc={package}&ot=1&vc={version_code}"
+    params: dict[str, Any] = {"doc": package, "ot": 1, "vc": version_code}
     if delivery_token:
-        url += f"&dtok={delivery_token}"
+        params["dtok"] = delivery_token
     if country:
-        url += f"&gl={country.upper()}"
+        params["gl"] = country.upper()
     resp: Any = None
     for attempt in range(_DELIVERY_RETRIES + 1):
         resp = _send(
-            httpx.get, url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy)
+            httpx.get,
+            DELIVERY_URL,
+            params=params,
+            headers=headers,
+            timeout=30,
+            proxy=_build_httpx_proxy(proxy),
         )
         if resp.status_code == 401:
             raise AuthExpiredError("Auth token expired.")
@@ -835,11 +845,16 @@ def list_splits(
 ) -> list[str]:
     """Return split names from app details metadata."""
     headers = _proto_headers(auth, country=country)
-    url = f"{DETAILS_URL}?doc={package}"
+    params = {"doc": package}
     if country:
-        url += f"&gl={country.upper()}"
+        params["gl"] = country.upper()
     resp = _send(
-        httpx.get, url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy)
+        httpx.get,
+        DETAILS_URL,
+        params=params,
+        headers=headers,
+        timeout=30,
+        proxy=_build_httpx_proxy(proxy),
     )
     if resp.status_code == 401:
         raise AuthExpiredError("Auth token expired.")
@@ -916,11 +931,16 @@ def search_apps(
 ) -> list[dict]:
     """Search Google Play via FDFE protobuf API. Returns list of {package, title, creator}."""
     headers = _proto_headers(auth, country=country)
-    url = f"{SEARCH_URL}?q={query}&c=3"
+    params: dict[str, Any] = {"q": query, "c": 3}
     if country:
-        url += f"&gl={country.upper()}"
+        params["gl"] = country.upper()
     resp = _send(
-        httpx.get, url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy)
+        httpx.get,
+        SEARCH_URL,
+        params=params,
+        headers=headers,
+        timeout=30,
+        proxy=_build_httpx_proxy(proxy),
     )
     if resp.status_code == 401:
         raise AuthExpiredError("Auth token expired.")

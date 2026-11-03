@@ -223,7 +223,7 @@ class DeliveryProtocolTest(unittest.TestCase):
         get.return_value = httpx.Response(200, content=unsupported)
         with self.assertRaises(AppNotSupportedError):
             get_delivery("pkg", 1, {"authToken": "token"}, delivery_token="dtok")
-        self.assertIn("dtok=dtok", get.call_args.args[0])
+        self.assertEqual(get.call_args.kwargs["params"]["dtok"], "dtok")
 
         not_purchased = encoded_field(
             1, 2, encoded_field(21, 2, encoded_field(1, 0, 3))
