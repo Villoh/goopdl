@@ -79,6 +79,24 @@ class DownloadAppDispenserTest(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 503)
 
 
+class DownloadAppDirectAuthTest(unittest.TestCase):
+    @patch.dict(os.environ, {}, clear=True)
+    @patch("goopdl.api.time.sleep")
+    def test_direct_auth_failure_keeps_its_stage(self, _sleep) -> None:
+        with (
+            patch.object(
+                api, "pick_pool_token", side_effect=DirectAuthError("checkin (HTTP 403)")
+            ),
+            self.assertRaises(PlayAPIError) as raised,
+        ):
+            download_app("com.example.pkg", Path("unused"), profile="Pv")
+        self.assertEqual(
+            "Direct Google authentication failed at checkin (HTTP 403).",
+            str(raised.exception),
+        )
+        self.assertNotIsInstance(raised.exception, RateLimitedError)
+
+
 @patch.dict(os.environ, {}, clear=True)
 class CliDispenserMessageTest(unittest.TestCase):
     def download(self, error: Exception):
