@@ -134,7 +134,9 @@ class WarmDownloadProfileTest(unittest.TestCase):
             patch.object(auth, "_auth_path", side_effect=AssertionError("anonymous auth read")),
         ):
             self.download()
-        self.fetch.assert_called_once_with(arch="arm64", country="US", proxy=None, profile=self.a)
+        self.fetch.assert_called_once_with(
+            arch="arm64", country="US", proxy=None, profile=self.a, raise_on_error=True
+        )
         self.assertEqual(self.fresh, self.delivery.call_args.args[1])
         self.choice.assert_called_once_with(self.candidates)
         self.assertEqual(before, {path.name: path.read_bytes() for path in auth._CONFIG_DIR.iterdir()})
@@ -144,7 +146,8 @@ class WarmDownloadProfileTest(unittest.TestCase):
         self.download()
         self.choice.assert_called_once_with(self.candidates)
         self.fetch.assert_called_once_with(
-            dispenser_url=None, arch="arm64", proxy=None, profile=self.b, country="US"
+            dispenser_url=None, arch="arm64", proxy=None, profile=self.b, country="US",
+            raise_on_error=True,
         )
         self.assertEqual(self.fresh, self.delivery.call_args.args[1])
         self.assertEqual(1, len(auth._load_pool("arm64", "US", self.b)))

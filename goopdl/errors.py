@@ -28,6 +28,8 @@ _LAZY = {
     "InvalidPackageError": "goopdl.api",
     "DirectAuthError": "goopdl.auth",
     "DirectAuthConfigurationError": "goopdl.auth",
+    "DispenserRateLimitedError": "goopdl.auth",
+    "DispenserUnavailableError": "goopdl.auth",
     "InvalidArchError": "goopdl.auth",
     "AASTokenError": "goopdl.aastoken",
     "BrowserOAuthError": "goopdl.browser_oauth",
@@ -48,6 +50,8 @@ __all__ = [
     "InvalidPackageError",
     "DirectAuthError",
     "DirectAuthConfigurationError",
+    "DispenserRateLimitedError",
+    "DispenserUnavailableError",
     "InvalidArchError",
     "AASTokenError",
     "BrowserOAuthError",
@@ -71,6 +75,8 @@ if TYPE_CHECKING:
     from goopdl.auth import (
         DirectAuthConfigurationError,
         DirectAuthError,
+        DispenserRateLimitedError,
+        DispenserUnavailableError,
         InvalidArchError,
     )
     from goopdl.browser_oauth import BrowserOAuthError
