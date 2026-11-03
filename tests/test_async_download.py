@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import contextlib
 import hashlib
@@ -96,6 +97,56 @@ class DownloadFilesTest(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaisesRegex(IntegrityError, "digest mismatch") as raised:
                     await download_files([spec], client=client)
             self.assertNotIsInstance(raised.exception, DownloadError)
+
+    @staticmethod
+    def _slow_handler(started, fail=None):
+        """Slow URLs stream one chunk, set ``started``, then stall for 0.3 s."""
+
+        async def slow_body():
+            yield b"a"
+            started.set()  # the consumer has written the first chunk to .part
+            await asyncio.sleep(0.3)
+            yield b"b"
+
+        async def handler(request):
+            if request.url.path == "/fail":
+                await started.wait()
+                return httpx.Response(fail)
+            return httpx.Response(200, content=slow_body())
+
+        return handler
+
+    async def test_failure_cancels_sibling_downloads(self):
+        started = asyncio.Event()
+        with tempfile.TemporaryDirectory() as directory:
+            specs = [
+                DownloadSpec("https://cdn.invalid/slow", Path(directory) / "slow.apk"),
+                DownloadSpec("https://cdn.invalid/fail", Path(directory) / "fail.apk"),
+            ]
+            async with mock_client(self._slow_handler(started, 503)) as client:
+                with self.assertRaises(DownloadError) as raised:
+                    await download_files(specs, client=client)
+                self.assertEqual(raised.exception.status_code, 503)
+                self.assertEqual(list(Path(directory).iterdir()), [])
+                await asyncio.sleep(0.5)  # longer than the slow download
+                self.assertEqual(list(Path(directory).iterdir()), [])
+
+    async def test_external_cancel_stops_all_downloads(self):
+        started = asyncio.Event()
+        with tempfile.TemporaryDirectory() as directory:
+            specs = [
+                DownloadSpec("https://cdn.invalid/a", Path(directory) / "a.apk"),
+                DownloadSpec("https://cdn.invalid/b", Path(directory) / "b.apk"),
+            ]
+            async with mock_client(self._slow_handler(started)) as client:
+                task = asyncio.create_task(download_files(specs, client=client))
+                await started.wait()
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                self.assertEqual(list(Path(directory).iterdir()), [])
+                await asyncio.sleep(0.5)
+                self.assertEqual(list(Path(directory).iterdir()), [])
 
     async def test_download_batch_in_running_loop_points_to_download_files(self):
         with self.assertRaisesRegex(RuntimeError, "download_files"):

@@ -246,7 +246,17 @@ async def _run_downloads(
             await _run_downloads(specs, on_progress, max_concurrent, own)
         return
     sem = asyncio.Semaphore(max_concurrent)
-    await asyncio.gather(*[_download_one(s, client, on_progress, sem) for s in specs])
+    tasks = [
+        asyncio.create_task(_download_one(s, client, on_progress, sem)) for s in specs
+    ]
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        # On the first failure (or if we are cancelled) stop every sibling and
+        # wait for it, so its .part is removed and nothing lands on disk later.
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _check_required_integrity(specs: list[DownloadSpec]) -> None:
