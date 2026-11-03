@@ -167,14 +167,15 @@ class AppNotPurchasedError(PlayAPIError):
 def _send(method: Any, *args: Any, **kwargs: Any) -> Any:
     """Call an httpx request function, wrapping transport failures."""
     # Messages name only the error type: request URLs may carry tokens.
+    # Raised outside the except blocks: chaining the httpx error would expose
+    # its .request (Authorization header, dtok URL) via __cause__/__context__.
     try:
         return method(*args, **kwargs)
-    except httpx.TimeoutException as exc:
-        raise NetworkError("Google Play request timed out.") from exc
+    except httpx.TimeoutException:
+        message = "Google Play request timed out."
     except httpx.HTTPError as exc:
-        raise NetworkError(
-            f"Google Play request failed ({type(exc).__name__})."
-        ) from exc
+        message = f"Google Play request failed ({type(exc).__name__})."
+    raise NetworkError(message)
 
 
 @contextmanager
