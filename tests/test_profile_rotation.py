@@ -230,7 +230,7 @@ class ProfileRotationTest(unittest.TestCase):
                 else:
                     self.assertEqual(raised.exception.retry_after, 120)
 
-    def test_single_profile_acquisition_only_retries_transient_failures(self):
+    def test_single_profile_acquisition_retry_budgets(self):
         for status in (200, 400, 403, 404, 503):
             with (
                 self.subTest(status=status),
@@ -242,7 +242,11 @@ class ProfileRotationTest(unittest.TestCase):
             ):
                 with self.assertRaises(auth.DispenserUnavailableError):
                     api._acquire_single_token("arm64", None, None, None, "Pv")
-                self.assertEqual(post.call_count, 2 if status == 503 else 1)
+                # 5xx: fetch_token's cooldown retry; a fixed profile cannot
+                # rotate, so its rejections get the gold attempt budget.
+                self.assertEqual(
+                    post.call_count, 2 if status == 503 else api._TOKEN_FETCH_ATTEMPTS
+                )
 
     def test_profile_rotation_stops_on_endpoint_failure(self):
         for failure, code in (
