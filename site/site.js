@@ -64,8 +64,15 @@
   document.addEventListener("click", async (e) => {
     const btn = e.target.closest("[data-copy], .copy-code");
     if (!btn) return;
-    const text = btn.dataset.copy ?? btn.parentElement.querySelector("code").textContent.trimEnd();
-    try { await navigator.clipboard.writeText(text); } catch { return; }
+    const text = btn.dataset.copy ?? btn.closest(".code").querySelector("code").textContent.trimEnd();
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Clipboard blocked (permissions, some in-app browsers): select the code so it can be copied by hand.
+      const code = btn.closest(".code")?.querySelector("code"); // install pills have none
+      if (code) getSelection().selectAllChildren(code);
+      return;
+    }
     const label = btn.querySelector(".copy-label") ?? btn;
     const original = label.dataset.label ??= label.textContent;
     btn.classList.add("copied");

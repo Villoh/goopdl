@@ -36,7 +36,7 @@
   color-scheme: dark;
 }
 /* dark surfaces need an edge on a dark page */
-[data-theme="dark"] :is(.term, .dark, .token, .pill:not(.pill-light), .md pre) { outline: 1px solid var(--line); outline-offset: -1px; }
+[data-theme="dark"] :is(.term, .dark, .token, .pill:not(.pill-light), .md .code) { outline: 1px solid var(--line); outline-offset: -1px; }
 [data-theme="dark"] :is(.brand img, .final-mark) { border-radius: 23%; outline: 1px solid var(--line); }
 
 /* page to page (same origin): crossfade, with the nav held in place */
@@ -433,21 +433,24 @@ h3 { font-size: 24px; letter-spacing: -.02em; font-weight: 600; }
 .md ul, .md ol { padding-left: 1.4em; }
 .md li { margin: 6px 0; }
 .md li::marker { color: var(--orange); }
-.md pre {
-  position: relative; background: var(--surface); color: var(--cream); border-radius: 16px;
-  padding: 20px 24px; overflow-x: auto; font: 14px/1.7 var(--mono); margin: 20px 0;
+/* code block: a header bar (language + copy, always visible) over a horizontally scrolling <pre> */
+.md .code { background: var(--surface); color: var(--cream); border-radius: 16px; margin: 20px 0; overflow: hidden; }
+.code-bar {
+  display: flex; justify-content: space-between; align-items: center; padding: 8px 10px 8px 24px;
+  border-bottom: 1px solid var(--t-line); font: 12px var(--mono); color: var(--t-muted);
 }
+.md pre { margin: 0; padding: 18px 24px 20px; overflow-x: auto; font: 14px/1.7 var(--mono); }
 .md pre code { font-size: inherit; }
 .md pre .c { color: var(--t-muted); }
 .md pre .p { color: var(--orange); }
-.md pre .copy-code {
-  position: absolute; top: 10px; right: 10px; border: 0; cursor: pointer;
-  font: 600 11px var(--sans); text-transform: uppercase; letter-spacing: .08em;
+.copy-code {
+  border: 0; cursor: pointer; font: 600 11px var(--sans); text-transform: uppercase; letter-spacing: .08em;
   background: var(--t-line); color: var(--t-muted); border-radius: 999px; padding: 6px 11px;
-  opacity: 0; transition: opacity .2s, background .2s, color .2s;
+  transition: background .2s, color .2s;
 }
-.md pre:hover .copy-code, .md pre .copy-code:focus-visible { opacity: 1; }
-.md pre .copy-code.copied { background: var(--orange); color: var(--on-accent); opacity: 1; }
+.copy-code:hover { color: var(--cream); }
+.copy-code:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+.copy-code.copied { background: var(--orange); color: var(--on-accent); }
 .table-wrap { overflow-x: auto; margin: 20px 0; border: 1.5px solid var(--line); border-radius: 14px; }
 .md table { border-collapse: collapse; width: 100%; font-size: 15px; line-height: 1.5; }
 .md th { text-align: left; font: 600 12px var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); background: var(--card); }

@@ -114,7 +114,9 @@ def render_fence(self, tokens, idx, options, env) -> str:
     code = tok.content.rstrip("\n")
     body = highlight_shell(code) if lang in SHELL_LANGS else esc(code)
     cls = f' class="language-{esc(lang)}"' if lang else ""
-    return f'<pre><code{cls}>{body}</code><button type="button" class="copy-code">{env["copy"]}</button></pre>\n'
+    # The bar sits above the scrolling <pre>, so the button never covers code and doesn't scroll with it.
+    bar = f'<div class="code-bar"><span>{esc(lang)}</span><button type="button" class="copy-code">{env["copy"]}</button></div>'
+    return f'<div class="code">{bar}<pre><code{cls}>{body}</code></pre></div>\n'
 
 
 md.add_render_rule("fence", render_fence)
