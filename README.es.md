@@ -47,11 +47,25 @@
 
 ## Instalación
 
+Un binario precompilado, sin necesidad de Python. En Linux y macOS:
+
+```bash
+curl -fsSL https://villoh.github.io/goopdl/install.sh | sh
+```
+
+En Windows, desde PowerShell:
+
+```powershell
+irm https://villoh.github.io/goopdl/install.ps1 | iex
+```
+
+O, si tienes Python:
+
 ```bash
 uv tool install goopdl    # o: pipx install goopdl
 ```
 
-O ejecútalo una vez sin instalar: `uvx goopdl --help`.
+También puedes ejecutarlo una vez sin instalar: `uvx goopdl --help`.
 [Más opciones de instalación](https://github.com/Villoh/goopdl/blob/main/docs/es/installation.md),
 como fijar versiones o compilar desde el código fuente.
 
