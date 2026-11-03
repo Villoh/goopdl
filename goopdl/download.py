@@ -290,6 +290,8 @@ async def download_files(
 ) -> None:
     """Async download for library callers; writes nothing to stdout.
 
+    Returns None once every file is at its ``spec.dest``.
+
     Raises IntegrityError (missing metadata, size/digest mismatch) or
     DownloadError (HTTP/network failure). With require_integrity, refuses to
     start unless every integrity-required file (APKs, .dm) has digests.
