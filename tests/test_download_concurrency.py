@@ -6,7 +6,7 @@ from typing import cast
 
 import httpx
 
-from goopdl.download import DownloadSpec, _download_one, make_progress
+from goopdl.download import DownloadSpec, _download_one
 
 
 class GatedStream:
@@ -55,7 +55,7 @@ class ConcurrentSameDestTest(unittest.IsolatedAsyncioTestCase):
 
             async def run():
                 return await _download_one(
-                    spec, client, make_progress(), asyncio.Semaphore(1)
+                    spec, client, None, asyncio.Semaphore(1)
                 )
 
             task_a = asyncio.create_task(run())

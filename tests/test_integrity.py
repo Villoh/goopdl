@@ -26,7 +26,6 @@ from goopdl.download import (
     _download_one,
     _select_digest,
     download_batch,
-    make_progress,
     write_manifest,
 )
 
@@ -173,7 +172,7 @@ class DownloadErrorRedactionTest(unittest.IsolatedAsyncioTestCase):
                 await _download_one(
                     spec,
                     cast(httpx.AsyncClient, Client()),
-                    make_progress(),
+                    None,
                     asyncio.Semaphore(1),
                 )
             self.assertNotIn("secret", str(raised.exception))
@@ -200,7 +199,7 @@ class IncrementalDownloadTest(unittest.IsolatedAsyncioTestCase):
             result = await _download_one(
                 spec,
                 cast(httpx.AsyncClient, Client()),
-                make_progress(),
+                None,
                 asyncio.Semaphore(1),
             )
 
@@ -240,7 +239,7 @@ class IncrementalDownloadTest(unittest.IsolatedAsyncioTestCase):
             await _download_one(
                 spec,
                 cast(httpx.AsyncClient, Client()),
-                make_progress(),
+                None,
                 asyncio.Semaphore(1),
             )
 
