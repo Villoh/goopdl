@@ -229,27 +229,24 @@ class DeliveryProtocolTest(unittest.TestCase):
         self.assertEqual(_parse_retry_after({"Retry-After": past}), 0.0)
 
     @patch("goopdl.api.httpx.post")
-    def test_purchase_classifies_throttling_and_outages(self, post):
+    def test_purchase_raises_only_on_auth_and_throttling(self, post):
         post.return_value = httpx.Response(429, headers={"Retry-After": "7"})
         with self.assertRaises(RateLimitedError) as raised:
             purchase("com.example.pkg", 1, {"authToken": "token"})
         self.assertEqual(raised.exception.retry_after, 7.0)
-
-        post.return_value = httpx.Response(503)
-        with self.assertRaises(PlayAPIError) as raised:
-            purchase("com.example.pkg", 1, {"authToken": "token"})
-        self.assertNotIsInstance(raised.exception, VersionUnavailableError)
-        self.assertEqual(raised.exception.status_code, 503)
 
         post.return_value = httpx.Response(401)
         with self.assertRaises(AuthExpiredError):
             purchase("com.example.pkg", 1, {"authToken": "token"})
 
     @patch("goopdl.api.httpx.post")
-    def test_purchase_rejection_of_owned_app_stays_non_fatal(self, post):
-        for status in (204, 400, 403, 404, 409):
-            post.return_value = httpx.Response(status)
-            self.assertEqual(purchase("com.example.pkg", 1, {"authToken": "token"}), "")
+    def test_other_purchase_failures_leave_classification_to_delivery(self, post):
+        for status in (204, 400, 402, 403, 404, 409, 410, 412, 500, 502, 503):
+            with self.subTest(status=status):
+                post.return_value = httpx.Response(status)
+                self.assertEqual(
+                    purchase("com.example.pkg", 1, {"authToken": "token"}), ""
+                )
 
     @patch("goopdl.api.httpx.get")
     def test_details_and_search_raise_typed_errors(self, get):
