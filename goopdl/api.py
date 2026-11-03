@@ -181,6 +181,8 @@ def _send(method: Any, *args: Any, **kwargs: Any) -> Any:
         message = "Google Play request timed out."
     except httpx.HTTPError as exc:
         message = f"Google Play request failed ({type(exc).__name__})."
+    # Drop bound methods and request containers as well as the httpx exception.
+    del method, args, kwargs
     raise NetworkError(message)
 
 
@@ -353,14 +355,17 @@ def _fetch_details_raw(
     params = {"doc": package}
     if country:
         params["gl"] = country.upper()
-    resp = _send(
-        httpx.get,
-        DETAILS_URL,
-        params=params,
-        headers=headers,
-        timeout=30,
-        proxy=_build_httpx_proxy(proxy),
-    )
+    try:
+        resp = _send(
+            httpx.get,
+            DETAILS_URL,
+            params=params,
+            headers=headers,
+            timeout=30,
+            proxy=_build_httpx_proxy(proxy),
+        )
+    finally:
+        del headers, params, proxy
     if resp.status_code == 404:
         raise AppNotAvailableError(f"App not found: {package}")
     _check_status(resp, "Failed to fetch details")
@@ -565,9 +570,12 @@ def get_details(
     proxy: str | None = None,
 ) -> AppDetails:
     """Return structured app details."""
-    parsed = _parse_details_proto(
-        _fetch_details_raw(package, auth, country=country, proxy=proxy)
-    )
+    try:
+        parsed = _parse_details_proto(
+            _fetch_details_raw(package, auth, country=country, proxy=proxy)
+        )
+    finally:
+        proxy = None
     if not parsed.docid:
         raise AppNotAvailableError(
             "App not found or unavailable for this device profile."
@@ -601,14 +609,17 @@ def purchase(
     headers = build_headers(auth, country=country)
     headers["Content-Type"] = "application/x-www-form-urlencoded"
     body = urlencode({"doc": package, "ot": 1, "vc": version_code})
-    resp = _send(
-        httpx.post,
-        PURCHASE_URL,
-        headers=headers,
-        content=body,
-        timeout=30,
-        proxy=_build_httpx_proxy(proxy),
-    )
+    try:
+        resp = _send(
+            httpx.post,
+            PURCHASE_URL,
+            headers=headers,
+            content=body,
+            timeout=30,
+            proxy=_build_httpx_proxy(proxy),
+        )
+    finally:
+        del headers, body, proxy
     if resp.status_code in (401, 429):
         _check_status(resp, "Purchase failed")
     if resp.status_code != 200:
@@ -837,38 +848,41 @@ def get_delivery(
     if country:
         params["gl"] = country.upper()
     resp: Any = None
-    for attempt in range(_DELIVERY_RETRIES + 1):
-        resp = _send(
-            httpx.get,
-            DELIVERY_URL,
-            params=params,
-            headers=headers,
-            timeout=30,
-            proxy=_build_httpx_proxy(proxy),
-        )
-        if resp.status_code == 401:
-            raise AuthExpiredError("Auth token expired.")
-        if resp.status_code == 404:
-            raise VersionUnavailableError("Requested version code is unavailable.")
-        if resp.status_code == 429:
-            retry_after = _parse_retry_after(getattr(resp, "headers", {}))
-            # A wait longer than we are willing to sleep: retrying inside the
-            # server's window only burns quota, so give up straight away.
-            too_long = retry_after is not None and retry_after > _RETRY_AFTER_MAX
-            if attempt == _DELIVERY_RETRIES or too_long:
-                raise RateLimitedError(
-                    "Google Play rate limited delivery requests (HTTP 429).",
-                    retry_after=retry_after,
-                )
-            # Never retry sooner than our own backoff, even on "Retry-After: 0".
-            time.sleep(max(retry_after or 0.0, _DELIVERY_BACKOFF[attempt]))
-            continue
-        if resp.status_code != 200:
-            raise PlayAPIError(
-                f"Delivery failed (HTTP {resp.status_code}).",
-                status_code=resp.status_code,
+    try:
+        for attempt in range(_DELIVERY_RETRIES + 1):
+            resp = _send(
+                httpx.get,
+                DELIVERY_URL,
+                params=params,
+                headers=headers,
+                timeout=30,
+                proxy=_build_httpx_proxy(proxy),
             )
-        break
+            if resp.status_code == 401:
+                raise AuthExpiredError("Auth token expired.")
+            if resp.status_code == 404:
+                raise VersionUnavailableError("Requested version code is unavailable.")
+            if resp.status_code == 429:
+                retry_after = _parse_retry_after(getattr(resp, "headers", {}))
+                # A wait longer than we are willing to sleep: retrying inside the
+                # server's window only burns quota, so give up straight away.
+                too_long = retry_after is not None and retry_after > _RETRY_AFTER_MAX
+                if attempt == _DELIVERY_RETRIES or too_long:
+                    raise RateLimitedError(
+                        "Google Play rate limited delivery requests (HTTP 429).",
+                        retry_after=retry_after,
+                    )
+                # Never retry sooner than our own backoff, even on "Retry-After: 0".
+                time.sleep(max(retry_after or 0.0, _DELIVERY_BACKOFF[attempt]))
+                continue
+            if resp.status_code != 200:
+                raise PlayAPIError(
+                    f"Delivery failed (HTTP {resp.status_code}).",
+                    status_code=resp.status_code,
+                )
+            break
+    finally:
+        del headers, params, proxy, delivery_token
 
     if resp is None:
         raise PlayAPIError("Delivery request did not return a response.")
@@ -911,14 +925,17 @@ def list_splits(
     params = {"doc": package}
     if country:
         params["gl"] = country.upper()
-    resp = _send(
-        httpx.get,
-        DETAILS_URL,
-        params=params,
-        headers=headers,
-        timeout=30,
-        proxy=_build_httpx_proxy(proxy),
-    )
+    try:
+        resp = _send(
+            httpx.get,
+            DETAILS_URL,
+            params=params,
+            headers=headers,
+            timeout=30,
+            proxy=_build_httpx_proxy(proxy),
+        )
+    finally:
+        del headers, params, proxy
     _check_status(resp, "Failed to fetch details")
 
     # Navigate to AppDetails: 1 -> 2 -> 4 -> 13 -> 1
@@ -994,14 +1011,17 @@ def search_apps(
     params: dict[str, Any] = {"q": query, "c": 3}
     if country:
         params["gl"] = country.upper()
-    resp = _send(
-        httpx.get,
-        SEARCH_URL,
-        params=params,
-        headers=headers,
-        timeout=30,
-        proxy=_build_httpx_proxy(proxy),
-    )
+    try:
+        resp = _send(
+            httpx.get,
+            SEARCH_URL,
+            params=params,
+            headers=headers,
+            timeout=30,
+            proxy=_build_httpx_proxy(proxy),
+        )
+    finally:
+        del headers, params, proxy
     _check_status(resp, "Search failed")
 
     docs = _find_docv2(resp.content)
