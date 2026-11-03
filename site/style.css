@@ -47,14 +47,14 @@
 .theme-vt .nav { view-transition-name: none; }
 
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+/* clip on html, not body: phones scroll the viewport, and body's overflow doesn't stop that */
+html { scroll-behavior: smooth; overflow-x: clip; }
 body {
   margin: 0;
   background: var(--paper);
   color: var(--ink);
   font: 400 18px/1.55 var(--sans);
   -webkit-font-smoothing: antialiased;
-  overflow-x: clip;
 }
 a { color: inherit; }
 code { font-family: var(--mono); font-size: .9em; }
@@ -199,6 +199,8 @@ h3 { font-size: 24px; letter-spacing: -.02em; font-weight: 600; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ── marquee ───────────────────────────────────────── */
+/* the band is rotated and scaled past the edges; this parent clips it so the page never gets wider */
+.marquee-clip { overflow-x: clip; }
 .marquee { background: var(--surface); color: var(--cream); overflow: hidden; padding: 22px 0; transform: rotate(-1.5deg) scale(1.02); }
 .marquee-track { display: flex; width: max-content; animation: marquee 30s linear infinite; }
 .marquee span { font: 700 clamp(28px, 4vw, 48px) var(--sans); letter-spacing: -.03em; padding: 0 28px; white-space: nowrap; }
