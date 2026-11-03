@@ -3,9 +3,9 @@ name: Deploy site
 on:
   push:
     branches: [main]
-    paths: ["site/**", "docs/**", ".github/workflows/pages.yml"]
+    paths: ["site/**", "docs/**", "install.sh", "install.ps1", ".github/workflows/pages.yml"]
   pull_request:
-    paths: ["site/**", "docs/**", ".github/workflows/pages.yml"]
+    paths: ["site/**", "docs/**", "install.sh", "install.ps1", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
