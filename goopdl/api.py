@@ -129,8 +129,13 @@ class PlayAPIError(GoopdlError):
         self.status_code = status_code
 
 
-class NetworkError(PlayAPIError):
-    """Raised when a Google Play request fails at the transport level."""
+class NetworkError(PlayAPIError, httpx.TransportError):
+    """Transport failure, catchable as PlayAPIError or legacy httpx.HTTPError."""
+
+    @httpx.HTTPError.request.getter
+    def request(self) -> httpx.Request | None:
+        """Return None when detached from the original, potentially secret request."""
+        return self._request
 
 
 class AuthExpiredError(PlayAPIError):
