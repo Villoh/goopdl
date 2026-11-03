@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 import httpx
 
+from goopdl.api import NetworkError
 from goopdl.download import (
     DownloadError,
     DownloadSpec,
@@ -45,6 +46,31 @@ class IsolatedEnvironment(unittest.TestCase):
 
 
 class DownloadHardeningTest(IsolatedEnvironment, unittest.IsolatedAsyncioTestCase):
+    async def test_progress_http_errors_propagate_unchanged_and_clean_partial(self):
+        for error_type in (NetworkError, httpx.ConnectError, zlib.error):
+            for after_write in (False, True):
+                with self.subTest(error=error_type.__name__, after_write=after_write):
+                    error = error_type("caller callback failed")
+
+                    def on_progress(_label, done, _total, error=error, after_write=after_write):
+                        if bool(done) == after_write:
+                            raise error
+
+                    async with httpx.AsyncClient(transport=httpx.MockTransport(
+                        lambda _request: httpx.Response(200, content=b"payload")
+                    )) as client:
+                        with patch("goopdl.download.CHUNK_SIZE", 2):
+                            try:
+                                await download_files([
+                                    DownloadSpec("https://play.googleapis.com/apk", self.root / "base.apk")
+                                ], client=client, on_progress=on_progress)
+                            except Exception as caught:
+                                self.assertIs(caught, error)
+                                self.assertNotIsInstance(caught, DownloadError)
+                            else:
+                                self.fail("expected caller callback exception")
+                    self.assert_no_files()
+
     async def test_rejects_unsafe_redirect_before_request_with_injected_client(self):
         for location in (
             "http://127.0.0.1:8080/private",

@@ -210,6 +210,8 @@ async def _download_one(
             written = 0
             temporary = _temporary_path(spec.dest)
             failure = None
+            # Caller exceptions are not CDN/decoder failures, even with the same type.
+            in_callback = False
             try:
                 decompressor = (
                     zlib.decompressobj(zlib.MAX_WBITS | 16) if spec.gzipped else None
@@ -241,7 +243,9 @@ async def _download_one(
                         total = int(resp.headers.get("Content-Length", 0)) or None
                         received = 0
                         if on_progress:
+                            in_callback = True
                             on_progress(label, received, total)
+                            in_callback = False
 
                         with temporary.open("wb") as downloaded:
                             async for chunk in resp.aiter_bytes(chunk_size=CHUNK_SIZE):
@@ -265,7 +269,9 @@ async def _download_one(
                                         calculated.update(output)
                                 received += len(chunk)
                                 if on_progress:
+                                    in_callback = True
                                     on_progress(label, received, total)
+                                    in_callback = False
 
                             if decompressor and not decompressor.eof:
                                 raise DownloadError(
@@ -284,8 +290,12 @@ async def _download_one(
                         raise IntegrityError(f"digest mismatch for {label}")
                 os.replace(temporary, spec.dest)
             except httpx.HTTPError as exc:
+                if in_callback:
+                    raise
                 failure = _download_error(label, exc)
             except zlib.error:
+                if in_callback:
+                    raise
                 failure = DownloadError(f"corrupt gzip data for {label}")
             finally:
                 temporary.unlink(missing_ok=True)
