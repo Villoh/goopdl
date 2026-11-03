@@ -176,7 +176,7 @@ def _malformed_proto() -> Iterator[None]:
         raise PlayAPIError("Malformed protobuf response from Google Play.") from exc
 
 
-class InvalidPackageError(ValueError):
+class InvalidPackageError(GoopdlError, ValueError):
     """Raised when a package name is not a valid Android application ID."""
 
 

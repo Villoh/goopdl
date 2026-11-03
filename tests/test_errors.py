@@ -10,6 +10,7 @@ from goopdl import errors
 from goopdl.aastoken import AASTokenError
 from goopdl.api import (
     AuthExpiredError,
+    InvalidPackageError,
     NetworkError,
     PlayAPIError,
     get_delivery,
@@ -29,8 +30,16 @@ TRUNCATED = b"\x0a\x05x"
 
 
 class HierarchyTest(unittest.TestCase):
-    def test_every_error_derives_from_goopdl_error_and_keeps_builtin_base(self):
+    def test_every_exported_error_derives_from_goopdl_error(self):
+        self.assertEqual(set(errors.__all__) - {"GoopdlError"}, set(errors._LAZY))
+        self.assertLessEqual(set(errors.__all__), set(goopdl.__all__))
+        for name in errors.__all__:
+            with self.subTest(name=name):
+                self.assertTrue(issubclass(getattr(errors, name), errors.GoopdlError))
+
+    def test_errors_keep_builtin_base(self):
         cases = [
+            (InvalidPackageError, ValueError),
             (PlayAPIError, Exception),
             (AuthExpiredError, PlayAPIError),
             (NetworkError, PlayAPIError),
