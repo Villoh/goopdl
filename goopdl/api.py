@@ -1014,7 +1014,7 @@ def search_apps(
 # ---------------------------------------------------------------------------
 
 _TOKEN_FETCH_ATTEMPTS = 3
-_TOKEN_FETCH_COOLDOWN = 5  # seconds — dispenser 5xx/429s are usually transient
+_TOKEN_FETCH_COOLDOWN = 5  # seconds — dispenser 5xx are usually transient
 
 
 def _acquire_single_token(
@@ -1026,7 +1026,8 @@ def _acquire_single_token(
 ) -> dict | None:
     """pick_pool_token(size=1), retrying a few times if the dispenser hiccups.
 
-    Raises the last typed token error (see fetch_token) once attempts run out.
+    Raises the last typed token error (see fetch_token) once attempts run out;
+    a dispenser rate limit is raised at once, as retrying only extends it.
     """
     last_error: DirectAuthError | None = None
     for attempt in range(_TOKEN_FETCH_ATTEMPTS):
@@ -1040,6 +1041,8 @@ def _acquire_single_token(
                 size=1,
                 raise_on_error=True,
             )
+        except DispenserRateLimitedError:
+            raise
         except DirectAuthError as exc:
             auth, last_error = None, exc
         if auth:
