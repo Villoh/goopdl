@@ -106,7 +106,7 @@ class AccountBoundariesTest(BoundaryCase):
 
     def test_cli_auth_failures_do_not_echo_or_chain_secrets(self):
         for error in (aastoken.AASTokenError("OAUTH_SENTINEL"),
-                      httpx.ConnectError(OAUTH)):
+                      httpx.ConnectError(OAUTH), ValueError("invalid credentials")):
             with self.subTest(error=type(error)), patch.object(
                 cli, "fetch_aas_token", side_effect=error
             ), patch.object(cli.err, "print") as output:
@@ -223,6 +223,103 @@ class LockBoundariesTest(BoundaryCase):
                 self.assertFalse(acquired)
             self.assertEqual(target.read_bytes(), b"")
             self.assertTrue(lock.is_symlink())
+
+
+class DownloadBoundariesTest(BoundaryCase):
+    def test_integrity_preflight_stream_and_filesystem_errors_are_sanitized(self):
+        for mode in ("metadata", "digest", "short", "long", "filesystem", "callback", "concurrency"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                async def run(mode=mode, tmp=tmp):
+                    async with httpx.AsyncClient(transport=httpx.MockTransport(
+                        lambda request: httpx.Response(200, content=b"apk")
+                    )) as client:
+                        spec = download.DownloadSpec(
+                            SIGNED, Path(tmp) / ("missing/base.apk" if mode == "filesystem" else "base.apk"),
+                            cookies=[{"name": "auth", "value": COOKIE}],
+                            integrity_required=mode == "metadata",
+                            expected_size={"short": 4, "long": 2, "digest": 3}.get(mode, 0),
+                            sha256=base64.urlsafe_b64encode(hashlib.sha256(b"bad").digest()).decode().rstrip("=")
+                            if mode == "digest" else "",
+                        )
+                        def callback(*args):
+                            try:
+                                raise ValueError(SIGNED)
+                            except ValueError as cause:
+                                raise RuntimeError("caller error") from cause
+                        try:
+                            await download.download_files(
+                                [spec], require_integrity=True, client=client,
+                                max_concurrent=0 if mode == "concurrency" else 1,
+                                on_progress=callback if mode == "callback" else None,
+                            )
+                        except Exception as exc:
+                            return exc
+                        self.fail("expected failure")
+                error = asyncio.run(run())
+                self.assert_sanitized(error)
+                self.assertFalse(list(Path(tmp).glob("*.part")))
+
+    def test_sync_integrity_failure_is_sanitized(self):
+        real = httpx.AsyncClient
+        def client(**kwargs):
+            return real(transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, content=b"apk")
+            ), **kwargs)
+        with tempfile.TemporaryDirectory() as tmp, patch.object(download.httpx, "AsyncClient", client), \
+                patch.object(download, "make_progress", return_value=MagicMock()):
+            error = caught(lambda: download.download_batch([
+                download.DownloadSpec(SIGNED, Path(tmp) / "a.apk", expected_size=1,
+                                      cookies=[{"name": "auth", "value": COOKIE}])
+            ]))
+        self.assertIsInstance(error, download.IntegrityError)
+        self.assert_sanitized(error)
+
+    def test_redirect_returning_to_initial_host_does_not_restore_credentials(self):
+        requests = []
+        def handler(request):
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(302, headers={"Location": "https://files.googleusercontent.com/b"})
+            if len(requests) == 2:
+                return httpx.Response(302, headers={"Location": "https://play.googleapis.com/c"})
+            return httpx.Response(200, content=b"apk")
+        async def run(dest):
+            async with httpx.AsyncClient(
+                transport=httpx.MockTransport(handler), cookies={"auth": COOKIE},
+                auth=("user", "password"), headers={"Proxy-Authorization": "proxy"}
+            ) as client:
+                await download.download_files([download.DownloadSpec(SIGNED, dest)], client=client)
+        with tempfile.TemporaryDirectory() as tmp:
+            asyncio.run(run(Path(tmp) / "a.apk"))
+        self.assertEqual(len(requests), 3)
+        self.assertIn("cookie", requests[0].headers)
+        for request in requests[1:]:
+            for header in ("cookie", "authorization", "proxy-authorization"):
+                self.assertNotIn(header, request.headers)
+
+    def test_cdn_url_port_validation_preserves_domain_allowlist(self):
+        for url in ("https://play.googleapis.com:8443/a", "https://play.googleapis.com:bad/a",
+                    "http://play.googleapis.com/a", "https://play.googleapis.com:0/a",
+                    "https://[invalid/a"):
+            with self.subTest(url=url):
+                self.assertEqual(api._safe_cdn_url(url), "")
+        for url in ("https://play.googleapis.com/a", "https://play.googleapis.com:443/a",
+                    "https://files.googleusercontent.com/a", "https://accounts.google.com/a"):
+            self.assertEqual(api._safe_cdn_url(url), url)
+
+    def test_redirect_nonstandard_https_port_is_rejected_before_request(self):
+        requests = []
+        def handler(request):
+            requests.append(request)
+            return httpx.Response(302, headers={"Location": "https://play.googleapis.com:8443/a"})
+        async def run(dest):
+            async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+                await download.download_files([download.DownloadSpec(SIGNED, dest)], client=client)
+        with tempfile.TemporaryDirectory() as tmp:
+            error = caught(lambda: asyncio.run(run(Path(tmp) / "a.apk")))
+        self.assertIsInstance(error, download.DownloadError)
+        self.assertEqual(len(requests), 1)
+        self.assert_sanitized(error)
 
 
 if __name__ == "__main__":

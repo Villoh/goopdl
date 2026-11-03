@@ -231,8 +231,10 @@ async def _download_one(
                                 or not _safe_cdn_url(str(request.url))
                             ):
                                 raise DownloadError(f"unsafe or excessive CDN redirect for {label}")
-                            if request.url.netloc != httpx.URL(spec.url).netloc:
-                                for name in ("Authorization", "Proxy-Authorization", "Cookie"):
+                            cross_host = request.url.netloc != resp.request.url.netloc
+                            for name in ("Authorization", "Proxy-Authorization", "Cookie"):
+                                # httpx may restore client cookies when building next_request.
+                                if cross_host or name not in resp.request.headers:
                                     request.headers.pop(name, None)
                             await resp.aclose()
                             resp = await client.send(
@@ -307,8 +309,9 @@ async def _download_one(
     failure = None
     try:
         return await transfer(spec, client, on_progress)
-    except DownloadError as exc:
+    except BaseException as exc:
         failure = exc.with_traceback(None)
+        failure.__cause__ = failure.__context__ = None
     # The transfer traceback and these inputs contain signed URLs/cookies.
     del transfer, spec, client, on_progress
     raise failure from None
@@ -370,15 +373,16 @@ async def download_files(
     exception propagates unchanged. Raises ValueError if max_concurrent < 1.
     On failure or cancellation no partial (.part) files are left behind.
     """
-    if max_concurrent < 1:
-        raise ValueError(f"max_concurrent must be >= 1, got {max_concurrent}")
-    if require_integrity:
-        _check_required_integrity(specs)
     failure = None
     try:
+        if max_concurrent < 1:
+            raise ValueError(f"max_concurrent must be >= 1, got {max_concurrent}")
+        if require_integrity:
+            _check_required_integrity(specs)
         await _run_downloads(specs, on_progress, max_concurrent, client)
-    except DownloadError as exc:
+    except BaseException as exc:
         failure = exc.with_traceback(None)
+        failure.__cause__ = failure.__context__ = None
     if failure is not None:
         # Do not retain the batch/client or task tracebacks containing signed URLs.
         del specs, client, on_progress
@@ -444,19 +448,21 @@ def download_batch(specs: list[DownloadSpec], require_integrity: bool = False) -
     except RuntimeError:
         pass
     else:
+        del specs
         raise RuntimeError(
             "download_batch() cannot run inside a running event loop; "
             "use 'await goopdl.download.download_files(...)' instead."
         )
-    if require_integrity:
-        _check_required_integrity(specs)
     failure = None
     progress = None
     try:
+        if require_integrity:
+            _check_required_integrity(specs)
         with make_progress() as progress:
             asyncio.run(download_files(specs, on_progress=_rich_callback(progress)))
-    except DownloadError as exc:
+    except BaseException as exc:
         failure = exc.with_traceback(None)
+        failure.__cause__ = failure.__context__ = None
     if failure is not None:
         del specs, progress
         raise failure from None
