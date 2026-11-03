@@ -19,13 +19,13 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from goopdl.errors import GoopdlError
+
 if TYPE_CHECKING:
     from rich.progress import Progress, TaskID
 
 # (label, bytes_done, total_bytes_or_None), called once at start and per chunk.
 ProgressCallback = Callable[[str, int, "int | None"], None]
-
-from goopdl.errors import GoopdlError
 
 CHUNK_SIZE = 64 * 1024  # 64 KB
 MAX_CONCURRENT = 4
