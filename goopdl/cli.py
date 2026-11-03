@@ -90,6 +90,14 @@ def _package_callback(value: str) -> str:
         raise typer.BadParameter(str(exc)) from None
 
 
+def _arch_callback(value: str) -> str:
+    if value not in VALID_ARCHS:
+        raise typer.BadParameter(
+            f"Unknown architecture: {value}. Choose from {', '.join(VALID_ARCHS)}."
+        )
+    return value
+
+
 def _version_callback(value: bool) -> None:
     if value:
         rprint(f"goopdl [bold]{__version__}[/bold]")
@@ -132,7 +140,9 @@ def main(
 @app.command()
 def auth(
     arch: str = typer.Option(
-        "arm64", help="Device type: arm64, armv7, x86, x86_64 or tv."
+        "arm64",
+        help="Device type: arm64, armv7, x86, x86_64 or tv.",
+        callback=_arch_callback,
     ),
     dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
@@ -319,7 +329,9 @@ def latest(
     package: str = typer.Argument(
         ..., help="Package name (e.g. com.whatsapp).", callback=_package_callback
     ),
-    arch: str = typer.Option("arm64", help="Architecture for token."),
+    arch: str = typer.Option(
+        "arm64", help="Architecture for token.", callback=_arch_callback
+    ),
     country: str | None = typer.Option(
         None, "--country", "-c", help="2-letter country code."
     ),
@@ -462,7 +474,9 @@ def info(
     package: str = typer.Argument(
         ..., help="Package name (e.g. com.whatsapp).", callback=_package_callback
     ),
-    arch: str = typer.Option("arm64", help="Architecture for token."),
+    arch: str = typer.Option(
+        "arm64", help="Architecture for token.", callback=_arch_callback
+    ),
     dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
     ),
@@ -564,7 +578,9 @@ def info(
 def search(
     query: str = typer.Argument(..., help="Search query."),
     limit: int = typer.Option(10, "--limit", "-l", help="Max results."),
-    arch: str = typer.Option("arm64", help="Architecture for token."),
+    arch: str = typer.Option(
+        "arm64", help="Architecture for token.", callback=_arch_callback
+    ),
     dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
     ),
@@ -629,7 +645,9 @@ def list_splits_cmd(
     package: str = typer.Argument(
         ..., help="Package name.", callback=_package_callback
     ),
-    arch: str = typer.Option("arm64", help="Architecture for token."),
+    arch: str = typer.Option(
+        "arm64", help="Architecture for token.", callback=_arch_callback
+    ),
     dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
     ),
@@ -784,7 +802,9 @@ def inspect_delivery_cmd(
         ..., help="Package name.", callback=_package_callback
     ),
     version: int = typer.Option(..., "--version", "-v", help="Version code."),
-    arch: str = typer.Option("arm64", "--arch", help="Device architecture."),
+    arch: str = typer.Option(
+        "arm64", "--arch", help="Device architecture.", callback=_arch_callback
+    ),
     dispenser: str | None = typer.Option(None, "--dispenser", "-d"),
     country: str | None = typer.Option(None, "--country", "-c"),
     proxy: str | None = typer.Option(None, "--proxy", "-p"),
@@ -1150,6 +1170,7 @@ def fast_download(
         "--arch",
         "-a",
         help="Device type: arm64, armv7, x86, x86_64 or tv.",
+        callback=_arch_callback,
     ),
     dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."

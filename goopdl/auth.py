@@ -20,6 +20,7 @@ from rich.console import Console
 from goopdl.errors import GoopdlError
 from goopdl.profiles import (
     FALLBACK_PROFILE,
+    VALID_ARCHS,
     find_profile,
     get_priority_profiles,
     patch_profile_country,
@@ -75,6 +76,17 @@ def _sanitize_country(country: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", country.upper())[:4]
 
 
+class InvalidArchError(GoopdlError, ValueError):
+    """Raised when an architecture is not one of profiles.VALID_ARCHS."""
+
+
+def _arch_key(arch: str) -> str:
+    """Return *arch* if it is a known architecture; it is used in cache paths."""
+    if arch not in VALID_ARCHS:
+        raise InvalidArchError(f"Invalid architecture: {arch!r}")
+    return arch
+
+
 def _profile_suffix(arch: str, profile: Optional[str]) -> str:
     """Use the canonical profile key for aliases; reject unsafe filename keys."""
     if not profile:
@@ -92,7 +104,7 @@ def _auth_path(
 ) -> Path:
     suffix = f"-{_sanitize_country(country)}" if country else ""
     suffix += _profile_suffix(arch, profile)
-    return _CONFIG_DIR / f"auth-{arch}{suffix}.json"
+    return _CONFIG_DIR / f"auth-{_arch_key(arch)}{suffix}.json"
 
 
 def save_auth(
@@ -590,7 +602,7 @@ def _pool_path(
 ) -> Path:
     suffix = f"-{_sanitize_country(country)}" if country else ""
     suffix += _profile_suffix(arch, profile)
-    return _CONFIG_DIR / f"token-pool-{arch}{suffix}.json"
+    return _CONFIG_DIR / f"token-pool-{_arch_key(arch)}{suffix}.json"
 
 
 _POOL_LOCK_TIMEOUT = 180.0  # seconds; a cold five-token pool can take 5 x 30s
@@ -791,7 +803,7 @@ def _index_path(
 ) -> Path:
     suffix = f"-{_sanitize_country(country)}" if country else ""
     suffix += _profile_suffix(arch, profile)
-    return _CONFIG_DIR / f"pool-index-{arch}{suffix}.json"
+    return _CONFIG_DIR / f"pool-index-{_arch_key(arch)}{suffix}.json"
 
 
 def _read_index(

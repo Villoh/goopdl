@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -5,7 +6,7 @@ from unittest.mock import patch
 from urllib.parse import parse_qs
 
 import httpx
-from goopdl import cli
+from goopdl import auth, cli
 from goopdl.api import (
     AppDetails,
     DeliveryResult,
@@ -25,6 +26,8 @@ from goopdl.api import (
     search_apps,
     validate_package,
 )
+from goopdl.auth import InvalidArchError
+from goopdl.profiles import VALID_ARCHS
 from typer.testing import CliRunner
 
 BAD_PACKAGES = [
@@ -200,3 +203,47 @@ class SplitFileNameTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class ArchValidationTest(unittest.TestCase):
+    BAD_ARCHS = ("../x", "x/../../y", "", "ARM64 ", "x/../../outside/pwned")
+
+    def test_cache_paths_reject_unknown_arch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "cfg"
+            with patch("goopdl.auth._CONFIG_DIR", config):
+                for arch in self.BAD_ARCHS:
+                    with self.subTest(arch=arch):
+                        with self.assertRaises(InvalidArchError):
+                            auth.save_auth({"authToken": "t"}, arch=arch)
+                        for build in (auth._pool_path, auth._index_path):
+                            with self.assertRaises(InvalidArchError):
+                                build(arch, None)
+                        with self.assertRaises(InvalidArchError):
+                            with auth._pool_lock(arch, None):
+                                pass
+            leaked = [p for p in Path(directory).rglob("*") if p != config]
+            self.assertEqual(leaked, [])
+
+    def test_valid_archs_build_paths_inside_config_dir(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "cfg"
+            with patch("goopdl.auth._CONFIG_DIR", config):
+                for arch in VALID_ARCHS:
+                    with self.subTest(arch=arch):
+                        path = auth.save_auth({"authToken": "t"}, arch=arch)
+                        self.assertEqual(path.parent, config)
+                        self.assertEqual(auth.load_cached_auth(arch)["authToken"], "t")
+                        self.assertEqual(auth._pool_path(arch, "us").parent, config)
+                        self.assertEqual(auth._index_path(arch, None).parent, config)
+
+    def test_error_is_a_value_error(self):
+        self.assertTrue(issubclass(InvalidArchError, ValueError))
+
+    def test_cli_rejects_bad_arch(self):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("goopdl.cli.fetch_token") as fetch,
+        ):
+            result = CliRunner().invoke(cli.app, ["auth", "--arch", "../x"])
+        self.assertEqual(result.exit_code, 2, result.output)
+        fetch.assert_not_called()
