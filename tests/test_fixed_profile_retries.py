@@ -57,7 +57,7 @@ REJECTIONS = {
 }
 
 
-class FixedProfileRetryTest(unittest.TestCase):
+class HttpCase(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -123,6 +123,9 @@ class FixedProfileRetryTest(unittest.TestCase):
         except api.PlayAPIError:
             return 1
         return 0
+
+
+class FixedProfileRetryTest(HttpCase):
 
     def test_fixed_profile_rejection_retries_same_profile_like_gold(self):
         for path in ("fast-download", "api"):
@@ -196,6 +199,58 @@ class FixedProfileRetryTest(unittest.TestCase):
                     self.resolve()
                 self.assertEqual(self.calls["checkin"], 1)
                 self.assertEqual(self.sleeps(), [])
+
+
+class MalformedResponseTest(HttpCase):
+    """A corrupt protobuf does not improve with another token: gold propagated."""
+
+    def setUp(self):
+        super().setUp()
+        self.malformed = (
+            lambda: httpx.Response(200, content=b"\x80"),
+            lambda: httpx.Response(200, content=b"{bad-json"),
+        )
+
+    def test_error_type_stays_a_play_api_error(self):
+        self.assertTrue(issubclass(api.MalformedResponseError, api.PlayAPIError))
+        self.reset({"details": self.malformed[0]})
+        with self.assertRaises(api.MalformedResponseError) as caught:
+            api.get_details(PACKAGE, {"authToken": "T", "gsfId": "1"})
+        self.assertIsInstance(caught.exception.__cause__, (ValueError, EOFError))
+
+    def test_version_string_download_stops_like_gold(self):
+        for response in self.malformed:
+            with self.subTest(response=response().content):
+                self.reset({"details": response})
+                result = CliRunner().invoke(cli.app, [
+                    "download", PACKAGE, "--version", "1.2", "-o", str(self.output),
+                ])
+                self.assertEqual(result.exit_code, 1, result.output)
+                self.assertEqual(self.calls["dispenser"], 6)  # pool of 5 + 1 probe
+                self.assertEqual(self.calls["GET"], 1)
+                self.assertEqual(self.sleeps(), [])
+
+    def test_latest_stops_at_first_malformed_probe_like_gold(self):
+        self.reset({"details": self.malformed[0]})
+        result = CliRunner().invoke(cli.app, ["latest", PACKAGE])
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertEqual(self.calls["GET"], 1)
+        self.assertIn("Malformed protobuf", result.output)
+
+    def test_compat_retry_stops_on_malformed_reply(self):
+        self.reset({})
+        with (
+            patch.object(cli, "get_details", side_effect=[
+                api.AppNotSupportedError("incompatible"),
+                api.MalformedResponseError("corrupt"),
+            ]) as details,
+            self.assertRaises(api.MalformedResponseError),
+        ):
+            cli._acquire_delivery(
+                PACKAGE, None, "arm64", {"authToken": "T"}, None, None, None, None
+            )
+        self.assertEqual(details.call_count, 2)
+        self.assertEqual(self.calls["dispenser"], 1)
 
 
 if __name__ == "__main__":

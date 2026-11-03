@@ -26,6 +26,7 @@ from goopdl.api import (
     AppNotSupportedError,
     AuthExpiredError,
     InvalidPackageError,
+    MalformedResponseError,
     NetworkError,
     PlayAPIError,
     RateLimitedError,
@@ -502,12 +503,12 @@ def latest(
             tokens[i] = new_token
             try:
                 details = get_details(package, new_token, country=country, proxy=proxy)
-            except (RateLimitedError, NetworkError) as exc:
+            except (RateLimitedError, NetworkError, MalformedResponseError) as exc:
                 _exit_transient_play_error(exc)
             except PlayAPIError as exc:
                 err.print(f"[dim]  probe {i + 1}: retry failed: {exc}[/dim]")
                 continue
-        except (RateLimitedError, NetworkError) as exc:
+        except (RateLimitedError, NetworkError, MalformedResponseError) as exc:
             _exit_transient_play_error(exc)
         except PlayAPIError as exc:
             err.print(f"[dim]  probe {i + 1}: {gsf_prefix}... error: {exc}[/dim]")
@@ -853,8 +854,8 @@ def _acquire_delivery(
                 continue
             try:
                 return flow(retry_auth)
-            except (RateLimitedError, NetworkError):
-                raise  # another profile would hit the same throttle/outage
+            except (RateLimitedError, NetworkError, MalformedResponseError):
+                raise  # another profile would hit the same throttle/outage/bug
             except PlayAPIError:
                 continue
         return None
@@ -1348,7 +1349,7 @@ def fast_download(
 
 
 def _exit_transient_play_error(exc: PlayAPIError) -> NoReturn:
-    """Exit on Google Play throttling (code 5) or a network failure (code 1)."""
+    """Exit on Google Play throttling (code 5) or network/malformed reply (code 1)."""
     if isinstance(exc, RateLimitedError):
         err.print("[red]Google Play rate limited requests (HTTP 429); retry later.[/red]")
         raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
@@ -1465,7 +1466,7 @@ def _resolve_version_string(
             continue
         try:
             details = get_details(package, token, country=country, proxy=proxy)
-        except (RateLimitedError, NetworkError):
+        except (RateLimitedError, NetworkError, MalformedResponseError):
             raise  # more fresh tokens would only spend dispenser quota
         except PlayAPIError as exc:
             err.print(f"[dim]  attempt {attempt}: {exc}[/dim]")

@@ -170,6 +170,10 @@ class AppNotPurchasedError(PlayAPIError):
     """Raised when account has not acquired requested app."""
 
 
+class MalformedResponseError(PlayAPIError):
+    """Google Play returned an undecodable protobuf; another token won't help."""
+
+
 def _send(method: Any, *args: Any, **kwargs: Any) -> Any:
     """Call an httpx request function, wrapping transport failures."""
     # Messages name only the error type: request URLs may carry tokens.
@@ -192,11 +196,11 @@ def _send(method: Any, *args: Any, **kwargs: Any) -> Any:
 
 @contextmanager
 def _malformed_proto() -> Iterator[None]:
-    """Turn ProtoDecoder failures into PlayAPIError (usable as decorator)."""
+    """Turn ProtoDecoder failures into MalformedResponseError (usable as decorator)."""
     try:
         yield
     except (ValueError, EOFError) as exc:
-        raise PlayAPIError("Malformed protobuf response from Google Play.") from exc
+        raise MalformedResponseError("Malformed protobuf response from Google Play.") from exc
 
 
 class InvalidPackageError(GoopdlError, ValueError):
