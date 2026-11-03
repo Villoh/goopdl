@@ -280,6 +280,8 @@ async def download_files(
     start unless every integrity-required file (APKs, .dm) has digests.
     ``client`` is used as-is and not closed; by default a fresh one is created.
     """
+    if max_concurrent < 1:
+        raise ValueError(f"max_concurrent must be >= 1, got {max_concurrent}")
     if require_integrity:
         _check_required_integrity(specs)
     await _run_downloads(specs, on_progress, max_concurrent, client)
