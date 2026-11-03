@@ -210,14 +210,15 @@ class DeliveryProtocolTest(unittest.TestCase):
 
     @patch("goopdl.api.time.sleep")
     @patch("goopdl.api.httpx.get")
-    def test_long_retry_after_caps_sleep_but_keeps_server_value(self, get, sleep):
+    def test_long_retry_after_raises_without_sleeping_or_retrying(self, get, sleep):
         get.side_effect = [httpx.Response(429, headers={"Retry-After": "120"})] * 3
 
         with self.assertRaises(RateLimitedError) as raised:
             get_delivery("com.example.pkg", 1, {"authToken": "token"})
 
         self.assertEqual(raised.exception.retry_after, 120.0)
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [30.0, 30.0])
+        sleep.assert_not_called()
+        self.assertEqual(get.call_count, 1)
 
     @patch("goopdl.api.time.sleep")
     @patch("goopdl.api.httpx.get")
