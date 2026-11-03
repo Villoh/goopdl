@@ -179,6 +179,7 @@ class SplitFileNameTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "out"
             with (
+                patch.dict(os.environ, {}, clear=True),
                 patch("goopdl.cli.pick_pool_token", return_value={"authToken": "t"}),
                 patch(
                     "goopdl.cli._acquire_delivery",
