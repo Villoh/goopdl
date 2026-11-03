@@ -628,14 +628,14 @@ _GOOGLE_CDN_SUFFIXES = (
 )
 _DELIVERY_RETRIES = 2
 _DELIVERY_BACKOFF = (1.0, 3.0)
-_RETRY_AFTER_MAX = 30.0  # cap for our own sleeps; the server's value is kept
+_RETRY_AFTER_MAX = 30.0  # longest Retry-After we sleep on; above it we raise
 
 
 def _parse_retry_after(headers: Any) -> float | None:
     """Return the server's Retry-After delay in seconds, if valid.
 
     Accepts delta-seconds and HTTP dates. Deliberately uncapped so callers can
-    report it; anything that sleeps on it must clamp to _RETRY_AFTER_MAX.
+    report it; get_delivery raises instead of sleeping past _RETRY_AFTER_MAX.
     """
     try:
         raw = headers.get("Retry-After")
@@ -845,15 +845,16 @@ def get_delivery(
             raise VersionUnavailableError("Requested version code is unavailable.")
         if resp.status_code == 429:
             retry_after = _parse_retry_after(getattr(resp, "headers", {}))
-            if attempt == _DELIVERY_RETRIES:
+            # A wait longer than we are willing to sleep: retrying inside the
+            # server's window only burns quota, so give up straight away.
+            too_long = retry_after is not None and retry_after > _RETRY_AFTER_MAX
+            if attempt == _DELIVERY_RETRIES or too_long:
                 raise RateLimitedError(
                     "Google Play rate limited delivery requests (HTTP 429).",
                     retry_after=retry_after,
                 )
             # Never retry sooner than our own backoff, even on "Retry-After: 0".
-            time.sleep(
-                max(min(retry_after or 0.0, _RETRY_AFTER_MAX), _DELIVERY_BACKOFF[attempt])
-            )
+            time.sleep(max(retry_after or 0.0, _DELIVERY_BACKOFF[attempt]))
             continue
         if resp.status_code != 200:
             raise PlayAPIError(
