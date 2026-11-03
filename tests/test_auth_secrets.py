@@ -220,6 +220,57 @@ class AuthSecretsTest(unittest.TestCase):
                     )
         self.assertEqual(token, {"authToken": "bearer-sentinel"})
 
+    def test_existing_network_error_is_not_wrapped_or_retried(self):
+        for entry in ("send", "fetch", "acquire", "profiles"):
+            original = api.NetworkError("Endpoint unavailable.")
+            with (
+                self.subTest(entry=entry),
+                patch.object(httpx, "get", side_effect=original),
+                patch.object(httpx, "post", side_effect=original) as post,
+                patch.object(api, "pick_pool_token", side_effect=original) as pick,
+                patch.object(
+                    cli, "get_details", side_effect=api.AppNotSupportedError("no")
+                ),
+                patch.object(api.time, "sleep") as sleep,
+            ):
+                if entry == "send":
+                    error = capture_failure(
+                        lambda: api._send(
+                            httpx.get,
+                            "https://example.test/?dtok=dtok-sentinel",
+                            headers={"Authorization": "Bearer bearer-sentinel"},
+                            proxy="http://user:proxy-sentinel@localhost:8080",
+                        )
+                    )
+                elif entry == "fetch":
+                    error = capture_failure(
+                        lambda: auth.fetch_token(
+                            proxy="http://user:proxy-sentinel@localhost:8080",
+                            raise_on_error=True,
+                        )
+                    )
+                    self.assertEqual(post.call_count, 1)
+                elif entry == "acquire":
+                    error = capture_failure(
+                        lambda: api._acquire_single_token(
+                            "arm64", None, None, None, "Pv"
+                        )
+                    )
+                    self.assertEqual(pick.call_count, 1)
+                else:
+                    error = capture_failure(
+                        lambda: cli._acquire_delivery(
+                            "com.example.pkg", 1, "arm64", {}, None, None, None, None
+                        )
+                    )
+                    self.assertEqual(post.call_count, 1)
+                self.assertIs(error, original)
+                sleep.assert_not_called()
+                if entry in ("send", "fetch"):
+                    self.assert_redacted(
+                        error, ("dtok-sentinel", "bearer-sentinel", "proxy-sentinel")
+                    )
+
     def test_fetch_erases_proxy_on_transport_failure(self):
         with patch.object(
             httpx, "post", side_effect=httpx.ConnectError("proxy-sentinel")
