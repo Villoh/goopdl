@@ -104,10 +104,15 @@ class TransportWrappingTest(unittest.TestCase):
     ]
 
     def test_httpx_errors_become_network_error(self):
+        request = httpx.Request(
+            "GET",
+            f"https://android.clients.google.com/fdfe/delivery?dtok={DTOK}",
+            headers={"Authorization": "Bearer secret-bearer"},
+        )
         failures = [
-            httpx.ConnectTimeout("timed out"),
-            httpx.ConnectError("refused"),
-            httpx.RemoteProtocolError("broken"),
+            httpx.ConnectTimeout("timed out", request=request),
+            httpx.ConnectError("refused", request=request),
+            httpx.RemoteProtocolError("broken", request=request),
         ]
         for method, call in self.calls:
             for failure in failures:
@@ -117,8 +122,11 @@ class TransportWrappingTest(unittest.TestCase):
                         self.assertRaises(NetworkError) as raised,
                     ):
                         call()
-                    self.assertIs(raised.exception.__cause__, failure)
+                    # The httpx error (and its request) must not stay reachable.
+                    self.assertIsNone(raised.exception.__cause__)
+                    self.assertIsNone(raised.exception.__context__)
                     self.assertNotIn(DTOK, str(raised.exception))
+                    self.assertNotIn("secret-bearer", str(raised.exception))
 
 
 class MalformedProtoTest(unittest.TestCase):
