@@ -602,10 +602,10 @@ def purchase(
         timeout=30,
         proxy=_build_httpx_proxy(proxy),
     )
-    if resp.status_code in _PURCHASE_NONFATAL:
-        return ""  # non-fatal — may already be purchased; delivery classifies it
-    if resp.status_code != 204:
+    if resp.status_code in (401, 429):
         _check_status(resp, "Purchase failed")
+    if resp.status_code != 200:
+        return ""  # non-fatal — may already be purchased; delivery classifies it
     buy_fields = _navigate(resp.content, 1, 4)
     return _first_string(buy_fields, 55) if buy_fields else ""
 
@@ -659,12 +659,6 @@ def _parse_retry_after(headers: Any) -> float | None:
     if not math.isfinite(value) or value < 0:
         return None
     return value
-
-
-# Purchase answers that do not block delivery: Play rejects acquiring an app
-# the account already owns (or cannot buy) with a 4xx, and get_delivery()
-# then reports the precise outcome. Auth, proxy, timeout, 429 and 5xx raise.
-_PURCHASE_NONFATAL = frozenset({400, 403, 404, 409})
 
 
 def _check_status(resp: Any, what: str) -> None:
