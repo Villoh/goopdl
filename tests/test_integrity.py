@@ -146,6 +146,19 @@ class DeliveryIntegrityTest(unittest.TestCase):
             )
             self.assertNotIn("secret", manifest.read_text(encoding="utf-8"))
 
+    def test_manifest_failure_leaves_no_temp_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec = DownloadSpec(
+                "url", root / "base.apk", expected_size=4, sha256=digest(b"base", "sha256")
+            )
+            with (
+                patch("goopdl.download.os.replace", side_effect=OSError("disk full")),
+                self.assertRaises(OSError),
+            ):
+                write_manifest(root / "manifest.json", [spec])
+            self.assertEqual(list(root.iterdir()), [])
+
 
 class DownloadErrorRedactionTest(unittest.IsolatedAsyncioTestCase):
     async def test_http_error_does_not_expose_url(self):
