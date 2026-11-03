@@ -97,13 +97,6 @@ def get_config_dir() -> Path:
     return Path.home() / ".config" / "goopdl"
 
 
-def __getattr__(name: str):
-    # _CONFIG_DIR used to be an import-time constant; keep it readable.
-    if name == "_CONFIG_DIR":
-        return get_config_dir()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
 # Library code only logs; the CLI attaches a handler. Never log secrets here.
 logger = logging.getLogger(__name__)
 
@@ -1123,3 +1116,26 @@ def build_headers(auth: dict, country: Optional[str] = None) -> dict[str, str]:
         headers["X-DFE-MCCMNC"] = device_info["mccMnc"]
 
     return headers
+
+
+def __getattr__(name: str):
+    # _CONFIG_DIR used to be an import-time constant; keep it readable.
+    if name == "_CONFIG_DIR":
+        return get_config_dir()
+    if name in ("Console", "console"):
+        import warnings
+
+        warnings.warn(
+            f"goopdl.auth.{name} is deprecated; use rich.console.Console directly.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from rich.console import Console
+
+        if name == "Console":
+            return Console
+        # Compatibility only: library internals never print through this console.
+        if "_compat_console" not in globals():
+            globals()["_compat_console"] = Console()
+        return globals()["_compat_console"]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

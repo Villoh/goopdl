@@ -7,6 +7,25 @@ Profiles are rotated during token acquisition for reliability.
 import sys
 from pathlib import Path
 
+__all__ = [
+    "PROFILES_DIR",
+    "FALLBACK_PROFILE",
+    "COUNTRY_MCC",
+    "ABI_TOKENS",
+    "VALID_ARCHS",
+    "ARM64_PROFILES",  # noqa: F822 — resolved lazily by __getattr__
+    "ARMV7_PROFILES",  # noqa: F822
+    "TV_PROFILES",  # noqa: F822
+    "patch_profile_country",
+    "is_tv_profile",
+    "load_all_profiles",
+    "find_profile",
+    "get_latest_probe_profiles",
+    "get_priority_profiles",
+    "get_compat_profiles",
+    "get_discovery_profiles",
+]
+
 PROFILES_DIR = Path(__file__).resolve().parent / "profiles"
 
 FALLBACK_PROFILE = {

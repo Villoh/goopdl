@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from goopdl import download as _download
 from goopdl.errors import GoopdlError
 
 if TYPE_CHECKING:
@@ -80,7 +81,8 @@ def _download_error(label: str, exc: httpx.HTTPError) -> DownloadError:
     )
 
 
-def make_progress() -> Progress:
+# Qualify the lazy type: get_type_hints evaluates globals, not module __getattr__.
+def make_progress() -> _download.Progress:
     """Create a pre-configured Rich progress bar for downloads."""
     from rich.progress import (
         BarColumn,
@@ -376,3 +378,21 @@ def download_batch(specs: list[DownloadSpec], require_integrity: bool = False) -
         _check_required_integrity(specs)
     with make_progress() as progress:
         asyncio.run(download_files(specs, on_progress=_rich_callback(progress)))
+
+
+def __getattr__(name: str):
+    if name in (
+        "BarColumn", "DownloadColumn", "Progress", "SpinnerColumn", "TextColumn",
+        "TimeRemainingColumn", "TransferSpeedColumn",
+    ):
+        import warnings
+
+        warnings.warn(
+            f"goopdl.download.{name} is deprecated; import it from rich.progress instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from rich import progress
+
+        return getattr(progress, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
