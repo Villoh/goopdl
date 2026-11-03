@@ -637,6 +637,11 @@ def fetch_token(
         error = DirectAuthError(
             str(exc), stage=exc.stage, status=exc.status, retry_after=exc.retry_after
         )
+    except GoopdlError as exc:
+        # A pre-sanitized NetworkError is also an httpx.TransportError. Keep its
+        # identity, but detach protocol frames just like newly minted errors.
+        error = exc.with_traceback(None)
+        error.__cause__ = error.__context__ = None
     finally:
         proxy = dispenser_url = None
     raise error
@@ -669,6 +674,8 @@ def _fetch_token_impl(
             error = DirectAuthError(
                 str(exc), stage=exc.stage, status=exc.status, retry_after=exc.retry_after
             )
+        except GoopdlError:
+            raise
         except Exception:
             # No exc_info: tracebacks can carry credentials from request locals.
             logger.error("Direct Google authentication failed unexpectedly.")
@@ -735,7 +742,7 @@ def _fetch_token_impl(
                             _parse_retry_after(resp.headers)
                         )
                     return None
-        except DispenserRateLimitedError:
+        except GoopdlError:
             raise
         except httpx.TransportError as exc:
             logger.warning("Dispenser transport failed: %s", type(exc).__name__)

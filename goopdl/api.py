@@ -177,13 +177,17 @@ def _send(method: Any, *args: Any, **kwargs: Any) -> Any:
     # its .request (Authorization header, dtok URL) via __cause__/__context__.
     try:
         return method(*args, **kwargs)
+    except NetworkError as exc:
+        error = exc.with_traceback(None)
     except httpx.TimeoutException:
-        message = "Google Play request timed out."
+        error = NetworkError("Google Play request timed out.")
     except httpx.HTTPError as exc:
-        message = f"Google Play request failed ({type(exc).__name__})."
-    # Drop bound methods and request containers as well as the httpx exception.
-    del method, args, kwargs
-    raise NetworkError(message)
+        error = NetworkError(f"Google Play request failed ({type(exc).__name__}).")
+    finally:
+        # Drop bound methods and request containers as well as the httpx exception.
+        del method, args, kwargs
+    error.__cause__ = error.__context__ = None
+    raise error
 
 
 @contextmanager
