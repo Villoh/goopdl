@@ -84,7 +84,7 @@
     "cmd8": "Una variante regional",
     "cmds.more": "Referencia completa de comandos →",
     "final.title": "Instala goopdl.",
-    "final.note": "Los instaladores no necesitan Python · <code>uv</code> necesita Python 3.10+ · o pruébalo una vez con <code>uvx goopdl --help</code>",
+    "final.note": "Los instaladores no necesitan Python · o pruébalo una vez con <code>uvx goopdl --help</code>",
     "footer.disclaimer": "goopdl es un proyecto independiente, sin afiliación, respaldo ni patrocinio de Google. Google y Google Play son marcas comerciales de Google LLC.",
     "footer.credits": "Hard fork de <a href=\"https://github.com/appknox/gplaydl\">appknox/gplaydl</a>. Autenticación anónima con el dispensador de tokens de <a href=\"https://auroraoss.com/\">Aurora Store</a>. <a href=\"https://github.com/Villoh/goopdl/blob/main/LICENSE\">Licencia MIT</a>.",
     "nav.faq": "FAQ",
