@@ -1,4 +1,6 @@
 import unittest
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,8 +17,12 @@ from goopdl.api import (
     VersionUnavailableError,
     _build_specs,
     _extract_delivery_from_fields,
+    _parse_retry_after,
     get_delivery,
+    get_details,
+    list_splits,
     purchase,
+    search_apps,
 )
 
 
@@ -191,7 +197,7 @@ class DeliveryProtocolTest(unittest.TestCase):
     @patch("goopdl.api.httpx.get")
     def test_invalid_retry_after_is_ignored(self, get, sleep):
         get.side_effect = [
-            httpx.Response(429, headers={"Retry-After": "999"}),
+            httpx.Response(429, headers={"Retry-After": "nan"}),
             httpx.Response(429, headers={"Retry-After": "not-a-number"}),
             httpx.Response(429, headers={"Retry-After": "-1"}),
         ]
@@ -201,6 +207,73 @@ class DeliveryProtocolTest(unittest.TestCase):
 
         self.assertIsNone(raised.exception.retry_after)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.0, 3.0])
+
+    @patch("goopdl.api.time.sleep")
+    @patch("goopdl.api.httpx.get")
+    def test_long_retry_after_caps_sleep_but_keeps_server_value(self, get, sleep):
+        get.side_effect = [httpx.Response(429, headers={"Retry-After": "120"})] * 3
+
+        with self.assertRaises(RateLimitedError) as raised:
+            get_delivery("com.example.pkg", 1, {"authToken": "token"})
+
+        self.assertEqual(raised.exception.retry_after, 120.0)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [30.0, 30.0])
+
+    def test_retry_after_accepts_http_date(self):
+        when = datetime.now(timezone.utc) + timedelta(seconds=90)
+        delay = _parse_retry_after({"Retry-After": format_datetime(when, usegmt=True)})
+        assert delay is not None
+        self.assertAlmostEqual(delay, 90, delta=2)
+
+        past = format_datetime(when - timedelta(days=1), usegmt=True)
+        self.assertEqual(_parse_retry_after({"Retry-After": past}), 0.0)
+
+    @patch("goopdl.api.httpx.post")
+    def test_purchase_classifies_throttling_and_outages(self, post):
+        post.return_value = httpx.Response(429, headers={"Retry-After": "7"})
+        with self.assertRaises(RateLimitedError) as raised:
+            purchase("com.example.pkg", 1, {"authToken": "token"})
+        self.assertEqual(raised.exception.retry_after, 7.0)
+
+        post.return_value = httpx.Response(503)
+        with self.assertRaises(PlayAPIError) as raised:
+            purchase("com.example.pkg", 1, {"authToken": "token"})
+        self.assertNotIsInstance(raised.exception, VersionUnavailableError)
+        self.assertEqual(raised.exception.status_code, 503)
+
+        post.return_value = httpx.Response(401)
+        with self.assertRaises(AuthExpiredError):
+            purchase("com.example.pkg", 1, {"authToken": "token"})
+
+    @patch("goopdl.api.httpx.post")
+    def test_purchase_rejection_of_owned_app_stays_non_fatal(self, post):
+        for status in (204, 400, 403, 404, 409):
+            post.return_value = httpx.Response(status)
+            self.assertEqual(purchase("com.example.pkg", 1, {"authToken": "token"}), "")
+
+    @patch("goopdl.api.httpx.get")
+    def test_details_and_search_raise_typed_errors(self, get):
+        calls = {
+            "details": lambda: get_details("com.example.pkg", {"authToken": "token"}),
+            "search": lambda: search_apps("q", {"authToken": "token"}),
+            "splits": lambda: list_splits("com.example.pkg", {"authToken": "token"}),
+        }
+        for name, call in calls.items():
+            with self.subTest(name):
+                get.return_value = httpx.Response(429, headers={"Retry-After": "120"})
+                with self.assertRaises(RateLimitedError) as raised:
+                    call()
+                self.assertEqual(raised.exception.retry_after, 120.0)
+
+                get.return_value = httpx.Response(503)
+                with self.assertRaises(PlayAPIError) as raised:
+                    call()
+                self.assertNotIsInstance(raised.exception, RateLimitedError)
+                self.assertEqual(raised.exception.status_code, 503)
+
+    def test_play_api_error_status_code_is_optional(self):
+        self.assertIsNone(PlayAPIError("boom").status_code)
+        self.assertEqual(RateLimitedError("slow").status_code, 429)
 
     @patch("goopdl.api.httpx.get")
     def test_401_404_and_other_statuses_keep_their_error_types(self, get):
