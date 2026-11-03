@@ -279,6 +279,11 @@ async def download_files(
     DownloadError (HTTP/network failure). With require_integrity, refuses to
     start unless every integrity-required file (APKs, .dm) has digests.
     ``client`` is used as-is and not closed; by default a fresh one is created.
+
+    ``on_progress`` runs inline in the download loop: if it raises, that
+    download is aborted, the other downloads are cancelled and the callback's
+    exception propagates unchanged. Raises ValueError if max_concurrent < 1.
+    On failure or cancellation no partial (.part) files are left behind.
     """
     if max_concurrent < 1:
         raise ValueError(f"max_concurrent must be >= 1, got {max_concurrent}")

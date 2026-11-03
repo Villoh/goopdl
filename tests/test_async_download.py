@@ -148,6 +148,21 @@ class DownloadFilesTest(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0.5)
                 self.assertEqual(list(Path(directory).iterdir()), [])
 
+    async def test_on_progress_exception_aborts_and_propagates(self):
+        class Stop(Exception):
+            pass
+
+        def on_progress(_label, done, _total):
+            if done:
+                raise Stop
+
+        with tempfile.TemporaryDirectory() as directory:
+            spec = DownloadSpec("https://cdn.invalid/b", Path(directory) / "b.apk")
+            async with mock_client(lambda _r: httpx.Response(200, content=b"x")) as client:
+                with self.assertRaises(Stop):
+                    await download_files([spec], on_progress=on_progress, client=client)
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
     async def test_max_concurrent_below_one_is_rejected(self):
         spec = DownloadSpec("https://cdn.invalid/b", Path("unused.apk"))
         async with mock_client(lambda _r: httpx.Response(200)) as client:
