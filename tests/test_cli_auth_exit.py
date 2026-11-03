@@ -19,6 +19,11 @@ from goopdl.download import IntegrityError
 
 
 class AuthExitCodeTest(unittest.TestCase):
+    def setUp(self):
+        environment = patch.dict(os.environ, {}, clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def test_unavailable_auth_has_dedicated_exit_code(self) -> None:
         with patch("goopdl.cli.fetch_token", return_value=None):
             result = CliRunner().invoke(app, ["auth", "--arch", "arm64"])
