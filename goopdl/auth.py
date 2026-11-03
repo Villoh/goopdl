@@ -263,6 +263,9 @@ class DispenserUnavailableError(DirectAuthError):
             "server" if status >= 500 else "profile_rejected"
         )
 
+    def __reduce__(self):
+        return type(self), (self.status,), self.__dict__
+
 
 def _direct_credentials() -> Optional[tuple[str, str]]:
     email = os.environ.get("GOOPDL_ACCOUNT_EMAIL", "").strip()
