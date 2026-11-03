@@ -1045,7 +1045,7 @@ def search_apps(
 # ---------------------------------------------------------------------------
 
 _TOKEN_FETCH_ATTEMPTS = 3
-_TOKEN_FETCH_COOLDOWN = 5  # seconds — dispenser 5xx are usually transient
+_TOKEN_FETCH_COOLDOWN = 5  # seconds — transient direct Google auth failures
 
 
 def _acquire_single_token(
@@ -1055,10 +1055,10 @@ def _acquire_single_token(
     dispenser_url: str | None,
     profile: str,
 ) -> dict | None:
-    """pick_pool_token(size=1), retrying a few times if the dispenser hiccups.
+    """pick_pool_token(size=1), retrying transient direct Google auth failures.
 
-    Raises the last typed token error (see fetch_token) once attempts run out;
-    a dispenser rate limit is raised at once, as retrying only extends it.
+    Dispenser failures propagate immediately: a fixed profile cannot rotate,
+    and repeated requests cannot repair a throttled or unavailable endpoint.
     """
     last_error: DirectAuthError | None = None
     for attempt in range(_TOKEN_FETCH_ATTEMPTS):
@@ -1072,12 +1072,10 @@ def _acquire_single_token(
                 size=1,
                 raise_on_error=True,
             )
-        except PoolBusyError:
+        except (PoolBusyError, DispenserUnavailableError):
             raise
         except DirectAuthError as exc:
-            if exc.status in (400, 401, 403, 429) or (
-                isinstance(exc, DispenserUnavailableError) and exc.status is None
-            ):
+            if exc.status in (400, 401, 403, 429):
                 raise
             auth, last_error = None, exc
         if auth:

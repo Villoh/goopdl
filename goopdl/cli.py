@@ -423,11 +423,15 @@ def latest(
             profile=profile_key,
             raise_on_error=True,
         )
+    except DispenserUnavailableError as exc:
+        if exc.reason != "profile_rejected":
+            _exit_token_error(exc)
+        tokens = []
     except DirectAuthError as exc:
         _exit_token_error(exc)
     if not tokens:
         err.print(
-            "[red]Could not obtain any tokens — dispenser may be rate-limiting.[/red]"
+            "[red]Could not obtain any tokens for this profile.[/red]"
         )
         raise typer.Exit(code=1) from None
 
@@ -453,6 +457,10 @@ def latest(
                     profile=profile_key,
                     raise_on_error=True,
                 )
+            except DispenserUnavailableError as exc:
+                if exc.reason != "profile_rejected":
+                    _exit_token_error(exc)
+                new_token = None
             except DirectAuthError as exc:
                 _exit_token_error(exc)
             if new_token is None:
@@ -1084,7 +1092,7 @@ def _download_arch(
             "retry later.[/red]"
         )
         raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
-    except VersionUnavailableError as exc:
+    except (VersionUnavailableError, AppNotAvailableError) as exc:
         err.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=VERSION_UNAVAILABLE_EXIT_CODE) from None
     except PlayAPIError as exc:
@@ -1375,6 +1383,8 @@ def _fetch_probe_token(**kwargs) -> dict | None:
         if exc.status == 429:
             raise RateLimitedError(str(exc), retry_after=exc.retry_after) from None
         if isinstance(exc, DispenserUnavailableError):
+            if exc.reason == "profile_rejected":
+                return None  # another device profile/cohort may still get a token
             raise NetworkError(str(exc)) from None
         raise PlayAPIError(str(exc), status_code=exc.status) from None
 
@@ -1406,7 +1416,7 @@ def _resolve_version_string(
         )
         if token is None:
             err.print(
-                f"[yellow]  attempt {attempt}: rate-limited, sleeping 5s...[/yellow]"
+                f"[yellow]  attempt {attempt}: no token for this profile, sleeping 5s...[/yellow]"
             )
             time.sleep(5)
             continue

@@ -398,7 +398,7 @@ class AuthSecretsTest(unittest.TestCase):
             "post",
             side_effect=[
                 httpx.ConnectError("down"),
-                httpx.Response(503),
+                httpx.Response(400),
                 httpx.ConnectError("down"),
                 httpx.Response(200, json={"authToken": "ok"}),
             ],
