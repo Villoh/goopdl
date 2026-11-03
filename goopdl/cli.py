@@ -414,13 +414,17 @@ def latest(
     )
 
     # Ensure regional pool has DEFAULT_PROBES tokens — only hits dispenser for deficit
-    tokens = ensure_pool(
-        arch=arch,
-        country=country,
-        proxy=proxy,
-        dispenser_url=dispenser,
-        profile=profile_key,
-    )
+    try:
+        tokens = ensure_pool(
+            arch=arch,
+            country=country,
+            proxy=proxy,
+            dispenser_url=dispenser,
+            profile=profile_key,
+            raise_on_error=True,
+        )
+    except DirectAuthError as exc:
+        _exit_token_error(exc)
     if not tokens:
         err.print(
             "[red]Could not obtain any tokens — dispenser may be rate-limiting.[/red]"
@@ -439,14 +443,18 @@ def latest(
             err.print(
                 f"[dim]  probe {i + 1}: {gsf_prefix}... token expired — replacing[/dim]"
             )
-            new_token = replace_pool_token(
-                token,
-                arch=arch,
-                country=country,
-                proxy=proxy,
-                dispenser_url=dispenser,
-                profile=profile_key,
-            )
+            try:
+                new_token = replace_pool_token(
+                    token,
+                    arch=arch,
+                    country=country,
+                    proxy=proxy,
+                    dispenser_url=dispenser,
+                    profile=profile_key,
+                    raise_on_error=True,
+                )
+            except DirectAuthError as exc:
+                _exit_token_error(exc)
             if new_token is None:
                 err.print(
                     f"[dim]  probe {i + 1}: replacement unavailable, skipping[/dim]"
@@ -794,7 +802,7 @@ def _acquire_delivery(
 
     def retry_with(profiles):
         for key, _profile_data in profiles:
-            retry_auth = fetch_token(
+            retry_auth = _fetch_probe_token(
                 dispenser_url=dispenser,
                 arch=arch,
                 proxy=proxy,
@@ -1308,9 +1316,13 @@ def _exit_transient_play_error(exc: PlayAPIError) -> NoReturn:
 
 def _exit_token_error(exc: DirectAuthError) -> NoReturn:
     """Exit telling dispenser throttling (code 5) apart from an outage (code 3)."""
-    if isinstance(exc, DispenserRateLimitedError):
+    if exc.status == 429:
+        source = (
+            "Token dispenser" if isinstance(exc, DispenserRateLimitedError)
+            else "Direct Google authentication"
+        )
         err.print(
-            "[red]Token dispenser rate limited token requests (HTTP 429); "
+            f"[red]{source} rate limited token requests (HTTP 429); "
             "retry later.[/red]"
         )
         raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
@@ -1355,6 +1367,18 @@ def _require_auth(
     return data
 
 
+def _fetch_probe_token(**kwargs) -> dict | None:
+    """Stop profile/cohort probes on token endpoint throttling or outages."""
+    try:
+        return fetch_token(**kwargs, raise_on_error=True)
+    except DirectAuthError as exc:
+        if exc.status == 429:
+            raise RateLimitedError(str(exc), retry_after=exc.retry_after) from None
+        if isinstance(exc, DispenserUnavailableError):
+            raise NetworkError(str(exc)) from None
+        raise PlayAPIError(str(exc), status_code=exc.status) from None
+
+
 def _resolve_version_string(
     package: str,
     version_str: str,
@@ -1373,7 +1397,7 @@ def _resolve_version_string(
     """
     rprint(f"[dim]Resolving [bold]{version_str}[/bold] — probing fresh tokens...[/dim]")
     for attempt in range(1, 21):
-        token = fetch_token(
+        token = _fetch_probe_token(
             arch=arch,
             country=country,
             profile=profile,
