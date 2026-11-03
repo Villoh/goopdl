@@ -77,6 +77,16 @@ class ConfigDirTest(unittest.TestCase):
               patch.object(Path, "home", return_value=Path("/h"))):
             self.assertEqual(Path("/h/.config/goopdl"), auth.get_config_dir())
 
+    def test_goopdl_config_dir_expands_user_and_ignores_relative(self):
+        with patch.dict(os.environ, {"HOME": "/h", "GOOPDL_CONFIG_DIR": "~/g",
+                                     "XDG_CONFIG_HOME": "/x"}, clear=True):
+            self.assertEqual(Path("/h/g"), auth.get_config_dir())
+        with (patch.dict(os.environ, {"GOOPDL_CONFIG_DIR": "rel/g",
+                                      "XDG_CONFIG_HOME": "/x"}, clear=True),
+              self.assertLogs("goopdl.auth", "WARNING") as logs):
+            self.assertEqual(Path("/x/goopdl"), auth.get_config_dir())
+        self.assertIn("rel/g", logs.output[0])
+
     @unittest.skipIf(os.name == "nt", "POSIX permission bits")
     def test_save_auth_is_private_and_atomic(self):
         with tempfile.TemporaryDirectory() as temporary:

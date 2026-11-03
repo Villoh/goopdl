@@ -70,13 +70,18 @@ def get_config_dir() -> Path:
     """Resolve the credential cache directory on use, never at import time.
 
     Order: GOOPDL_CONFIG_DIR, $XDG_CONFIG_HOME/goopdl, ~/.config/goopdl.
+    GOOPDL_CONFIG_DIR is ``~``-expanded; like XDG_CONFIG_HOME, a relative
+    value is ignored (with a warning) so it never lands in the CWD.
     """
     # Tests and embedders may still set or patch auth._CONFIG_DIR directly.
     override = globals().get("_CONFIG_DIR")
     if override is not None:
         return Path(override)
-    if os.environ.get("GOOPDL_CONFIG_DIR"):
-        return Path(os.environ["GOOPDL_CONFIG_DIR"])
+    env = os.path.expanduser(os.environ.get("GOOPDL_CONFIG_DIR", ""))
+    if os.path.isabs(env):
+        return Path(env)
+    if env:
+        logger.warning("Ignoring relative GOOPDL_CONFIG_DIR=%r", env)
     xdg = os.environ.get("XDG_CONFIG_HOME", "")
     if os.path.isabs(xdg):  # The XDG spec says to ignore relative paths.
         return Path(xdg) / "goopdl"
