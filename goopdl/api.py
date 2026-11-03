@@ -398,6 +398,7 @@ def fetch_app_item(
     """Fetch, parse and return a PlayStoreAppItem dict in one call.
 
     Handles token pool management and expired-token retry internally.
+    Returns ``{}`` when Play answers without a document for *package*.
 
     Example::
 
@@ -417,15 +418,8 @@ def fetch_app_item(
     try:
         raw = get_details_raw(package, auth, country=country, proxy=proxy)
     except AuthExpiredError:
-        replace_pool_token(
+        auth = replace_pool_token(
             auth,
-            arch=arch,
-            country=country,
-            proxy=proxy,
-            dispenser_url=dispenser_url,
-            profile=profile,
-        )
-        auth = pick_pool_token(
             arch=arch,
             country=country,
             proxy=proxy,
