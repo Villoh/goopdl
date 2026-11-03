@@ -31,6 +31,9 @@ class AuthSecretsTest(unittest.TestCase):
         environment = isolated_env()
         environment.start()
         self.addCleanup(environment.stop)
+        sleeper = patch("time.sleep")
+        sleeper.start()
+        self.addCleanup(sleeper.stop)
         # No test may accidentally contact a real endpoint.
         for method in ("get", "post"):
             network = patch.object(
@@ -409,7 +412,7 @@ class AuthSecretsTest(unittest.TestCase):
             self.assertEqual(token["authToken"], "ok")
             self.assertEqual(post.call_count, 4)
 
-    def test_acquire_does_not_retry_dispenser_transport(self):
+    def test_acquire_bounds_dispenser_transport_retry(self):
         with (
             tempfile.TemporaryDirectory() as directory,
             patch.object(
@@ -428,8 +431,8 @@ class AuthSecretsTest(unittest.TestCase):
                 lambda: api._acquire_single_token("arm64", None, None, None, "Pv")
             )
             self.assertIsInstance(error, auth.DispenserUnavailableError)
-            self.assertEqual(post.call_count, 1)
-            sleep.assert_not_called()
+            self.assertEqual(post.call_count, 2)
+            sleep.assert_called_once_with(5)
 
     def test_profile_rotation_stops_on_dispenser_error(self):
         for response, code in (
@@ -452,7 +455,7 @@ class AuthSecretsTest(unittest.TestCase):
                     cli.app, ["inspect-delivery", "com.example.pkg", "--version", "1"]
                 )
                 self.assertEqual(result.exit_code, code, result.output)
-                self.assertEqual(post.call_count, 1)
+                self.assertEqual(post.call_count, 1 if code == 5 else 2)
 
     def test_version_resolution_stops_on_dispenser_error(self):
         for response, expected in (
@@ -470,7 +473,7 @@ class AuthSecretsTest(unittest.TestCase):
                     )
                 )
                 self.assertIsInstance(error, expected)
-                self.assertEqual(post.call_count, 1)
+                self.assertEqual(post.call_count, 1 if expected is api.RateLimitedError else 2)
 
     def test_latest_stops_on_dispenser_error(self):
         for failure, code in (
@@ -490,7 +493,7 @@ class AuthSecretsTest(unittest.TestCase):
             ):
                 result = CliRunner().invoke(cli.app, ["latest", "com.example.pkg"])
                 self.assertEqual(result.exit_code, code, result.output)
-                self.assertEqual(post.call_count, 1)
+                self.assertEqual(post.call_count, 1 if code == 5 else 2)
 
     def test_latest_expired_tokens_stop_on_dispenser_error(self):
         for failure, code in (
@@ -518,7 +521,7 @@ class AuthSecretsTest(unittest.TestCase):
             ):
                 result = CliRunner().invoke(cli.app, ["latest", "com.example.pkg"])
                 self.assertEqual(result.exit_code, code, result.output)
-                self.assertEqual(post.call_count, 1)
+                self.assertEqual(post.call_count, 1 if code == 5 else 2)
 
     def test_direct_error_legacy_construction(self):
         error = auth.DirectAuthError("stage")

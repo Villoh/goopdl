@@ -620,19 +620,24 @@ def fetch_token(
     country: Optional[str] = None,
     profile: Optional[str] = None,
     raise_on_error: bool = False,
+    *,
+    cooldown_retry: bool = True,
 ) -> Optional[dict]:
     """Obtain direct Google auth when configured, otherwise use the dispenser.
 
     Anonymous mode rotates profiles until one yields an authToken, stopping on
-    throttling, server errors or repeated transport failures. With *country*,
-    patches device operators to register in that region. Returns the auth dict on success,
-    None on failure or an unknown profile. With *raise_on_error*, raises
+    throttling or two consecutive transport/server failures. With *country*,
+    patches device operators to register in that region. A fixed *profile*
+    retries once after a 5 s cooldown on transport/5xx failures unless
+    *cooldown_retry* is False (callers that already hold usable tokens).
+    Returns the auth dict on success, None on failure or an unknown profile. With *raise_on_error*, raises
     DispenserRateLimitedError (429), DispenserUnavailableError (failed attempts)
     or DirectAuthError (direct mode), without retaining credential frames.
     """
     try:
         return _fetch_token_impl(
-            dispenser_url, arch, proxy, country, profile, raise_on_error
+            dispenser_url, arch, proxy, country, profile, raise_on_error,
+            cooldown_retry,
         )
     except DirectAuthConfigurationError as exc:
         error = DirectAuthConfigurationError(str(exc))
@@ -664,6 +669,7 @@ def _fetch_token_impl(
     country: Optional[str] = None,
     profile: Optional[str] = None,
     raise_on_error: bool = False,
+    cooldown_retry: bool = True,
 ) -> Optional[dict]:
     """Protocol implementation; only fetch_token's sanitized frame may escape."""
     credentials = _direct_credentials()
@@ -705,7 +711,8 @@ def _fetch_token_impl(
         if not match:
             logger.error("Profile not found: %s", profile)
             return None
-        profiles = [match]
+        # One cooldown retry for this fixed profile on transport/5xx failures.
+        profiles = [match, match] if cooldown_retry else [match]
     else:
         profiles = get_priority_profiles(arch) or [("fallback", FALLBACK_PROFILE)]
 
@@ -716,6 +723,8 @@ def _fetch_token_impl(
     last_reason = "transport"
     transport_failures = 0
     for idx, (profile_name, profile_data) in enumerate(profiles):
+        if profile and transport_failures:
+            time.sleep(5)
         device = profile_data.get("UserReadableName", profile_name)
         payload = (
             patch_profile_country(profile_data, country) if country else profile_data
@@ -729,12 +738,15 @@ def _fetch_token_impl(
             resp = httpx.post(
                 url, json=payload, headers=headers, timeout=30, proxy=httpx_proxy
             )
-            transport_failures = 0
             last_status = resp.status_code
             last_reason = "server" if resp.status_code >= 500 else "profile_rejected"
             if resp.status_code >= 500:
                 logger.warning("Dispenser returned HTTP %s", resp.status_code)
-                break  # changing device profiles cannot repair the endpoint
+                transport_failures += 1
+                if transport_failures >= _MAX_DISPENSER_TRANSPORT_FAILURES:
+                    break
+                continue
+            transport_failures = 0
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("authToken"):
@@ -754,6 +766,8 @@ def _fetch_token_impl(
                             _parse_retry_after(resp.headers)
                         )
                     return None
+            if profile:
+                break  # rejection is profile-specific, not a transient outage
         except GoopdlError:
             raise
         except httpx.TransportError as exc:
@@ -767,6 +781,8 @@ def _fetch_token_impl(
             logger.warning(
                 "Dispenser request failed for %s: %s", device, type(exc).__name__
             )
+            if profile:
+                break  # malformed responses do not earn the transient retry
             continue
 
     if raise_on_error:

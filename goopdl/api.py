@@ -1066,10 +1066,9 @@ def _acquire_single_token(
     dispenser_url: str | None,
     profile: str,
 ) -> dict | None:
-    """pick_pool_token(size=1), retrying transient direct Google auth failures.
+    """Acquire one token; fetch_token bounds dispenser retries with a cooldown.
 
-    Dispenser failures propagate immediately: a fixed profile cannot rotate,
-    and repeated requests cannot repair a throttled or unavailable endpoint.
+    Direct Google authentication retains its separate three-attempt budget.
     """
     last_error: DirectAuthError | None = None
     for attempt in range(_TOKEN_FETCH_ATTEMPTS):

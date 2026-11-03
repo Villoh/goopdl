@@ -204,7 +204,7 @@ class ProfileRotationTest(unittest.TestCase):
                 auth.DispenserRateLimitedError,
                 None,
             ),
-            (httpx.Response(503), 1, auth.DispenserUnavailableError, "server"),
+            (httpx.Response(503), 2, auth.DispenserUnavailableError, "server"),
             (
                 httpx.ConnectError("down"),
                 2,
@@ -230,7 +230,7 @@ class ProfileRotationTest(unittest.TestCase):
                 else:
                     self.assertEqual(raised.exception.retry_after, 120)
 
-    def test_single_profile_acquisition_does_not_repeat_unavailable_requests(self):
+    def test_single_profile_acquisition_only_retries_transient_failures(self):
         for status in (200, 400, 403, 404, 503):
             with (
                 self.subTest(status=status),
@@ -242,7 +242,7 @@ class ProfileRotationTest(unittest.TestCase):
             ):
                 with self.assertRaises(auth.DispenserUnavailableError):
                     api._acquire_single_token("arm64", None, None, None, "Pv")
-                self.assertEqual(post.call_count, 1)
+                self.assertEqual(post.call_count, 2 if status == 503 else 1)
 
     def test_profile_rotation_stops_on_endpoint_failure(self):
         for failure, code in (
@@ -261,7 +261,7 @@ class ProfileRotationTest(unittest.TestCase):
             ):
                 result = self.download()
                 self.assertEqual(result.exit_code, code, result.output)
-                self.assertEqual(post.call_count, 1)
+                self.assertEqual(post.call_count, 1 if code == 5 else 2)
 
     def test_version_resolution_retries_profile_rejections(self):
         for status in (200, 400, 403, 404):
@@ -297,7 +297,7 @@ class ProfileRotationTest(unittest.TestCase):
                 cli._resolve_version_string(
                     "com.example.pkg", "1.2", "arm64", None, None, None, "Pv"
                 )
-            self.assertEqual(post.call_count, 1)
+            self.assertEqual(post.call_count, 2)
 
     def test_latest_skips_rejected_token_replacements(self):
         for status in (200, 400, 403, 404):
@@ -344,7 +344,7 @@ class ProfileRotationTest(unittest.TestCase):
         with patch.object(httpx, "post", return_value=httpx.Response(503)) as post:
             result = CliRunner().invoke(cli.app, ["latest", "com.example.pkg"])
             self.assertEqual(result.exit_code, 3, result.output)
-            self.assertEqual(post.call_count, 1)
+            self.assertEqual(post.call_count, 2)
 
     def test_unavailable_legacy_constructor_classifies_status(self):
         for status, reason in (
