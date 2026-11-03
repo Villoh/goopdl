@@ -72,17 +72,32 @@ class DownloadFilesTest(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("secret", str(raised.exception))
                 self.assertEqual(list(Path(directory).iterdir()), [])
 
-    async def test_timeout_is_retryable_download_error(self):
-        def handler(request):
-            raise httpx.ReadTimeout("timed out", request=request)
+    async def test_transport_errors_are_retryable_only_when_transient(self):
+        cases = [
+            (httpx.ReadTimeout, True),
+            (httpx.PoolTimeout, True),
+            (httpx.ConnectError, True),
+            (httpx.ReadError, True),
+            (httpx.RemoteProtocolError, True),
+            (httpx.UnsupportedProtocol, False),
+            (httpx.ProxyError, False),
+            (httpx.LocalProtocolError, False),
+        ]
+        for error, retryable in cases:
 
-        with tempfile.TemporaryDirectory() as directory:
-            spec = DownloadSpec("https://cdn.invalid/b", Path(directory) / "b.apk")
-            async with mock_client(handler) as client:
-                with self.assertRaises(DownloadError) as raised:
-                    await download_files([spec], client=client)
-        self.assertIsNone(raised.exception.status_code)
-        self.assertTrue(raised.exception.retryable)
+            def handler(request, error=error):
+                raise error("failed", request=request)
+
+            with (
+                self.subTest(error=error.__name__),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                spec = DownloadSpec("https://cdn.invalid/b", Path(directory) / "b.apk")
+                async with mock_client(handler) as client:
+                    with self.assertRaises(DownloadError) as raised:
+                        await download_files([spec], client=client)
+                self.assertIsNone(raised.exception.status_code)
+                self.assertEqual(raised.exception.retryable, retryable)
 
     async def test_corrupt_gzip_is_non_retryable_download_error(self):
         with tempfile.TemporaryDirectory() as directory:

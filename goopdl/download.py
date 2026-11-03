@@ -45,7 +45,7 @@ class DownloadError(IntegrityError):
 
     ``status_code`` is the HTTP status (None for transport errors/timeouts).
     ``retryable`` is True when retrying the same URL later may succeed (429, 408,
-    5xx, timeouts); a 403 usually means the signed URL expired and the delivery
+    5xx, timeouts, dropped connections); a 403 usually means the signed URL expired and the delivery
     must be requested again. The message never contains the signed URL.
     """
 
@@ -55,6 +55,15 @@ class DownloadError(IntegrityError):
         super().__init__(message)
         self.status_code = status_code
         self.retryable = retryable
+
+
+# Transient transport failures only; UnsupportedProtocol, ProxyError and
+# LocalProtocolError are configuration/client bugs that a retry won't fix.
+_TRANSIENT_ERRORS = (
+    httpx.TimeoutException,
+    httpx.NetworkError,
+    httpx.RemoteProtocolError,
+)
 
 
 def _download_error(label: str, exc: httpx.HTTPError) -> DownloadError:
@@ -67,7 +76,7 @@ def _download_error(label: str, exc: httpx.HTTPError) -> DownloadError:
         )
     return DownloadError(
         f"download failed for {label} ({type(exc).__name__})",
-        retryable=isinstance(exc, httpx.TransportError),
+        retryable=isinstance(exc, _TRANSIENT_ERRORS),
     )
 
 
