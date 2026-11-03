@@ -58,13 +58,15 @@ class DispenserFetchTokenTest(unittest.TestCase):
 @patch.dict(os.environ, {}, clear=True)
 @patch("goopdl.api.time.sleep")
 class DownloadAppDispenserTest(unittest.TestCase):
-    def test_dispenser_429_becomes_rate_limited(self, _sleep) -> None:
+    def test_dispenser_429_becomes_rate_limited(self, sleep) -> None:
         with patch.object(
             api, "pick_pool_token", side_effect=DispenserRateLimitedError(60)
-        ):
+        ) as pick:
             with self.assertRaises(RateLimitedError) as raised:
                 download_app("com.example.pkg", Path("unused"), profile="Pv")
         self.assertEqual(raised.exception.retry_after, 60)
+        self.assertEqual(pick.call_count, 1)  # no retries inside the 429 window
+        sleep.assert_not_called()
         self.assertIsInstance(raised.exception.__cause__, DispenserRateLimitedError)
 
     def test_dispenser_outage_is_not_rate_limited(self, _sleep) -> None:
