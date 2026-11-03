@@ -26,6 +26,7 @@ from goopdl.api import (
     PlayAPIError,
     RateLimitedError,
     VersionUnavailableError,
+    _safe_dest,
     download_app,
     fetch_app_item,
     get_delivery,
@@ -1035,12 +1036,12 @@ def _download_arch(
     extras: list[DownloadSpec] = []
     if delivery.splits and not no_splits:
         for split in delivery.splits:
-            name = f"{package}-{vc}-{split.name}.apk"
+            split_dest = _safe_dest(output, f"{package}-{vc}-{split.name}.apk")
             extras.append(
                 DownloadSpec(
                     url=split.gzipped_url or split.url,
-                    dest=output / name,
-                    label=name,
+                    dest=split_dest,
+                    label=split_dest.name,
                     gzipped=bool(split.gzipped_url),
                     integrity_required=True,
                     expected_size=split.size,
@@ -1102,7 +1103,7 @@ def _download_arch(
 
     if delivery.splits and not no_splits:
         for split in delivery.splits:
-            sp = output / f"{package}-{vc}-{split.name}.apk"
+            sp = _safe_dest(output, f"{package}-{vc}-{split.name}.apk")
             if sp.exists():
                 files_table.add_row(sp.name, _fmt(sp.stat().st_size))
 

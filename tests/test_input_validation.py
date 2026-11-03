@@ -7,8 +7,14 @@ from urllib.parse import parse_qs
 import httpx
 from goopdl import cli
 from goopdl.api import (
+    AppDetails,
+    DeliveryResult,
     InvalidPackageError,
+    PlayAPIError,
+    SplitInfo,
     VersionUnavailableError,
+    _build_specs,
+    _safe_dest,
     download_app,
     fetch_app_item,
     get_delivery,
@@ -127,6 +133,69 @@ class PackageValidationTest(unittest.TestCase):
                     )
                 self.assertEqual(result.exit_code, 2, result.output)
                 pick.assert_not_called()
+
+
+EVIL_SPLIT = "../../etc/x"
+
+
+def _evil_delivery() -> DeliveryResult:
+    return DeliveryResult(
+        download_url="https://play.googleapis.com/base",
+        splits=[SplitInfo(EVIL_SPLIT, url="https://play.googleapis.com/split")],
+    )
+
+
+class SplitFileNameTest(unittest.TestCase):
+    def test_build_specs_keeps_split_inside_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "out"
+            specs = _build_specs("com.example.app", 1, output, _evil_delivery(), False, True)
+
+        split = specs[1]
+        self.assertEqual(split.dest.parent, output)
+        self.assertEqual(split.dest.name, "com.example.app-1-.._.._etc_x.apk")
+        self.assertEqual(split.label, split.dest.name)
+
+    def test_safe_dest_refuses_paths_that_escape(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "out"
+            output.mkdir()
+            (output / "link").symlink_to(Path(directory))
+            for name in ("..", ".", "link"):
+                with self.subTest(name=name), self.assertRaises(PlayAPIError):
+                    _safe_dest(output, name)
+
+    def test_cli_download_keeps_split_inside_output(self):
+        written: list[Path] = []
+
+        def fake_batch(specs, require_integrity=False):
+            for spec in specs:
+                written.append(spec.dest)
+                spec.dest.write_bytes(b"x")
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "out"
+            with (
+                patch("goopdl.cli.pick_pool_token", return_value={"authToken": "t"}),
+                patch(
+                    "goopdl.cli._acquire_delivery",
+                    return_value=(
+                        AppDetails("com.example.app", version_string="1.0"),
+                        1,
+                        _evil_delivery(),
+                    ),
+                ),
+                patch("goopdl.cli.download_batch", side_effect=fake_batch),
+            ):
+                result = CliRunner().invoke(
+                    cli.app,
+                    ["download", "com.example.app", "--splits", "-o", str(output)],
+                )
+
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertEqual(len(written), 2)
+            for dest in written:
+                self.assertEqual(dest.resolve().parent, output.resolve())
 
 
 if __name__ == "__main__":

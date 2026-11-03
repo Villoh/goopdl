@@ -1032,6 +1032,16 @@ def _fetch_latest_delivery(
     return details, delivery
 
 
+def _safe_dest(output: Path, name: str) -> Path:
+    """Join a server-influenced file name to *output*, refusing to escape it."""
+    dest = output / re.sub(r"[^A-Za-z0-9._-]+", "_", name)
+    # Names are flat, so the file must sit directly in output (no '..', '.', or
+    # symlink pointing elsewhere).
+    if dest.resolve().parent != output.resolve():
+        raise PlayAPIError(f"Refusing to write outside {output}: {name!r}")
+    return dest
+
+
 def _build_specs(
     package: str,
     vc: int,
@@ -1058,12 +1068,12 @@ def _build_specs(
     ]
     if delivery.splits and not no_splits:
         for split in delivery.splits:
-            name = f"{package}-{vc}-{split.name}.apk"
+            dest = _safe_dest(output, f"{package}-{vc}-{split.name}.apk")
             specs.append(
                 DownloadSpec(
                     url=split.gzipped_url or split.url,
-                    dest=output / name,
-                    label=name,
+                    dest=dest,
+                    label=dest.name,
                     gzipped=bool(split.gzipped_url),
                     integrity_required=True,
                     expected_size=split.size,
