@@ -153,7 +153,72 @@ class AuthSecretsTest(unittest.TestCase):
                     ),
                 )
 
+    def test_send_erases_request_arguments(self):
+        with patch.object(
+            httpx, "get", side_effect=httpx.ConnectError("proxy-sentinel")
+        ):
+            error = capture_failure(
+                lambda: api._send(
+                    httpx.get,
+                    "https://example.test/?dtok=dtok-sentinel",
+                    headers={"Authorization": "Bearer bearer-sentinel"},
+                    proxy="http://user:proxy-sentinel@localhost:8080",
+                )
+            )
+        self.assertIsInstance(error, api.NetworkError)
+        self.assert_redacted(
+            error, ("dtok-sentinel", "bearer-sentinel", "proxy-sentinel")
+        )
 
+    def test_api_callers_erase_derived_request_secrets(self):
+        token = {"authToken": "bearer-sentinel"}
+        dtok = "dtok-sentinel"
+        calls = (
+            lambda: api.get_details(
+                "com.example.pkg",
+                token,
+                proxy="http://user:proxy-sentinel@localhost:8080",
+            ),
+            lambda: api.purchase(
+                "com.example.pkg",
+                1,
+                token,
+                proxy="http://user:proxy-sentinel@localhost:8080",
+            ),
+            lambda: api.get_delivery(
+                "com.example.pkg",
+                1,
+                token,
+                proxy="http://user:proxy-sentinel@localhost:8080",
+                delivery_token=dtok,
+            ),
+            lambda: api.list_splits(
+                "com.example.pkg",
+                token,
+                proxy="http://user:proxy-sentinel@localhost:8080",
+            ),
+            lambda: api.search_apps(
+                "example", token, proxy="http://user:proxy-sentinel@localhost:8080"
+            ),
+        )
+        with (
+            patch.object(httpx, "get", side_effect=httpx.ConnectError("down")),
+            patch.object(
+                httpx,
+                "post",
+                side_effect=httpx.ConnectError("down"),
+            ),
+        ):
+            for index, call in enumerate(calls):
+                with self.subTest(function=index):
+                    error = capture_failure(call)
+                    self.assertIsInstance(error, api.NetworkError)
+                    self.assert_redacted(
+                        error,
+                        ("bearer-sentinel", "dtok-sentinel", "proxy-sentinel"),
+                        allow_caller_auth=True,
+                    )
+        self.assertEqual(token, {"authToken": "bearer-sentinel"})
 
     def test_fetch_erases_proxy_on_transport_failure(self):
         with patch.object(
