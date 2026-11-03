@@ -64,7 +64,8 @@ class DownloadFilesTest(unittest.IsolatedAsyncioTestCase):
                 async with mock_client(lambda _r, s=status: httpx.Response(s)) as client:
                     with self.assertRaises(DownloadError) as raised:
                         await download_files([spec], client=client)
-                self.assertNotIsInstance(raised.exception, IntegrityError)
+                # Compat: pre-existing "except IntegrityError" still catches it.
+                self.assertIsInstance(raised.exception, IntegrityError)
                 self.assertEqual(raised.exception.status_code, status)
                 self.assertEqual(raised.exception.retryable, retryable)
                 self.assertNotIn("secret", str(raised.exception))
@@ -92,8 +93,9 @@ class DownloadFilesTest(unittest.IsolatedAsyncioTestCase):
                 sha256=sha256(b"good"),
             )
             async with mock_client(lambda _r: httpx.Response(200, content=b"bad!")) as client:
-                with self.assertRaisesRegex(IntegrityError, "digest mismatch"):
+                with self.assertRaisesRegex(IntegrityError, "digest mismatch") as raised:
                     await download_files([spec], client=client)
+            self.assertNotIsInstance(raised.exception, DownloadError)
 
     async def test_download_batch_in_running_loop_points_to_download_files(self):
         with self.assertRaisesRegex(RuntimeError, "download_files"):

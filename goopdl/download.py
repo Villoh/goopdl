@@ -37,8 +37,11 @@ class IntegrityError(GoopdlError, RuntimeError):
     """Raised when delivery metadata or downloaded bytes fail verification."""
 
 
-class DownloadError(RuntimeError):
+class DownloadError(IntegrityError):
     """HTTP/network failure fetching a file from the CDN.
+
+    Subclasses IntegrityError so existing ``except IntegrityError`` handlers
+    keep catching CDN failures. To tell them apart, catch DownloadError first.
 
     ``status_code`` is the HTTP status (None for transport errors/timeouts).
     ``retryable`` is True when retrying the same URL later may succeed (429, 408,
