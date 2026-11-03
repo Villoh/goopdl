@@ -1214,8 +1214,9 @@ def download_app(
         ) from exc
     except DispenserUnavailableError as exc:
         raise PlayAPIError(str(exc), status_code=exc.status) from exc
-    except DirectAuthError:
-        auth = None
+    except DirectAuthError as exc:
+        # DirectAuthError messages name only a non-secret protocol stage.
+        raise PlayAPIError(f"Direct Google authentication failed at {exc}.") from None
     if not auth:
         message = (
             "Direct Google authentication failed."
