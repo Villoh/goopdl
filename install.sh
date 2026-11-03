@@ -18,10 +18,6 @@ case "$(uname -m)" in
   *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 asset=goopdl-$os-$arch
-case "$asset" in
-  goopdl-linux-x86_64 | goopdl-linux-arm64 | goopdl-macos-arm64) ;;
-  *) echo "No prebuilt binary for $os/$arch. Try: uv tool install goopdl" >&2; exit 1 ;;
-esac
 
 if [ -n "${GOOPDL_VERSION:-}" ]; then
   base=${GOOPDL_BASE_URL:-https://github.com/$repo/releases/download/v${GOOPDL_VERSION#v}}
@@ -33,7 +29,10 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 echo "Downloading $asset..."
-curl -fsSL "$base/$asset" -o "$tmp/$asset"
+curl -fsSL "$base/$asset" -o "$tmp/$asset" || {
+  echo "Could not download $asset (not in this release?). Try: uv tool install goopdl" >&2
+  exit 1
+}
 curl -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS"
 
 want=$(awk -v f="$asset" '$2 == f { print $1 }' "$tmp/SHA256SUMS")
