@@ -48,7 +48,9 @@
 
 * { box-sizing: border-box; }
 /* clip on html, not body: phones scroll the viewport, and body's overflow doesn't stop that */
-html { scroll-behavior: smooth; overflow-x: clip; scroll-padding-top: var(--nav-h); }
+html { overflow-x: clip; scroll-padding-top: var(--nav-h); }
+/* smooth only after load (site.js): a smooth jump to a #fragment on load ends off target once the web fonts reflow the text */
+html.loaded { scroll-behavior: smooth; }
 body {
   margin: 0;
   padding-top: var(--nav-h); /* room for the fixed .nav */
