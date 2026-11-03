@@ -30,7 +30,7 @@ class ProfileTokenIsolationTest(unittest.TestCase):
         for patcher in (
             patch.object(auth, "_CONFIG_DIR", self.directory),
             isolated_env(),
-            patch.object(auth.console, "print"),
+            patch.object(auth, "logger"),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)

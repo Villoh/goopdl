@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import json
+import logging
 import os
 import random
 import re
@@ -15,7 +16,6 @@ from typing import Iterator, Optional
 from urllib.parse import urlparse, urlunparse
 
 import httpx
-from rich.console import Console
 
 from goopdl.errors import GoopdlError
 from goopdl.profiles import (
@@ -90,7 +90,8 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-console = Console(stderr=True)
+# Library code only logs; the CLI attaches a handler. Never log secrets here.
+logger = logging.getLogger(__name__)
 
 
 def _sanitize_country(country: str) -> str:
@@ -543,10 +544,11 @@ def fetch_token(
                 profile_name=profile,
             )
         except DirectAuthError as exc:
-            console.print(f"  [red]Direct Google authentication failed at {exc}.[/red]")
+            logger.error("Direct Google authentication failed at %s.", exc)
             return None
         except Exception:
-            console.print("  [red]Direct Google authentication failed unexpectedly.[/red]")
+            # No exc_info: tracebacks can carry credentials from request locals.
+            logger.error("Direct Google authentication failed unexpectedly.")
             return None
 
     url = dispenser_url or DEFAULT_DISPENSER_URL
@@ -558,7 +560,7 @@ def fetch_token(
     if profile:
         match = find_profile(profile, arch)
         if not match:
-            console.print(f"[red]Profile not found: {profile}[/red]")
+            logger.error("Profile not found: %s", profile)
             return None
         profiles = [match]
     else:
@@ -584,24 +586,19 @@ def fetch_token(
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("authToken"):
-                    console.print(
-                        f"  Authenticated with profile: [bold]{device}[/bold]"
-                    )
+                    logger.info("Authenticated with profile: %s", device)
                     data["_device_profile"] = device
                     return data
-                console.print(
-                    f"  [yellow]No authToken in dispenser response for {device}[/yellow]"
-                )
+                logger.warning("No authToken in dispenser response for %s", device)
             else:
-                console.print(
-                    f"  [yellow]Dispenser returned HTTP {resp.status_code} for {device}[/yellow]"
+                logger.warning(
+                    "Dispenser returned HTTP %s for %s", resp.status_code, device
                 )
                 if resp.status_code == 429:
                     return None
         except Exception as exc:
-            console.print(
-                f"  [red]Dispenser request failed for {device}: "
-                f"{type(exc).__name__}[/red]"
+            logger.warning(
+                "Dispenser request failed for %s: %s", device, type(exc).__name__
             )
             continue
 
@@ -632,9 +629,9 @@ _POOL_LOCK_TIMEOUT = 180.0  # seconds; a cold five-token pool can take 5 x 30s
 def _pool_cache_error(exc: OSError) -> None:
     detail = ("lock acquisition timed out: TimeoutError"
               if isinstance(exc, TimeoutError) else type(exc).__name__)
-    console.print(
-        f"[red]Token pool cache unavailable ({detail}); "
-        "anonymous token acquisition stopped.[/red]"
+    logger.error(
+        "Token pool cache unavailable (%s); anonymous token acquisition stopped.",
+        detail,
     )
 
 
@@ -801,8 +798,9 @@ def _ensure_pool_unlocked(
     deficit = size - len(pool)
     if deficit > 0:
         label = country or "default"
-        console.print(
-            f"[dim]  Pool [{label}]: {len(pool)}/{size} valid — fetching {deficit} more...[/dim]"
+        logger.info(
+            "Pool [%s]: %d/%d valid — fetching %d more...",
+            label, len(pool), size, deficit,
         )
         _save_pool(pool, arch, country, profile)
         for _ in range(deficit):
@@ -945,9 +943,9 @@ def ensure_auth(
             age = time.time() - cached.get("_cached_at", 0)
             if age < _MAX_TOKEN_AGE:
                 return cached
-            console.print("[dim]Token expired — refreshing...[/dim]")
+            logger.info("Token expired — refreshing...")
     else:
-        console.print("[dim]Refreshing token...[/dim]")
+        logger.info("Refreshing token...")
 
     data = fetch_token(
         dispenser_url=dispenser_url,

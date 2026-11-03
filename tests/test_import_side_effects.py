@@ -49,6 +49,19 @@ class ImportSideEffectsTest(unittest.TestCase):
         self.assertEqual("", result.stdout)
         self.assertEqual("", result.stderr)
 
+    def test_auth_logs_without_rich(self):
+        result = run_isolated(
+            "import sys, goopdl.auth\n"
+            "assert not any(m == 'rich' or m.startswith('rich.') for m in sys.modules)\n"
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_auth_messages_go_to_the_goopdl_logger(self):
+        with (patch.dict(os.environ, {"GOOPDL_ACCOUNT_EMAIL": "", "GOOPDL_AAS_TOKEN": ""}),
+              self.assertLogs("goopdl.auth", "ERROR") as logs):
+            self.assertIsNone(auth.fetch_token(profile="no-such-profile-xyz"))
+        self.assertIn("Profile not found: no-such-profile-xyz", logs.output[0])
+
 
 class ConfigDirTest(unittest.TestCase):
     def test_resolution_order(self):

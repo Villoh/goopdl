@@ -7,7 +7,7 @@ from goopdl.auth import fetch_token
 class FetchTokenRedactionTest(unittest.TestCase):
     @patch("goopdl.auth.get_priority_profiles")
     @patch("goopdl.auth.httpx.post")
-    @patch("goopdl.auth.console.print")
+    @patch("goopdl.auth.logger")
     def test_does_not_log_dispenser_response(
         self, console_print, httpx_post, get_priority_profiles
     ) -> None:
@@ -19,13 +19,13 @@ class FetchTokenRedactionTest(unittest.TestCase):
 
         self.assertIsNone(fetch_token())
 
-        output = " ".join(str(call) for call in console_print.call_args_list)
+        output = " ".join(str(call) for call in console_print.mock_calls)
         self.assertNotIn("secret response body", output)
         self.assertIn("No authToken in dispenser response", output)
 
     @patch("goopdl.auth.get_priority_profiles")
     @patch("goopdl.auth.httpx.post")
-    @patch("goopdl.auth.console.print")
+    @patch("goopdl.auth.logger")
     def test_rate_limit_stops_profile_fallback_but_other_rejections_do_not(
         self, console_print, httpx_post, get_priority_profiles
     ) -> None:
@@ -49,7 +49,7 @@ class FetchTokenRedactionTest(unittest.TestCase):
 
     @patch("goopdl.auth.get_priority_profiles")
     @patch("goopdl.auth.httpx.post")
-    @patch("goopdl.auth.console.print")
+    @patch("goopdl.auth.logger")
     def test_does_not_log_exception_details(
         self, console_print, httpx_post, get_priority_profiles
     ) -> None:
@@ -58,7 +58,7 @@ class FetchTokenRedactionTest(unittest.TestCase):
 
         self.assertIsNone(fetch_token())
 
-        output = " ".join(str(call) for call in console_print.call_args_list)
+        output = " ".join(str(call) for call in console_print.mock_calls)
         self.assertNotIn("example.invalid", output)
         self.assertNotIn("token=secret", output)
         self.assertIn("RuntimeError", output)

@@ -25,7 +25,7 @@ class WarmDownloadProfileTest(unittest.TestCase):
         for patcher in (
             isolated_env(),
             patch.object(auth, "_CONFIG_DIR", self.directory / "cache"),
-            patch.object(auth.console, "print"),
+            patch.object(auth, "logger"),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
