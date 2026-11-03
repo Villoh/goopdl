@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse
@@ -116,7 +117,13 @@ class DeliveryResult:
 
 
 class PlayAPIError(GoopdlError):
-    pass
+    """Google Play API failure; *status_code* is the HTTP status when known."""
+
+    status_code: int | None = None
+
+    def __init__(self, *args: Any, status_code: int | None = None):
+        super().__init__(*args)
+        self.status_code = status_code
 
 
 class NetworkError(PlayAPIError):
@@ -346,10 +353,7 @@ def _fetch_details_raw(
     )
     if resp.status_code == 404:
         raise AppNotAvailableError(f"App not found: {package}")
-    if resp.status_code == 401:
-        raise AuthExpiredError("Auth token expired.")
-    if resp.status_code != 200:
-        raise PlayAPIError(f"Failed to fetch details (HTTP {resp.status_code}).")
+    _check_status(resp, "Failed to fetch details")
     return resp.content
 
 
@@ -601,10 +605,10 @@ def purchase(
         timeout=30,
         proxy=_build_httpx_proxy(proxy),
     )
-    if resp.status_code == 401:
-        raise AuthExpiredError("Auth token expired.")
-    if resp.status_code not in (200, 204):
-        return ""  # non-fatal — may already be purchased
+    if resp.status_code in _PURCHASE_NONFATAL:
+        return ""  # non-fatal — may already be purchased; delivery classifies it
+    if resp.status_code != 204:
+        _check_status(resp, "Purchase failed")
     buy_fields = _navigate(resp.content, 1, 4)
     return _first_string(buy_fields, 55) if buy_fields else ""
 
@@ -627,21 +631,58 @@ _GOOGLE_CDN_SUFFIXES = (
 )
 _DELIVERY_RETRIES = 2
 _DELIVERY_BACKOFF = (1.0, 3.0)
-_RETRY_AFTER_MAX = 30.0
+_RETRY_AFTER_MAX = 30.0  # cap for our own sleeps; the server's value is kept
 
 
 def _parse_retry_after(headers: Any) -> float | None:
-    """Return a safe numeric Retry-After delay, if supplied."""
+    """Return the server's Retry-After delay in seconds, if valid.
+
+    Accepts delta-seconds and HTTP dates. Deliberately uncapped so callers can
+    report it; anything that sleeps on it must clamp to _RETRY_AFTER_MAX.
+    """
     try:
         raw = headers.get("Retry-After")
         if raw is None:
             raw = headers.get("retry-after")
-        value = float(str(raw or "").strip())
-    except (AttributeError, TypeError, ValueError):
+        raw = str(raw or "").strip()
+    except (AttributeError, TypeError):
         return None
-    if not math.isfinite(value) or value < 0 or value > _RETRY_AFTER_MAX:
+    try:
+        value = float(raw)
+    except ValueError:
+        try:
+            when = parsedate_to_datetime(raw)
+        except (TypeError, ValueError, IndexError):
+            return None
+        if when is None:
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        value = max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+    if not math.isfinite(value) or value < 0:
         return None
     return value
+
+
+# Purchase answers that do not block delivery: Play rejects acquiring an app
+# the account already owns (or cannot buy) with a 4xx, and get_delivery()
+# then reports the precise outcome. Auth, proxy, timeout, 429 and 5xx raise.
+_PURCHASE_NONFATAL = frozenset({400, 403, 404, 409})
+
+
+def _check_status(resp: Any, what: str) -> None:
+    """Raise the typed PlayAPIError for a non-200 FDFE response."""
+    status = resp.status_code
+    if status == 200:
+        return
+    if status == 401:
+        raise AuthExpiredError("Auth token expired.")
+    if status == 429:
+        raise RateLimitedError(
+            f"{what}: Google Play rate limited the request (HTTP 429).",
+            retry_after=_parse_retry_after(getattr(resp, "headers", {})),
+        )
+    raise PlayAPIError(f"{what} (HTTP {status}).", status_code=status)
 
 
 def _safe_cdn_url(url: str) -> str:
@@ -819,11 +860,16 @@ def get_delivery(
                     retry_after=retry_after,
                 )
             time.sleep(
-                retry_after if retry_after is not None else _DELIVERY_BACKOFF[attempt]
+                min(retry_after, _RETRY_AFTER_MAX)
+                if retry_after is not None
+                else _DELIVERY_BACKOFF[attempt]
             )
             continue
         if resp.status_code != 200:
-            raise PlayAPIError(f"Delivery failed (HTTP {resp.status_code}).")
+            raise PlayAPIError(
+                f"Delivery failed (HTTP {resp.status_code}).",
+                status_code=resp.status_code,
+            )
         break
 
     if resp is None:
@@ -875,10 +921,7 @@ def list_splits(
         timeout=30,
         proxy=_build_httpx_proxy(proxy),
     )
-    if resp.status_code == 401:
-        raise AuthExpiredError("Auth token expired.")
-    if resp.status_code != 200:
-        raise PlayAPIError(f"Failed to fetch details (HTTP {resp.status_code})")
+    _check_status(resp, "Failed to fetch details")
 
     # Navigate to AppDetails: 1 -> 2 -> 4 -> 13 -> 1
     doc_fields = _navigate(resp.content, 1, 2, 4)
@@ -961,10 +1004,7 @@ def search_apps(
         timeout=30,
         proxy=_build_httpx_proxy(proxy),
     )
-    if resp.status_code == 401:
-        raise AuthExpiredError("Auth token expired.")
-    if resp.status_code != 200:
-        raise PlayAPIError(f"Search failed (HTTP {resp.status_code})")
+    _check_status(resp, "Search failed")
 
     docs = _find_docv2(resp.content)
 
