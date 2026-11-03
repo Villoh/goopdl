@@ -850,10 +850,9 @@ def get_delivery(
                     "Google Play rate limited delivery requests (HTTP 429).",
                     retry_after=retry_after,
                 )
+            # Never retry sooner than our own backoff, even on "Retry-After: 0".
             time.sleep(
-                min(retry_after, _RETRY_AFTER_MAX)
-                if retry_after is not None
-                else _DELIVERY_BACKOFF[attempt]
+                max(min(retry_after or 0.0, _RETRY_AFTER_MAX), _DELIVERY_BACKOFF[attempt])
             )
             continue
         if resp.status_code != 200:

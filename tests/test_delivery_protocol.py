@@ -219,6 +219,36 @@ class DeliveryProtocolTest(unittest.TestCase):
         self.assertEqual(raised.exception.retry_after, 120.0)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [30.0, 30.0])
 
+    @patch("goopdl.api.time.sleep")
+    @patch("goopdl.api.httpx.get")
+    def test_retry_after_never_shortens_the_backoff(self, get, sleep):
+        past = format_datetime(
+            datetime.now(timezone.utc) - timedelta(days=1), usegmt=True
+        )
+        get.side_effect = [
+            httpx.Response(429, headers={"Retry-After": "0"}),
+            httpx.Response(429, headers={"Retry-After": past}),
+            httpx.Response(429, headers={"Retry-After": "0"}),
+        ]
+
+        with self.assertRaises(RateLimitedError) as raised:
+            get_delivery("com.example.pkg", 1, {"authToken": "token"})
+
+        self.assertEqual(raised.exception.retry_after, 0.0)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.0, 3.0])
+
+    @patch("goopdl.api.time.sleep")
+    @patch("goopdl.api.httpx.get")
+    def test_retry_after_longer_than_backoff_is_honoured(self, get, sleep):
+        get.side_effect = [
+            httpx.Response(429, headers={"Retry-After": "5"}),
+            self._successful_response(),
+        ]
+
+        get_delivery("com.example.pkg", 1, {"authToken": "token"})
+
+        sleep.assert_called_once_with(5.0)
+
     def test_retry_after_accepts_http_date(self):
         when = datetime.now(timezone.utc) + timedelta(seconds=90)
         delay = _parse_retry_after({"Retry-After": format_datetime(when, usegmt=True)})
