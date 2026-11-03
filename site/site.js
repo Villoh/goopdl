@@ -74,11 +74,10 @@
       if (code) getSelection().selectAllChildren(code);
       return;
     }
-    // Pills swap their visible label; icon buttons swap the icon (CSS) and their accessible name.
+    // Icon buttons swap the icon (CSS) and their accessible name.
     const copied = COPIED[root.lang] ?? COPIED.en;
-    const label = btn.querySelector(".copy-label");
-    const original = btn.dataset.original ??= label ? label.textContent : btn.getAttribute("aria-label");
-    const show = (text) => (label ? (label.textContent = text) : btn.setAttribute("aria-label", text));
+    const original = btn.dataset.original ??= btn.getAttribute("aria-label");
+    const show = (text) => btn.setAttribute("aria-label", text);
     btn.classList.add("copied");
     show(copied);
     clearTimeout(btn.timer);
