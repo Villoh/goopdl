@@ -1056,7 +1056,7 @@ def search_apps(
 # ---------------------------------------------------------------------------
 
 _TOKEN_FETCH_ATTEMPTS = 3
-_TOKEN_FETCH_COOLDOWN = 5  # seconds — transient direct Google auth failures
+_TOKEN_FETCH_COOLDOWN = 5  # seconds — fixed-profile rejections, direct auth 5xx
 
 
 def _acquire_single_token(
@@ -1066,9 +1066,12 @@ def _acquire_single_token(
     dispenser_url: str | None,
     profile: str,
 ) -> dict | None:
-    """Acquire one token; fetch_token bounds dispenser retries with a cooldown.
+    """Acquire one token for a fixed *profile*, retrying with a cooldown.
 
-    Direct Google authentication retains its separate three-attempt budget.
+    A fixed profile cannot rotate, so dispenser rejections of it and direct
+    auth 5xx/transport failures share a _TOKEN_FETCH_ATTEMPTS budget. 429,
+    direct 400/401/403 and dispenser transport/5xx (already retried by
+    fetch_token) raise at once.
     """
     last_error: DirectAuthError | None = None
     for attempt in range(_TOKEN_FETCH_ATTEMPTS):
@@ -1082,8 +1085,12 @@ def _acquire_single_token(
                 size=1,
                 raise_on_error=True,
             )
-        except (PoolBusyError, DispenserUnavailableError):
+        except PoolBusyError:
             raise
+        except DispenserUnavailableError as exc:
+            if exc.reason != "profile_rejected":
+                raise
+            auth, last_error = None, exc
         except DirectAuthError as exc:
             if exc.status in (400, 401, 403, 429):
                 raise

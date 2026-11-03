@@ -30,6 +30,8 @@ from goopdl.api import (
     PlayAPIError,
     RateLimitedError,
     VersionUnavailableError,
+    _TOKEN_FETCH_ATTEMPTS,
+    _TOKEN_FETCH_COOLDOWN,
     _check_unique_dests,
     _safe_dest,
     download_app,
@@ -1408,17 +1410,26 @@ def _require_auth(
 
 
 def _fetch_probe_token(**kwargs) -> dict | None:
-    """Stop profile/cohort probes on token endpoint throttling or outages."""
-    try:
-        return fetch_token(**kwargs, raise_on_error=True)
-    except DirectAuthError as exc:
-        if exc.status == 429:
-            raise RateLimitedError(str(exc), retry_after=exc.retry_after) from None
-        if isinstance(exc, DispenserUnavailableError):
-            if exc.reason == "profile_rejected":
-                return None  # another device profile/cohort may still get a token
-            raise NetworkError(str(exc)) from None
-        raise PlayAPIError(str(exc), status_code=exc.status) from None
+    """Stop profile/cohort probes on token endpoint throttling or outages.
+
+    Direct auth 5xx/transport failures first get download_app's bounded
+    cooldown retries; direct 400/401/403 (revoked credentials) do not.
+    """
+    attempt = 1
+    while True:
+        try:
+            return fetch_token(**kwargs, raise_on_error=True)
+        except DirectAuthError as exc:
+            if exc.status == 429:
+                raise RateLimitedError(str(exc), retry_after=exc.retry_after) from None
+            if isinstance(exc, DispenserUnavailableError):
+                if exc.reason == "profile_rejected":
+                    return None  # another device profile/cohort may still get a token
+                raise NetworkError(str(exc)) from None
+            if exc.status in (400, 401, 403) or attempt >= _TOKEN_FETCH_ATTEMPTS:
+                raise PlayAPIError(str(exc), status_code=exc.status) from None
+        attempt += 1
+        time.sleep(_TOKEN_FETCH_COOLDOWN)
 
 
 def _resolve_version_string(
