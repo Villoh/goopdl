@@ -19,7 +19,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from goopdl import __version__
-from goopdl.aastoken import AASTokenError, fetch_aas_token
+from goopdl.aastoken import AASTokenError, _AUTH_ERROR_CODES, fetch_aas_token
 from goopdl.api import (
     AppNotAvailableError,
     AppNotSupportedError,
@@ -278,6 +278,19 @@ def aastoken(
     ),
 ) -> None:
     """Print a Google account AAS token without saving credentials or token files."""
+    failure = None
+    try:
+        return _run_aastoken(email, password, oauth, browser)
+    except BaseException as exc:
+        failure = exc.with_traceback(None)
+        failure.__cause__ = failure.__context__ = None
+    finally:
+        email = password = None
+    # Click must not retain the original authentication exception or its frames.
+    raise failure from None
+
+
+def _run_aastoken(email: str | None, password: str | None, oauth: bool, browser: bool) -> None:
     if oauth and browser:
         err.print("[red]Use either --oauth or --browser, not both.[/red]")
         raise typer.Exit(code=2) from None
@@ -290,8 +303,8 @@ def aastoken(
         )
         try:
             captured_email, password = capture_oauth_credentials()
-        except BrowserOAuthError as exc:
-            err.print(f"[red]Browser OAuth capture failed:[/red] {exc}")
+        except BrowserOAuthError:
+            err.print("[red]Browser OAuth capture failed.[/red]")
             raise typer.Exit(code=1) from None
         if email is not None and email.casefold() != captured_email.casefold():
             err.print(f"[red]Browser signed in as {captured_email}, not {email}.[/red]")
@@ -313,7 +326,8 @@ def aastoken(
     try:
         token = fetch_aas_token(email, password)
     except AASTokenError as exc:
-        err.print(f"[red]Google account authentication failed:[/red] {exc}")
+        reason = str(exc) if str(exc) in _AUTH_ERROR_CODES else "unknown error"
+        err.print(f"[red]Google account authentication failed:[/red] {reason}")
         if str(exc) == "BadAuthentication":
             err.print(
                 "[yellow]Google rejected password authentication. Use "
@@ -321,9 +335,12 @@ def aastoken(
                 "oauth_token.[/yellow]"
             )
         raise typer.Exit(code=1) from None
-    except httpx.HTTPError as exc:
+    except httpx.HTTPError:
         err.print("[red]Google authentication request failed.[/red]")
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=1) from None
+    except ValueError:
+        err.print("[red]Invalid Google account credentials.[/red]")
+        raise typer.Exit(code=1) from None
 
     console.print("AASToken:", token)
 
