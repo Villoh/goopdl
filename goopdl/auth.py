@@ -66,7 +66,29 @@ DISPENSER_PROXY_REGIONS = [
     "KE",
 ]
 
-_CONFIG_DIR = Path.home() / ".config" / "goopdl"
+def get_config_dir() -> Path:
+    """Resolve the credential cache directory on use, never at import time.
+
+    Order: GOOPDL_CONFIG_DIR, $XDG_CONFIG_HOME/goopdl, ~/.config/goopdl.
+    """
+    # Tests and embedders may still set or patch auth._CONFIG_DIR directly.
+    override = globals().get("_CONFIG_DIR")
+    if override is not None:
+        return Path(override)
+    if os.environ.get("GOOPDL_CONFIG_DIR"):
+        return Path(os.environ["GOOPDL_CONFIG_DIR"])
+    xdg = os.environ.get("XDG_CONFIG_HOME", "")
+    if os.path.isabs(xdg):  # The XDG spec says to ignore relative paths.
+        return Path(xdg) / "goopdl"
+    return Path.home() / ".config" / "goopdl"
+
+
+def __getattr__(name: str):
+    # _CONFIG_DIR used to be an import-time constant; keep it readable.
+    if name == "_CONFIG_DIR":
+        return get_config_dir()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 console = Console(stderr=True)
 
@@ -104,7 +126,7 @@ def _auth_path(
 ) -> Path:
     suffix = f"-{_sanitize_country(country)}" if country else ""
     suffix += _profile_suffix(arch, profile)
-    return _CONFIG_DIR / f"auth-{_arch_key(arch)}{suffix}.json"
+    return get_config_dir() / f"auth-{_arch_key(arch)}{suffix}.json"
 
 
 def save_auth(
@@ -113,11 +135,10 @@ def save_auth(
     country: Optional[str] = None,
     profile: Optional[str] = None,
 ) -> Path:
-    """Persist auth data to disk and return the file path."""
-    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    """Persist auth data to disk (0600, atomically) and return the file path."""
     data["_cached_at"] = time.time()
     path = _auth_path(arch, country, profile)
-    path.write_text(json.dumps(data, indent=2))
+    _atomic_pool_json(path, data)
     return path
 
 
@@ -139,7 +160,7 @@ def load_cached_auth(
 def clear_auth() -> None:
     """Remove cached credentials and indexes, preserving stable lock sidecars."""
     for pattern in ("auth-*.json", "token-pool-*.json", "pool-index-*.json"):
-        for f in _CONFIG_DIR.glob(pattern):
+        for f in get_config_dir().glob(pattern):
             f.unlink(missing_ok=True)
 
 
@@ -602,7 +623,7 @@ def _pool_path(
 ) -> Path:
     suffix = f"-{_sanitize_country(country)}" if country else ""
     suffix += _profile_suffix(arch, profile)
-    return _CONFIG_DIR / f"token-pool-{_arch_key(arch)}{suffix}.json"
+    return get_config_dir() / f"token-pool-{_arch_key(arch)}{suffix}.json"
 
 
 _POOL_LOCK_TIMEOUT = 180.0  # seconds; a cold five-token pool can take 5 x 30s
@@ -631,7 +652,7 @@ def _pool_lock(
     handle = None
     acquired = False
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         handle = path.open("a+b", buffering=0)
         if os.name == "nt":
             import msvcrt
@@ -710,8 +731,11 @@ def _load_pool_unlocked(
 
 
 def _atomic_pool_json(path: Path, data: object) -> None:
-    """Publish a whole pool/index document; caller owns the pool lock."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Atomically publish a whole JSON document as 0600 (mkstemp's mode).
+
+    Pool/index callers own the pool lock.
+    """
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -803,7 +827,7 @@ def _index_path(
 ) -> Path:
     suffix = f"-{_sanitize_country(country)}" if country else ""
     suffix += _profile_suffix(arch, profile)
-    return _CONFIG_DIR / f"pool-index-{_arch_key(arch)}{suffix}.json"
+    return get_config_dir() / f"pool-index-{_arch_key(arch)}{suffix}.json"
 
 
 def _read_index(
