@@ -4,7 +4,7 @@
 
 ## Prebuilt binary (no Python needed)
 
-Linux and macOS (x86_64 and arm64 on Linux, arm64 on macOS):
+Linux and macOS (x86_64 and arm64):
 
 ```bash
 curl -fsSL https://villoh.github.io/goopdl/install.sh | sh

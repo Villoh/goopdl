@@ -66,6 +66,10 @@ jobs:
           - target: macos-arm64
             os: macos-latest
             ext: ""
+          # Last Intel runner GitHub offers (until August 2027).
+          - target: macos-x86_64
+            os: macos-15-intel
+            ext: ""
           - target: windows-x86_64
             os: windows-latest
             ext: ".exe"
