@@ -640,6 +640,22 @@ def _pool_cache_error(exc: OSError) -> None:
     )
 
 
+def _ensure_config_dir(directory: Path) -> None:
+    """Create the token directory 0700 and tighten an existing one we own.
+
+    Older releases created it 0755; it holds tokens. Best-effort, POSIX only.
+    """
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if os.name == "nt":
+        return
+    try:
+        info = directory.stat()
+        if info.st_uid == os.getuid() and info.st_mode & 0o077:
+            directory.chmod(0o700)
+    except OSError:
+        pass
+
+
 @contextmanager
 def _pool_lock(
     arch: str, country: Optional[str], profile: Optional[str] = None,
@@ -654,7 +670,7 @@ def _pool_lock(
     handle = None
     acquired = False
     try:
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _ensure_config_dir(path.parent)
         handle = path.open("a+b", buffering=0)
         if os.name == "nt":
             import msvcrt
@@ -737,7 +753,7 @@ def _atomic_pool_json(path: Path, data: object) -> None:
 
     Pool/index callers own the pool lock.
     """
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _ensure_config_dir(path.parent)
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(

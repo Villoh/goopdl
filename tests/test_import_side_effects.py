@@ -100,6 +100,17 @@ class ConfigDirTest(unittest.TestCase):
             self.assertEqual(0o600, stat.S_IMODE(path.stat().st_mode))
             self.assertEqual([path], list(directory.iterdir()))  # no temp leftovers
 
+    @unittest.skipIf(os.name == "nt", "POSIX permission bits")
+    def test_existing_world_readable_config_dir_is_tightened(self):
+        # Older releases created the token directory 0755.
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "cfg"
+            directory.mkdir(mode=0o755)
+            directory.chmod(0o755)
+            with patch.dict(os.environ, {"GOOPDL_CONFIG_DIR": str(directory)}):
+                auth.save_auth({"authToken": "secret"}, "arm64")
+            self.assertEqual(0o700, stat.S_IMODE(directory.stat().st_mode))
+
 
 if __name__ == "__main__":
     unittest.main()
