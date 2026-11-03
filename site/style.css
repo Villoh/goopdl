@@ -36,7 +36,7 @@
   color-scheme: dark;
 }
 /* dark surfaces need an edge on a dark page */
-[data-theme="dark"] :is(.term, .dark, .token, .video, .pill:not(.pill-light), .md pre) { outline: 1px solid var(--line); outline-offset: -1px; }
+[data-theme="dark"] :is(.term, .dark, .token, .pill:not(.pill-light), .md pre) { outline: 1px solid var(--line); outline-offset: -1px; }
 [data-theme="dark"] :is(.brand img, .final-mark) { border-radius: 23%; outline: 1px solid var(--line); }
 
 /* page to page (same origin): crossfade, with the nav held in place */
@@ -304,10 +304,6 @@ h3 { font-size: 24px; letter-spacing: -.02em; font-weight: 600; }
 .stat { border-top: 2px solid var(--t-line); padding-top: 24px; }
 .stat b { display: block; font-size: clamp(48px, 6vw, 80px); letter-spacing: -.05em; line-height: 1; color: var(--orange); }
 .stat span { color: var(--t-muted); font-size: 16px; }
-
-/* ── video ─────────────────────────────────────────── */
-.video { border-radius: 28px; overflow: hidden; background: var(--surface); box-shadow: 0 40px 80px -30px rgba(18, 18, 18, .45); }
-.video video { display: block; width: 100%; height: auto; }
 
 /* ── commands ──────────────────────────────────────── */
 .cmds { display: grid; gap: 10px; }
