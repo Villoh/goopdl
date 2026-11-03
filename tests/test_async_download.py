@@ -43,13 +43,14 @@ class DownloadFilesTest(unittest.IsolatedAsyncioTestCase):
             )
             async with mock_client(lambda _r: httpx.Response(200, content=b"good")) as client:
                 with contextlib.redirect_stdout(stdout):
-                    await download_files(
+                    result = await download_files(
                         [spec],
                         require_integrity=True,
                         on_progress=lambda *event: events.append(event),
                         client=client,
                     )
             self.assertEqual(dest.read_bytes(), b"good")
+        self.assertIsNone(result)
         self.assertEqual(stdout.getvalue(), "")
         self.assertEqual(events[0], ("base.apk", 0, 4))
         self.assertEqual(events[-1], ("base.apk", 4, 4))
