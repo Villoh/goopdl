@@ -4,7 +4,7 @@ Loads Aurora Store .properties files from the profiles/ directory.
 Profiles are rotated during token acquisition for reliability.
 """
 
-from functools import cache
+import sys
 from pathlib import Path
 
 PROFILES_DIR = Path(__file__).resolve().parent / "profiles"
@@ -199,40 +199,46 @@ def load_all_profiles() -> dict:
     return profiles
 
 
-@cache
-def _all() -> dict:
-    """Read the bundled profiles on first use, not at import time."""
-    return load_all_profiles()
-
-
-def _tv_profiles() -> list[tuple[str, dict]]:
-    return [(k, d["profile"]) for k, d in _all().items() if is_tv_profile(d["profile"])]
+def _compute(name: str):
+    if name == "_ALL":
+        return load_all_profiles()
+    profiles = _get("_ALL")
+    if name == "TV_PROFILES":
+        return [(k, d["profile"]) for k, d in profiles.items() if is_tv_profile(d["profile"])]
+    arch = name.split("_", 1)[0].lower()
+    return [(k, d["profile"]) for k, d in profiles.items() if d["arch"] == arch]
 
 
 def __getattr__(name: str):
-    # Former import-time constants, kept as lazily computed module attributes.
-    if name == "_ALL":
-        return _all()
-    if name in ("ARM64_PROFILES", "ARMV7_PROFILES"):
-        arch = name.split("_", 1)[0].lower()
-        return [(k, d["profile"]) for k, d in _all().items() if d["arch"] == arch]
-    if name == "TV_PROFILES":
-        return _tv_profiles()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    # Former import-time constants: built on first access, then stored as real
+    # module globals so later reads return the same object and patches stick.
+    if name not in ("_ALL", "ARM64_PROFILES", "ARMV7_PROFILES", "TV_PROFILES"):
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return globals().setdefault(name, _compute(name))
+
+
+def _get(name: str):
+    """Read a lazy constant, honouring mock.patch / reassignment."""
+    return getattr(sys.modules[__name__], name)
 
 
 def _profiles_supporting(abi_token: str) -> list[tuple[str, dict]]:
     return [
         (key, data["profile"])
-        for key, data in _all().items()
+        for key, data in _get("_ALL").items()
         if abi_token in data["profile"].get("Platforms", "")
     ]
 
 
 def _pool_for_arch(arch: str) -> list[tuple[str, dict]]:
     if arch == "tv":
-        return _tv_profiles()
-    return _profiles_supporting(ABI_TOKENS.get(arch, ABI_TOKENS["arm64"]))
+        return _get("TV_PROFILES")
+    abi = ABI_TOKENS.get(arch, ABI_TOKENS["arm64"])
+    if abi == ABI_TOKENS["arm64"]:
+        # Same set as arm64-v8a support. ARMV7_PROFILES excludes arm64 devices
+        # that also run v7, so armv7 pools still filter _ALL.
+        return _get("ARM64_PROFILES")
+    return _profiles_supporting(abi)
 
 
 def find_profile(name: str, arch: str = "arm64") -> tuple[str, dict] | None:
@@ -320,7 +326,7 @@ def get_compat_profiles(arch: str = "arm64") -> list[tuple[str, dict]]:
 
 def get_discovery_profiles(arch: str = "arm64") -> list[tuple[str, dict]]:
     """Try one compatible device from each form factor and ABI family."""
-    candidates = get_compat_profiles(arch)[:1] + _tv_profiles()
+    candidates = get_compat_profiles(arch)[:1] + _get("TV_PROFILES")
     for other in ("armv7", "arm64", "x86_64"):
         if other != arch:
             candidates += get_compat_profiles(other)[:1]

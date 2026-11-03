@@ -63,6 +63,25 @@ class ImportSideEffectsTest(unittest.TestCase):
         self.assertIn("Profile not found: no-such-profile-xyz", logs.output[0])
 
 
+class LazyProfilesTest(unittest.TestCase):
+    def test_lazy_lists_keep_their_identity(self):
+        from goopdl import profiles
+
+        for name in ("_ALL", "ARM64_PROFILES", "ARMV7_PROFILES", "TV_PROFILES"):
+            self.assertIs(getattr(profiles, name), getattr(profiles, name), name)
+
+    def test_internal_lookups_see_patched_lists(self):
+        from goopdl import profiles
+
+        fake = [("zz", {"UserReadableName": "Fake Phone"})]
+        with patch("goopdl.profiles.ARM64_PROFILES", fake):
+            self.assertEqual(fake[0], profiles.find_profile("zz", "arm64"))
+            self.assertEqual(fake, profiles.get_priority_profiles("arm64"))
+        with patch("goopdl.profiles.TV_PROFILES", fake):
+            self.assertEqual(fake[0], profiles.find_profile("Fake", "tv"))
+        self.assertIsNone(profiles.find_profile("zz", "arm64"))
+
+
 class ConfigDirTest(unittest.TestCase):
     def test_resolution_order(self):
         with patch.dict(os.environ, {"GOOPDL_CONFIG_DIR": "/g",
