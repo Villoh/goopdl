@@ -24,6 +24,9 @@ from urllib.parse import urlencode, urlparse
 import httpx
 
 from goopdl.auth import (
+    DirectAuthError,
+    DispenserRateLimitedError,
+    DispenserUnavailableError,
     _build_httpx_proxy,
     _load_pool,
     build_headers,
@@ -1027,20 +1030,30 @@ def _acquire_single_token(
     dispenser_url: str | None,
     profile: str,
 ) -> dict | None:
-    """pick_pool_token(size=1), retrying a few times if the dispenser hiccups."""
+    """pick_pool_token(size=1), retrying a few times if the dispenser hiccups.
+
+    Raises the last typed token error (see fetch_token) once attempts run out.
+    """
+    last_error: DirectAuthError | None = None
     for attempt in range(_TOKEN_FETCH_ATTEMPTS):
-        auth = pick_pool_token(
-            arch=arch,
-            country=country,
-            proxy=proxy,
-            dispenser_url=dispenser_url,
-            profile=profile,
-            size=1,
-        )
+        try:
+            auth = pick_pool_token(
+                arch=arch,
+                country=country,
+                proxy=proxy,
+                dispenser_url=dispenser_url,
+                profile=profile,
+                size=1,
+                raise_on_error=True,
+            )
+        except DirectAuthError as exc:
+            auth, last_error = None, exc
         if auth:
             return auth
         if attempt < _TOKEN_FETCH_ATTEMPTS - 1:
             time.sleep(_TOKEN_FETCH_COOLDOWN)
+    if last_error is not None:
+        raise last_error
     return None
 
 
@@ -1177,6 +1190,8 @@ def download_app(
     The fresh dispenser call rotates proxy regions automatically (see fetch_token);
     *proxy* itself is passed through unpatched to the Google FDFE calls.
     Returns (apk_path, dotted version string) — not the numeric version code.
+    A dispenser HTTP 429 raises RateLimitedError whose ``__cause__`` is the
+    DispenserRateLimitedError; a dispenser outage raises PlayAPIError.
     """
     validate_package(package)
     if profile:
@@ -1190,7 +1205,19 @@ def download_app(
             candidates = warm or candidates
         chosen_profile = random.choice(candidates)[0]
 
-    auth = _acquire_single_token(arch, country, proxy, dispenser_url, chosen_profile)
+    try:
+        auth = _acquire_single_token(
+            arch, country, proxy, dispenser_url, chosen_profile
+        )
+    except DispenserRateLimitedError as exc:
+        raise RateLimitedError(
+            "Token dispenser rate limited token requests (HTTP 429).",
+            retry_after=exc.retry_after,
+        ) from exc
+    except DispenserUnavailableError as exc:
+        raise PlayAPIError(str(exc), status_code=exc.status) from exc
+    except DirectAuthError:
+        auth = None
     if not auth:
         message = (
             "Direct Google authentication failed."
