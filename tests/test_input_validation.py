@@ -204,6 +204,61 @@ class SplitFileNameTest(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+def _colliding_delivery() -> DeliveryResult:
+    return DeliveryResult(
+        download_url="https://play.googleapis.com/base",
+        splits=[
+            SplitInfo("config.a/b", url="https://play.googleapis.com/one"),
+            SplitInfo("config.a_b", url="https://play.googleapis.com/two"),
+        ],
+    )
+
+
+class SplitCollisionTest(unittest.TestCase):
+    def test_build_specs_rejects_names_that_sanitise_to_the_same_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(PlayAPIError):
+                _build_specs(
+                    "com.example.app", 1, Path(directory), _colliding_delivery(), False, True
+                )
+
+    def test_build_specs_rejects_case_only_differences(self):
+        delivery = DeliveryResult(
+            download_url="https://play.googleapis.com/base",
+            splits=[
+                SplitInfo("config.A", url="https://play.googleapis.com/one"),
+                SplitInfo("config.a", url="https://play.googleapis.com/two"),
+            ],
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(PlayAPIError):
+                _build_specs("com.example.app", 1, Path(directory), delivery, False, True)
+
+    def test_cli_download_refuses_colliding_splits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch.dict(os.environ, {}, clear=True),
+                patch("goopdl.cli.pick_pool_token", return_value={"authToken": "t"}),
+                patch(
+                    "goopdl.cli._acquire_delivery",
+                    return_value=(
+                        AppDetails("com.example.app", version_string="1.0"),
+                        1,
+                        _colliding_delivery(),
+                    ),
+                ),
+                patch("goopdl.cli.download_batch") as batch,
+            ):
+                result = CliRunner().invoke(
+                    cli.app,
+                    ["download", "com.example.app", "--splits", "-o", directory],
+                )
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn("config.a_b", result.output)
+        batch.assert_not_called()
+
+
 class ArchValidationTest(unittest.TestCase):
     BAD_ARCHS = ("../x", "x/../../y", "", "ARM64 ", "x/../../outside/pwned")
 

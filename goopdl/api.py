@@ -1042,6 +1042,17 @@ def _safe_dest(output: Path, name: str) -> Path:
     return dest
 
 
+def _check_unique_dests(specs: list[DownloadSpec]) -> None:
+    """Refuse specs whose (sanitised) file names would overwrite each other."""
+    seen: set[str] = set()
+    for spec in specs:
+        # Casefold: macOS and Windows file systems are case-insensitive.
+        key = str(spec.dest).casefold()
+        if key in seen:
+            raise PlayAPIError(f"Two files would be written to {spec.dest.name!r}.")
+        seen.add(key)
+
+
 def _build_specs(
     package: str,
     vc: int,
@@ -1109,6 +1120,7 @@ def _build_specs(
                     gzipped=af.gzipped,
                 )
             )
+    _check_unique_dests(specs)
     return specs
 
 

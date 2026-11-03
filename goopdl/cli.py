@@ -26,6 +26,7 @@ from goopdl.api import (
     PlayAPIError,
     RateLimitedError,
     VersionUnavailableError,
+    _check_unique_dests,
     _safe_dest,
     download_app,
     fetch_app_item,
@@ -927,21 +928,25 @@ def download(
     """Download an APK (with splits + additional files) from Google Play."""
     specs: list[DownloadSpec] = []
     for arch_item in _parse_archs(arch):
-        specs += _download_arch(
-            package,
-            output,
-            arch_item,
-            version,
-            locale,
-            dm,
-            dispenser,
-            no_splits,
-            no_extras,
-            country,
-            proxy,
-            profile,
-            require_integrity=integrity_manifest is not None,
-        )
+        try:
+            specs += _download_arch(
+                package,
+                output,
+                arch_item,
+                version,
+                locale,
+                dm,
+                dispenser,
+                no_splits,
+                no_extras,
+                country,
+                proxy,
+                profile,
+                require_integrity=integrity_manifest is not None,
+            )
+        except PlayAPIError as exc:  # unsafe or colliding output file names
+            err.print(str(exc), style="red", markup=False)
+            raise typer.Exit(code=1) from None
     if integrity_manifest:
         # Only digest-verified files (no OBB/asset packs); one entry per path,
         # since archs can share files such as the base APK.
@@ -1098,6 +1103,7 @@ def _download_arch(
             )
 
     all_specs = [base_spec] + extras
+    _check_unique_dests(all_specs)
     total_files = len(all_specs)
     total_size = delivery.download_size + sum(
         s.size for s in delivery.splits if not no_splits
