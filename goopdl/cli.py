@@ -1122,7 +1122,7 @@ def _download_arch(
             "retry later.[/red]"
         )
         raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
-    except (VersionUnavailableError, AppNotAvailableError) as exc:
+    except VersionUnavailableError as exc:
         err.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=VERSION_UNAVAILABLE_EXIT_CODE) from None
     except PlayAPIError as exc:

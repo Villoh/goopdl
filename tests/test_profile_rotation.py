@@ -74,7 +74,10 @@ class ProfileRotationTest(unittest.TestCase):
                     ) as post,
                 ):
                     result = self.download()
-                    self.assertEqual(result.exit_code, 4, result.output)
+                    self.assertEqual(
+                        result.exit_code, 4 if original is api.AppNotSupportedError else 1,
+                        result.output,
+                    )
                     self.assertIn("original rejection", result.output)
                     self.assertEqual(post.call_count, 6)
 
