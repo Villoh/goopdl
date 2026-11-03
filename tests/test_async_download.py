@@ -148,6 +148,19 @@ class DownloadFilesTest(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0.5)
                 self.assertEqual(list(Path(directory).iterdir()), [])
 
+    async def test_max_concurrent_below_one_is_rejected(self):
+        spec = DownloadSpec("https://cdn.invalid/b", Path("unused.apk"))
+        async with mock_client(lambda _r: httpx.Response(200)) as client:
+            for value in (0, -1):
+                with (
+                    self.subTest(value=value),
+                    self.assertRaisesRegex(ValueError, "max_concurrent"),
+                ):
+                    await asyncio.wait_for(
+                        download_files([spec], max_concurrent=value, client=client),
+                        timeout=1,
+                    )
+
     async def test_download_batch_in_running_loop_points_to_download_files(self):
         with self.assertRaisesRegex(RuntimeError, "download_files"):
             download_batch([])
