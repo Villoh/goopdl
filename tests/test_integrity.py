@@ -20,6 +20,7 @@ from goopdl.api import (
     _extract_delivery_from_fields,
 )
 from goopdl.download import (
+    DownloadError,
     DownloadSpec,
     IntegrityError,
     _download_one,
@@ -167,7 +168,7 @@ class DownloadErrorRedactionTest(unittest.IsolatedAsyncioTestCase):
                 label="base.apk",
             )
             with self.assertRaisesRegex(
-                IntegrityError, "download failed for base.apk"
+                DownloadError, "download failed for base.apk"
             ) as raised:
                 await _download_one(
                     spec,
@@ -176,6 +177,8 @@ class DownloadErrorRedactionTest(unittest.IsolatedAsyncioTestCase):
                     asyncio.Semaphore(1),
                 )
             self.assertNotIn("secret", str(raised.exception))
+            self.assertIsNone(raised.exception.__cause__)
+            self.assertTrue(raised.exception.__suppress_context__)
 
 
 class IncrementalDownloadTest(unittest.IsolatedAsyncioTestCase):

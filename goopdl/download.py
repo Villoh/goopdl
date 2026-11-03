@@ -38,6 +38,37 @@ class IntegrityError(GoopdlError, RuntimeError):
     """Raised when delivery metadata or downloaded bytes fail verification."""
 
 
+class DownloadError(RuntimeError):
+    """HTTP/network failure fetching a file from the CDN.
+
+    ``status_code`` is the HTTP status (None for transport errors/timeouts).
+    ``retryable`` is True when retrying the same URL later may succeed (429, 408,
+    5xx, timeouts); a 403 usually means the signed URL expired and the delivery
+    must be requested again. The message never contains the signed URL.
+    """
+
+    def __init__(
+        self, message: str, status_code: int | None = None, retryable: bool = False
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.retryable = retryable
+
+
+def _download_error(label: str, exc: httpx.HTTPError) -> DownloadError:
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return DownloadError(
+            f"download failed for {label} (HTTP {status})",
+            status_code=status,
+            retryable=status in (408, 429) or status >= 500,
+        )
+    return DownloadError(
+        f"download failed for {label} ({type(exc).__name__})",
+        retryable=isinstance(exc, httpx.TransportError),
+    )
+
+
 def make_progress() -> Progress:
     """Create a pre-configured Rich progress bar for downloads."""
     return Progress(
@@ -184,7 +215,8 @@ async def _download_one(
                     raise IntegrityError(f"digest mismatch for {label}")
             os.replace(temporary, spec.dest)
         except httpx.HTTPError as exc:
-            raise IntegrityError(f"download failed for {label}") from exc
+            # from None: the httpx error (and its traceback) carries the signed URL.
+            raise _download_error(label, exc) from None
         finally:
             temporary.unlink(missing_ok=True)
 

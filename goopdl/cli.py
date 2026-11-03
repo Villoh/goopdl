@@ -53,6 +53,7 @@ from goopdl.auth import (
 )
 from goopdl.browser_oauth import BrowserOAuthError, capture_oauth_credentials
 from goopdl.download import (
+    DownloadError,
     DownloadSpec,
     IntegrityError,
     download_batch,
@@ -1143,7 +1144,7 @@ def _download_arch(
     rprint(f"\n[bold]Downloading {file_label}[/bold]  [dim]({_fmt(total_size)})[/dim]")
     try:
         download_batch(all_specs, require_integrity=require_integrity)
-    except IntegrityError as exc:
+    except (IntegrityError, DownloadError) as exc:
         err.print(str(exc), style="red", markup=False)
         raise typer.Exit(code=1) from None
 
@@ -1250,7 +1251,7 @@ def fast_download(
             no_splits=no_splits,
             no_extras=no_extras,
         )
-    except IntegrityError as exc:
+    except (IntegrityError, DownloadError) as exc:
         err.print(str(exc), style="red", markup=False)
         raise typer.Exit(code=1) from None
     except RateLimitedError:
