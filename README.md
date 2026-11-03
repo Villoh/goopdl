@@ -19,6 +19,10 @@
   <b>English</b> · <a href="https://github.com/Villoh/goopdl/blob/main/README.es.md">Español</a>
 </p>
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Villoh/goopdl/main/docs/assets/demo.webp" alt="goopdl demo: downloading WhatsApp with its split APKs, no Google account, any device" width="800">
+</p>
+
 ---
 
 > [!NOTE]
