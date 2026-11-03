@@ -84,6 +84,23 @@ class DownloadFilesTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(raised.exception.status_code)
         self.assertTrue(raised.exception.retryable)
 
+    async def test_corrupt_gzip_is_non_retryable_download_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spec = DownloadSpec(
+                "https://cdn.invalid/obb?token=secret",
+                Path(directory) / "main.obb",
+                label="main.obb",
+                gzipped=True,
+            )
+            async with mock_client(lambda _r: httpx.Response(200, content=b"nope")) as client:
+                with self.assertRaises(DownloadError) as raised:
+                    await download_files([spec], client=client)
+            self.assertEqual(list(Path(directory).iterdir()), [])
+        self.assertFalse(raised.exception.retryable)
+        self.assertIsNone(raised.exception.status_code)
+        self.assertIn("main.obb", str(raised.exception))
+        self.assertNotIn("secret", str(raised.exception))
+
     async def test_digest_mismatch_stays_integrity_error(self):
         with tempfile.TemporaryDirectory() as directory:
             spec = DownloadSpec(

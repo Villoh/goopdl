@@ -229,6 +229,10 @@ async def _download_one(
         except httpx.HTTPError as exc:
             # from None: the httpx error (and its traceback) carries the signed URL.
             raise _download_error(label, exc) from None
+        except zlib.error as exc:
+            raise DownloadError(
+                f"corrupt gzip data for {label}", retryable=False
+            ) from exc
         finally:
             temporary.unlink(missing_ok=True)
 
