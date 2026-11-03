@@ -73,11 +73,14 @@
       if (code) getSelection().selectAllChildren(code);
       return;
     }
-    const label = btn.querySelector(".copy-label") ?? btn;
-    const original = label.dataset.label ??= label.textContent;
+    // Pills swap their visible label; icon buttons swap the icon (CSS) and their accessible name.
+    const copied = COPIED[root.lang] ?? COPIED.en;
+    const label = btn.querySelector(".copy-label");
+    const original = btn.dataset.original ??= label ? label.textContent : btn.getAttribute("aria-label");
+    const show = (text) => (label ? (label.textContent = text) : btn.setAttribute("aria-label", text));
     btn.classList.add("copied");
-    label.textContent = COPIED[root.lang] ?? COPIED.en;
+    show(copied);
     clearTimeout(btn.timer);
-    btn.timer = setTimeout(() => { btn.classList.remove("copied"); label.textContent = original; }, 1600);
+    btn.timer = setTimeout(() => { btn.classList.remove("copied"); show(original); }, 1600);
   });
 }

@@ -94,6 +94,12 @@ def translate(page: str, lang: str) -> str:
 # ── markdown ────────────────────────────────────────────────────────────────
 md = MarkdownIt("commonmark", {"html": True}).enable(["table", "strikethrough"])
 SHELL_LANGS = {"bash", "sh", "shell", "console", "dockerfile"}
+# Copy icon, swapped for a check once copied (see .copy-code in style.css).
+COPY_ICONS = (
+    '<svg class="i-copy" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2.5"/>'
+    '<path d="M5 15V6.5A2.5 2.5 0 0 1 7.5 4H15"/></svg>'
+    '<svg class="i-done" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>'
+)
 
 
 def highlight_shell(code: str) -> str:
@@ -115,7 +121,8 @@ def render_fence(self, tokens, idx, options, env) -> str:
     body = highlight_shell(code) if lang in SHELL_LANGS else esc(code)
     cls = f' class="language-{esc(lang)}"' if lang else ""
     # The bar sits above the scrolling <pre>, so the button never covers code and doesn't scroll with it.
-    bar = f'<div class="code-bar"><span>{esc(lang)}</span><button type="button" class="copy-code">{env["copy"]}</button></div>'
+    button = f'<button type="button" class="copy-code" aria-label="{env["copy"]}" title="{env["copy"]}">{COPY_ICONS}</button>'
+    bar = f'<div class="code-bar"><span>{esc(lang)}</span>{button}</div>'
     return f'<div class="code">{bar}<pre><code{cls}>{body}</code></pre></div>\n'
 
 
