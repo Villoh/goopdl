@@ -17,6 +17,7 @@ from urllib.parse import urlparse, urlunparse
 import httpx
 from rich.console import Console
 
+from goopdl.errors import GoopdlError
 from goopdl.profiles import (
     FALLBACK_PROFILE,
     find_profile,
@@ -169,11 +170,11 @@ def _interpolate_region(proxy: Optional[str], region: str) -> Optional[str]:
     return proxy
 
 
-class DirectAuthConfigurationError(ValueError):
+class DirectAuthConfigurationError(GoopdlError, ValueError):
     """Direct Google authentication environment is only partially configured."""
 
 
-class DirectAuthError(RuntimeError):
+class DirectAuthError(GoopdlError, RuntimeError):
     """Direct Google authentication failed at a non-secret protocol stage."""
 
 

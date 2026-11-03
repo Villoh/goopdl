@@ -29,6 +29,7 @@ from goopdl.auth import (
     replace_pool_token,
 )
 from goopdl.download import DownloadSpec, download_batch
+from goopdl.errors import GoopdlError
 from goopdl.profiles import get_latest_probe_profiles
 from goopdl.protobuf import ProtoDecoder, extract_strings, proto_to_dict
 
@@ -112,7 +113,7 @@ class DeliveryResult:
     dex_metadata: DexMetadata | None = None
 
 
-class PlayAPIError(Exception):
+class PlayAPIError(GoopdlError):
     pass
 
 

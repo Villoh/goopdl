@@ -25,13 +25,15 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 
+from goopdl.errors import GoopdlError
+
 CHUNK_SIZE = 64 * 1024  # 64 KB
 MAX_CONCURRENT = 4
 _BASE64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _DIGEST_LENGTHS = {"sha1": 20, "sha256": 32}
 
 
-class IntegrityError(RuntimeError):
+class IntegrityError(GoopdlError, RuntimeError):
     """Raised when delivery metadata or downloaded bytes fail verification."""
 
 

@@ -22,11 +22,13 @@ from websocket import (  # type: ignore[import-not-found]
     create_connection,
 )
 
+from goopdl.errors import GoopdlError
+
 EMBEDDED_SETUP_URL = "https://accounts.google.com/EmbeddedSetup"
 _WAIT = Event()
 
 
-class BrowserOAuthError(RuntimeError):
+class BrowserOAuthError(GoopdlError, RuntimeError):
     """Browser launch or OAuth token capture failed."""
 
 
