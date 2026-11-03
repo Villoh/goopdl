@@ -146,6 +146,12 @@ def _file_matches(
     return hmac.compare_digest(calculated.digest(), digest)
 
 
+def _temporary_path(dest: Path) -> Path:
+    # Unique per call: concurrent writers of the same dest must not share
+    # (or delete) each other's partial file.
+    return dest.with_name(f"{dest.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.part")
+
+
 async def _download_one(
     spec: DownloadSpec,
     client: httpx.AsyncClient,
@@ -179,11 +185,7 @@ async def _download_one(
 
         calculated = hashlib.new(integrity[0]) if integrity else None
         written = 0
-        # Unique per call: concurrent downloads of the same dest must not share
-        # (or delete) each other's partial file.
-        temporary = spec.dest.with_name(
-            f"{spec.dest.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.part"
-        )
+        temporary = _temporary_path(spec.dest)
 
         try:
             decompressor = (
@@ -330,11 +332,14 @@ def write_manifest(path: Path, specs: list[DownloadSpec]) -> None:
                 "google_sha256": spec.sha256,
             }
         )
-    temporary = path.with_name(path.name + ".part")
-    temporary.write_text(
-        json.dumps({"version": 1, "files": files}, sort_keys=True), encoding="utf-8"
-    )
-    os.replace(temporary, path)
+    temporary = _temporary_path(path)
+    try:
+        temporary.write_text(
+            json.dumps({"version": 1, "files": files}, sort_keys=True), encoding="utf-8"
+        )
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def download_batch(specs: list[DownloadSpec], require_integrity: bool = False) -> None:
