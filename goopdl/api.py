@@ -702,10 +702,16 @@ def _check_status(resp: Any, what: str) -> None:
 
 
 def _safe_cdn_url(url: str) -> str:
-    """Return url only if it is HTTPS and hosted on a known Google domain, else ''."""
+    """Return url only if it is HTTPS on port 443 on a known Google domain, else ''."""
     if not url.startswith("https://"):
         return ""
-    host = urlparse(url).hostname or ""
+    try:
+        parsed = urlparse(url)
+        if parsed.port not in (None, 443):
+            return ""
+        host = parsed.hostname or ""
+    except ValueError:
+        return ""
     if host == "android.clients.google.com" or any(
         host.endswith(s) for s in _GOOGLE_CDN_SUFFIXES
     ):
