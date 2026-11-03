@@ -498,11 +498,11 @@ class AuthSecretsTest(unittest.TestCase):
     def test_latest_expired_tokens_stop_on_dispenser_error(self):
         for failure, code in (
             (httpx.Response(429), 5),
-            (httpx.ConnectError("down"), 3),
+            (httpx.ConnectError("down"), 1),
         ):
             with (
                 self.subTest(code=code),
-                patch.object(httpx, "post", side_effect=[failure] * 5) as post,
+                patch.object(httpx, "post", side_effect=[failure] * 6) as post,
                 tempfile.TemporaryDirectory() as directory,
                 patch.object(
                     auth,
@@ -521,7 +521,7 @@ class AuthSecretsTest(unittest.TestCase):
             ):
                 result = CliRunner().invoke(cli.app, ["latest", "com.example.pkg"])
                 self.assertEqual(result.exit_code, code, result.output)
-                self.assertEqual(post.call_count, 1 if code == 5 else 2)
+                self.assertEqual(post.call_count, 1 if code == 5 else 6)
 
     def test_direct_error_legacy_construction(self):
         error = auth.DirectAuthError("stage")

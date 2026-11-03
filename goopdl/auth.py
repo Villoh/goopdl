@@ -1037,6 +1037,8 @@ def _ensure_pool_unlocked(
                     country=country,
                     raise_on_error=raise_on_error,
                 )
+            except DispenserRateLimitedError:
+                raise  # even a partial pool must respect endpoint throttling
             except DirectAuthError:
                 if pool:
                     break  # a partial pool still serves the caller
@@ -1126,8 +1128,10 @@ def replace_pool_token(
 
     Called when a mid-request AuthExpiredError reveals a token died early.
     Reuses a current member if another caller already removed that credential.
-    Returns None if replacement or cache access fails. With *raise_on_error*,
-    propagate typed token failures and PoolBusyError on lock timeout.
+    On replacement failure, returns a surviving token without refilling (or
+    None if none remain). HTTP 429 always raises DispenserRateLimitedError.
+    With *raise_on_error*, propagate other typed token failures as well as
+    PoolBusyError on lock timeout, so probe loops can skip the failed member.
     """
     if direct_auth_enabled():
         return fetch_token(
@@ -1148,15 +1152,27 @@ def replace_pool_token(
                     # Another caller already replaced this exact credential.
                     return survivors[0]
                 _save_pool(survivors, arch, country, profile)
-                new_token = fetch_token(
-                    dispenser_url=dispenser_url, arch=arch, proxy=proxy,
-                    profile=profile, country=country, raise_on_error=raise_on_error,
-                )
+                try:
+                    # Keep 429 distinguishable from a failed replacement even
+                    # for legacy callers; never refill just to pick a survivor.
+                    # Survivors already serve the caller: no cooldown retry.
+                    new_token = fetch_token(
+                        dispenser_url=dispenser_url, arch=arch, proxy=proxy,
+                        profile=profile, country=country, raise_on_error=True,
+                        cooldown_retry=not survivors,
+                    )
+                except DispenserRateLimitedError:
+                    raise
+                except DirectAuthError:
+                    if raise_on_error:
+                        raise
+                    new_token = None
                 if new_token:
                     new_token["_cached_at"] = time.time()
                     survivors.append(new_token)
                     _save_pool(survivors, arch, country, profile)
-                return new_token
+                    return new_token
+                return survivors[0] if survivors and not raise_on_error else None
             except OSError as exc:
                 _pool_cache_error(exc)
     return None
