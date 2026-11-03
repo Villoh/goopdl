@@ -32,6 +32,7 @@ _LAZY = {
     "AASTokenError": "goopdl.aastoken",
     "BrowserOAuthError": "goopdl.browser_oauth",
     "IntegrityError": "goopdl.download",
+    "DownloadError": "goopdl.download",
 }
 
 __all__ = [
@@ -51,6 +52,7 @@ __all__ = [
     "AASTokenError",
     "BrowserOAuthError",
     "IntegrityError",
+    "DownloadError",
 ]
 
 if TYPE_CHECKING:
@@ -72,7 +74,7 @@ if TYPE_CHECKING:
         InvalidArchError,
     )
     from goopdl.browser_oauth import BrowserOAuthError
-    from goopdl.download import IntegrityError
+    from goopdl.download import DownloadError, IntegrityError
 
 
 def __getattr__(name: str) -> Any:

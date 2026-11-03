@@ -31,6 +31,7 @@ __all__ = [
     "AASTokenError",
     "BrowserOAuthError",
     "IntegrityError",
+    "DownloadError",
 ]
 
 if TYPE_CHECKING:
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
         BrowserOAuthError,
         DirectAuthConfigurationError,
         DirectAuthError,
+        DownloadError,
         IntegrityError,
         InvalidArchError,
         InvalidPackageError,
