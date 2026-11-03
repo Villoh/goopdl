@@ -589,15 +589,17 @@ def fetch_token(
             )
         except DirectAuthError as exc:
             logger.error("Direct Google authentication failed at %s.", exc)
-            if raise_on_error:
-                raise
-            return None
+            error = DirectAuthError(str(exc))  # stage only; messages are safe
         except Exception:
             # No exc_info: tracebacks can carry credentials from request locals.
             logger.error("Direct Google authentication failed unexpectedly.")
-            if raise_on_error:
-                raise DirectAuthError("an unexpected stage") from None
-            return None
+            error = DirectAuthError("an unexpected stage")
+        # Raised outside the except blocks so neither __context__ nor the
+        # traceback reach _direct_auth's frames (locals hold the AAS token).
+        credentials = None
+        if raise_on_error:
+            raise error
+        return None
 
     url = dispenser_url or DEFAULT_DISPENSER_URL
     headers = {
