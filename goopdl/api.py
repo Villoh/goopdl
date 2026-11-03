@@ -1168,6 +1168,7 @@ def _build_specs(
                     cookies=af.cookies,
                     label=name,
                     gzipped=af.gzipped,
+                    expected_size=max(af.size, 0),
                 )
             )
     _check_unique_dests(specs)

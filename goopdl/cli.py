@@ -1146,6 +1146,7 @@ def _download_arch(
                     cookies=af.cookies,
                     label=name,
                     gzipped=af.gzipped,
+                    expected_size=max(af.size, 0),
                 )
             )
 
