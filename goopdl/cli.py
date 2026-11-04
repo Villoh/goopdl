@@ -1386,7 +1386,14 @@ def _exit_token_error(exc: DirectAuthError) -> NoReturn:
             "retry later.[/red]"
         )
         raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
-    if isinstance(exc, DispenserUnavailableError):
+    if isinstance(exc, DispenserUnavailableError) and exc.reason == "profile_rejected":
+        # The dispenser answered: it is up, it just refused every profile.
+        last = "no authToken" if exc.status == 200 else f"HTTP {exc.status}"
+        err.print(
+            "[red]Authentication failed — all profiles rejected "
+            f"(last dispenser response: {last}).[/red]"
+        )
+    elif isinstance(exc, DispenserUnavailableError):
         err.print(f"[red]{exc} It may be down; retry later.[/red]")
     else:
         err.print("[red]Direct Google authentication failed.[/red]")

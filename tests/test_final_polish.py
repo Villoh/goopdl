@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
 from typer.testing import CliRunner
 
 from goopdl import auth
@@ -52,6 +53,48 @@ class PoolBusyCliTest(unittest.TestCase):
                 self.assertIsInstance(result.exception, SystemExit)
                 self.assertIn(BUSY, _flat(result.output))
                 self.assertNotIn("Traceback", result.output)
+
+
+@patch.dict(os.environ, {}, clear=True)
+@patch("goopdl.auth.time.sleep")
+class DispenserRejectionMessageTest(unittest.TestCase):
+    def setUp(self) -> None:
+        patcher = patch.object(
+            auth, "_CONFIG_DIR", Path(tempfile.mkdtemp()), create=True
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _auth(self, **post):
+        with patch("goopdl.auth.httpx.post", **post):
+            return CliRunner().invoke(app, ["auth"])
+
+    def test_answering_dispenser_is_not_reported_as_down(self, _sleep) -> None:
+        for response, last in (
+            (httpx.Response(200, json={}), "no authToken"),
+            (httpx.Response(400), "HTTP 400"),
+        ):
+            with self.subTest(last=last):
+                result = self._auth(return_value=response)
+                self.assertEqual(result.exit_code, AUTH_UNAVAILABLE_EXIT_CODE)
+                text = _flat(result.output)
+                self.assertIn(
+                    "Authentication failed — all profiles rejected "
+                    f"(last dispenser response: {last}).",
+                    text,
+                )
+                self.assertNotIn("may be down", text)
+
+    def test_outages_keep_the_unavailable_message(self, _sleep) -> None:
+        for post, expected in (
+            ({"return_value": httpx.Response(503)}, "(HTTP 503). It may be down"),
+            ({"side_effect": httpx.ConnectError("x")}, "unavailable. It may be down"),
+        ):
+            with self.subTest(expected=expected):
+                result = self._auth(**post)
+                self.assertEqual(result.exit_code, AUTH_UNAVAILABLE_EXIT_CODE)
+                self.assertIn(expected, _flat(result.output))
+                self.assertNotIn("all profiles rejected", result.output)
 
 
 if __name__ == "__main__":
