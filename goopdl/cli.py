@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shlex
+import sys
 import time
 from pathlib import Path
 from typing import NoReturn
@@ -101,6 +102,17 @@ def _setup_logging() -> None:
     if not any(isinstance(h, _StderrLogHandler) for h in log.handlers):
         log.addHandler(_StderrLogHandler())
 
+
+def _tolerate_unencodable_output() -> None:
+    # Remote text (app titles, server messages) may not fit a legacy console
+    # encoding such as cp1252; print "?" instead of crashing the command.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(errors="replace")
+            except (ValueError, OSError):
+                pass
+
 # Distinct exit code so callers can tell "Google Play is unreachable right now"
 # from "this artifact cannot be trusted" without parsing human-readable output.
 AUTH_UNAVAILABLE_EXIT_CODE = 3
@@ -150,6 +162,7 @@ def main(
     ),
 ) -> None:
     """GPlay APK Downloader — download APKs from Google Play Store."""
+    _tolerate_unencodable_output()
     _setup_logging()
     if ctx.invoked_subcommand in {
         "auth",
@@ -507,7 +520,7 @@ def latest(
             best_vc = vc
             consecutive_stable = 0
             rprint(
-                f"  probe {i + 1}/{len(tokens)}: gsf={gsf_prefix}... {vs} ({vc}) [bold green]↑ new max[/bold green]"
+                f"  probe {i + 1}/{len(tokens)}: gsf={gsf_prefix}... {vs} ({vc}) [bold green]^ new max[/bold green]"
             )
         else:
             consecutive_stable += 1
@@ -1447,7 +1460,7 @@ def _resolve_version_string(
             continue
         if details.version_string == version_str:
             rprint(
-                f"[green]  Found {version_str} → vc={details.version_code} (attempt {attempt})[/green]"
+                f"[green]  Found {version_str} -> vc={details.version_code} (attempt {attempt})[/green]"
             )
             return details.version_code, token
         err.print(
