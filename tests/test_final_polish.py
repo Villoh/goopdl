@@ -9,6 +9,7 @@ from unittest.mock import patch
 import httpx
 from typer.testing import CliRunner
 
+from _envutil import isolated_env
 from goopdl import auth
 from goopdl.cli import AUTH_UNAVAILABLE_EXIT_CODE, app
 
@@ -20,7 +21,7 @@ def _flat(output: str) -> str:
     return " ".join(output.split())
 
 
-@patch.dict(os.environ, {}, clear=True)
+@isolated_env()
 class PoolBusyCliTest(unittest.TestCase):
     def setUp(self) -> None:
         tmp = Path(tempfile.mkdtemp())
@@ -55,7 +56,7 @@ class PoolBusyCliTest(unittest.TestCase):
                 self.assertNotIn("Traceback", result.output)
 
 
-@patch.dict(os.environ, {}, clear=True)
+@isolated_env()
 @patch("goopdl.auth.time.sleep")
 class DispenserRejectionMessageTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -97,7 +98,7 @@ class DispenserRejectionMessageTest(unittest.TestCase):
                 self.assertNotIn("all profiles rejected", result.output)
 
 
-@patch.dict(os.environ, {}, clear=True)
+@isolated_env()
 @patch("goopdl.auth.time.sleep")
 class DispenserLogDeviceTest(unittest.TestCase):
     def _messages(self, **post) -> list[str]:
@@ -135,7 +136,7 @@ def _direct_responses():
     return checkin, upload, httpx.Response(200, text="Auth=bearer-secret\n")
 
 
-@patch.dict(os.environ, {}, clear=True)
+@isolated_env()
 class DirectTocRateLimitTest(unittest.TestCase):
     def _direct_auth(self):
         return auth._direct_auth(
@@ -179,7 +180,7 @@ PROXY = "http://user:proxy-sentinel@localhost:8080"
 POOL_TOKEN = {"authToken": "pool-sentinel", "gsfId": "1", "_device_profile": PIXEL}
 
 
-@patch.dict(os.environ, {}, clear=True)
+@isolated_env()
 @patch("time.sleep")
 class PublicEntrySecretFramesTest(unittest.TestCase):
     def capture(self, call) -> BaseException:
@@ -367,7 +368,7 @@ def _redirecting_client(location: bytes):
     return patch("goopdl.download.httpx.AsyncClient", side_effect=factory)
 
 
-@patch.dict(os.environ, {}, clear=True)
+@isolated_env()
 class MalformedRedirectTest(unittest.TestCase):
     def test_library_raises_a_detached_non_retryable_download_error(self) -> None:
         import asyncio
@@ -417,7 +418,7 @@ class MalformedRedirectTest(unittest.TestCase):
                 self.assertIn("malformed CDN URL or redirect for", _flat(result.output))
 
 
-@patch.dict(os.environ, {}, clear=True)
+@isolated_env()
 class FetchAppItemRateLimitTest(unittest.TestCase):
     def test_replacement_429_becomes_rate_limited_like_download_app(self) -> None:
         from goopdl import api
@@ -473,7 +474,7 @@ class PackageDirTest(unittest.TestCase):
 MARKUP = "[/x] Evil [bold]App"
 
 
-@patch.dict(os.environ, {}, clear=True)
+@isolated_env()
 class RemoteTextMarkupTest(unittest.TestCase):
     def setUp(self) -> None:
         from goopdl import api
