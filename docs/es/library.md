@@ -27,6 +27,15 @@ nada y no toca ningún archivo. Solo los cargan estos:
 | `download.download_batch()` y `api.download_app()` (barras de progreso) | `rich` |
 | `goopdl.browser_oauth` | `websocket-client` |
 
+## Estado de la API
+
+Hoy la librería es un conjunto de funciones de `goopdl.api`, `goopdl.auth` y
+`goopdl.download` que combinas tú, las mismas que usa la CLI. Solo
+`download_app` y `fetch_app_item` agrupan varios pasos en una llamada.
+
+Hay planificada una fachada de más alto nivel, pero todavía no existe. Todo lo
+que aparece en esta guía usa las funciones que se describen aquí.
+
 ## Inicio rápido
 
 ### Una sola llamada

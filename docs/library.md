@@ -25,6 +25,15 @@ nothing, and touches no files. Only these load them:
 | `download.download_batch()` and `api.download_app()` (progress bars) | `rich` |
 | `goopdl.browser_oauth` | `websocket-client` |
 
+## API status
+
+Today the library is a set of functions in `goopdl.api`, `goopdl.auth`, and
+`goopdl.download` that you combine yourself, the same ones the CLI uses. Only
+`download_app` and `fetch_app_item` bundle several steps into one call.
+
+A higher-level facade is planned, but it doesn't exist yet. Everything in this
+guide uses the functions described here.
+
 ## Quick start
 
 ### One call
