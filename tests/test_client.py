@@ -5,6 +5,7 @@ import base64
 import contextlib
 import hashlib
 import io
+import json
 import socket
 import tempfile
 import threading
@@ -499,11 +500,14 @@ class ErrorsTest(ClientTestCase):
             with self.subTest(name):
                 client = Client(config_dir=self.tmp / name, profile="Pv")  # cold pool
                 if name == "item":  # fetch_app_item: only a replacement's 429 is typed
-                    client.details(PKG)  # full pool, then Play 401s the token
+                    client.details(PKG)  # warm pool, then Play 401s the token
+                    # ...and no survivor remains to serve the call instead.
+                    pool = next((self.tmp / name).glob("token-pool-*.json"))
+                    pool.write_text(json.dumps(json.loads(pool.read_text())[:1]))
                     self.fake.faults["details"] = [httpx.Response(401)]
-                self.fake.faults["dispenser"] = [
+                self.fake.faults["dispenser"] = [  # item: refill, then replacement
                     httpx.Response(429, headers={"Retry-After": "60"})
-                ]
+                ] * (2 if name == "item" else 1)
                 with self.assertRaises(RateLimitedError) as raised:
                     call(client)
                 self.assertEqual(60.0, raised.exception.retry_after)

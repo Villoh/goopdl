@@ -28,13 +28,16 @@ de configuración (`~/.config/goopdl` salvo que definas `GOOPDL_CONFIG_DIR` o
   que faltan. Con el pool lleno no se hace ninguna llamada al dispensador.
 - Los tokens caducan a los 50 minutos.
 - Si Google rechaza un token a mitad de una petición (HTTP 401), goopdl lo
-  sustituye.
+  sustituye, o usa otro token válido del pool si el dispensador no puede darle
+  uno nuevo.
 - Los tokens se reparten por turnos (round-robin) y la posición se conserva
   entre ejecuciones.
 - Varios procesos de goopdl pueden compartir un pool: las actualizaciones se
   hacen con bloqueo y se escriben de forma atómica.
 - Si el dispensador responde HTTP 429, goopdl deja de probar otros perfiles en
-  lugar de insistir.
+  lugar de insistir. Mientras queden tokens válidos en el pool, goopdl los usa
+  y vuelve a intentar completarlo en la siguiente llamada. Solo falla, con el
+  código de salida `5`, cuando no queda ninguno.
 
 El pool mantiene a goopdl por debajo del límite de Aurora, de unas 20
 peticiones por hora. En el [modo cuenta de Google](authentication.md#cuenta-de-google)

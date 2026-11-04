@@ -192,23 +192,23 @@ class TransientRecoveryTest(unittest.TestCase):
         self.assertEqual(self.calls["POST"], 2)
         self.assertEqual(self.sleep.call_args_list, [((5,),)])
 
-    def test_latest_replacement_rate_limit_stops_immediately(self):
+    def test_latest_replacement_rate_limit_keeps_survivor_probes(self):
         auth.ensure_pool(profile="Pv")
         self.expire_first = True
         self.failures = [httpx.Response(429, headers={"Retry-After": "120"})]
         result = self.invoke("latest", "--profile", "Pv")
-        self.assertEqual(result.exit_code, 5, result.output)
-        self.assertEqual(self.calls["POST"], 6)
-        self.assertEqual(self.calls["GET"], 1)
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("replacement unavailable, skipping", result.output)
+        self.assertEqual(self.calls["POST"], 6)  # one replacement attempt
+        self.assertEqual(self.calls["GET"], 5)  # 401 + four survivors, no repeat
         self.sleep.assert_not_called()
 
-    def test_partial_pool_does_not_hide_rate_limit(self):
+    def test_partial_pool_serves_caller_through_rate_limit(self):
         auth.ensure_pool(profile="Pv", size=1)
         self.failures = [httpx.Response(429, headers={"Retry-After": "120"})]
-        with self.assertRaises(auth.DispenserRateLimitedError) as raised:
-            auth.ensure_pool(profile="Pv", raise_on_error=True)
-        self.assertEqual(raised.exception.retry_after, 120)
-        self.assertEqual(self.calls["POST"], 2)
+        pool = auth.ensure_pool(profile="Pv", raise_on_error=True)
+        self.assertEqual([t["authToken"] for t in pool], ["token-1"])
+        self.assertEqual(self.calls["POST"], 2)  # one refill attempt, no rotation
         self.sleep.assert_not_called()
 
     def test_version_resolution_recovers_with_cooldown(self):
@@ -233,7 +233,7 @@ class TransientRecoveryTest(unittest.TestCase):
         self.assertEqual(len(self.failures), 1)  # no second mint to refill
         self.sleep.assert_not_called()
 
-    def test_replacement_429_stops_download_and_info_paths(self):
+    def test_replacement_429_serves_survivor_on_download_and_info_paths(self):
         for path in ("download", "fast-download", "info", "raw", "api", "item"):
             with self.subTest(path=path):
                 auth.clear_auth()
@@ -242,25 +242,21 @@ class TransientRecoveryTest(unittest.TestCase):
                 auth.ensure_pool(profile="Pv")
                 self.expire_first = True
                 self.failures = [httpx.Response(429, headers={"Retry-After": "120"})]
-                if path in ("api", "item"):
-                    # fetch_app_item now matches download_app (RateLimitedError).
-                    with self.assertRaises(api.RateLimitedError) as raised:
-                        if path == "api":
-                            api.download_app(PACKAGE, self.output, profile="Pv")
-                        else:
-                            api.fetch_app_item(PACKAGE, profile="Pv")
-                    self.assertEqual(raised.exception.retry_after, 120)
-                    self.assertIsInstance(
-                        raised.exception.__cause__, auth.DispenserRateLimitedError
-                    )
+                # Four survivors remain: one serves the retry, no refill.
+                if path == "api":
+                    dest, _ = api.download_app(PACKAGE, self.output, profile="Pv")
+                    self.assertTrue(dest.exists())
+                elif path == "item":
+                    self.assertTrue(api.fetch_app_item(PACKAGE, profile="Pv"))
                 elif path == "raw":
                     result = self.invoke("info", "--raw", "--profile", "Pv")
-                    self.assertEqual(result.exit_code, 5, result.output)
+                    self.assertEqual(result.exit_code, 0, result.output)
                 else:
                     result = self.invoke(path, "--profile", "Pv")
-                    self.assertEqual(result.exit_code, 5, result.output)
-                self.assertEqual(self.calls["POST"], 6)
-                self.assertEqual(self.calls["GET"], 1)
+                    self.assertEqual(result.exit_code, 0, result.output)
+                self.assertEqual(self.calls["dispenser"], 6)
+                self.assertEqual(self.calls["details"], 2)  # 401, then the survivor
+                self.assertEqual(len(auth._load_pool("arm64", None, "Pv")), 4)
                 self.sleep.assert_not_called()
 
     def test_profile_response_resets_server_failure_streak(self):

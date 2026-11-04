@@ -506,7 +506,8 @@ def latest(
                     _exit_token_error(exc)
                 # The failed token is gone; remaining probes are still valid.
                 new_token = None
-            if new_token is None:
+            # A survivor (dispenser 429) is already one of the probes.
+            if new_token is None or new_token in tokens:
                 err.print(
                     f"[dim]  probe {i + 1}: replacement unavailable, skipping[/dim]"
                 )

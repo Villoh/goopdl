@@ -26,12 +26,15 @@ directory (`~/.config/goopdl` unless `GOOPDL_CONFIG_DIR` or
 - Before each call, goopdl counts the unexpired tokens and requests only the
   missing ones. A full pool means no dispenser calls at all.
 - Tokens expire after 50 minutes.
-- If Google rejects a token mid-request (HTTP 401), goopdl replaces it.
+- If Google rejects a token mid-request (HTTP 401), goopdl replaces it, or
+  uses another valid token from the pool when the dispenser can't issue one.
 - Tokens are handed out round-robin, and the position survives between runs.
 - Several goopdl processes can share a pool: updates are locked and written
   atomically.
 - If the dispenser answers HTTP 429, goopdl stops trying other profiles
-  instead of hammering it.
+  instead of hammering it. While valid tokens are left in the pool, goopdl
+  uses them and tries to top it up again on the next call. It only fails,
+  with exit code `5`, when no valid token is left.
 
 The pool keeps goopdl under Aurora's rate limit of about 20 requests per hour.
 In [Google account mode](authentication.md#google-account) there is no pool:
