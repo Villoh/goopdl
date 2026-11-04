@@ -26,10 +26,13 @@ from goopdl.api import (
     AppNotSupportedError,
     AuthExpiredError,
     InvalidPackageError,
+    MalformedResponseError,
     NetworkError,
     PlayAPIError,
     RateLimitedError,
     VersionUnavailableError,
+    _TOKEN_FETCH_ATTEMPTS,
+    _TOKEN_FETCH_COOLDOWN,
     _check_unique_dests,
     _safe_dest,
     download_app,
@@ -487,12 +490,11 @@ def latest(
                     profile=profile_key,
                     raise_on_error=True,
                 )
-            except DispenserUnavailableError as exc:
-                if exc.reason != "profile_rejected":
-                    _exit_token_error(exc)
-                new_token = None
             except DirectAuthError as exc:
-                _exit_token_error(exc)
+                if exc.status == 429:
+                    _exit_token_error(exc)
+                # The failed token is gone; remaining probes are still valid.
+                new_token = None
             if new_token is None:
                 err.print(
                     f"[dim]  probe {i + 1}: replacement unavailable, skipping[/dim]"
@@ -501,12 +503,12 @@ def latest(
             tokens[i] = new_token
             try:
                 details = get_details(package, new_token, country=country, proxy=proxy)
-            except (RateLimitedError, NetworkError) as exc:
+            except (RateLimitedError, NetworkError, MalformedResponseError) as exc:
                 _exit_transient_play_error(exc)
             except PlayAPIError as exc:
                 err.print(f"[dim]  probe {i + 1}: retry failed: {exc}[/dim]")
                 continue
-        except (RateLimitedError, NetworkError) as exc:
+        except (RateLimitedError, NetworkError, MalformedResponseError) as exc:
             _exit_transient_play_error(exc)
         except PlayAPIError as exc:
             err.print(f"[dim]  probe {i + 1}: {gsf_prefix}... error: {exc}[/dim]")
@@ -620,7 +622,7 @@ def info(
                         package, auth_data, country=country, proxy=proxy
                     )
                 except AuthExpiredError:
-                    replace_pool_token(
+                    auth_data = replace_pool_token(
                         auth_data,
                         arch=arch,
                         country=country,
@@ -628,12 +630,13 @@ def info(
                         dispenser_url=dispenser,
                         profile=profile,
                     )
-                    auth_data = _require_auth(
-                        arch, dispenser, country=country, proxy=proxy, profile=profile
-                    )
+                    if not auth_data:
+                        raise PlayAPIError("Token expired and replacement failed.")
                     details = get_details(
                         package, auth_data, country=country, proxy=proxy
                     )
+        except DirectAuthError as exc:
+            _exit_token_error(exc)
         except PlayAPIError as exc:
             err.print(f"[red]{exc}[/red]")
             raise typer.Exit(code=1) from None
@@ -851,8 +854,8 @@ def _acquire_delivery(
                 continue
             try:
                 return flow(retry_auth)
-            except (RateLimitedError, NetworkError):
-                raise  # another profile would hit the same throttle/outage
+            except (RateLimitedError, NetworkError, MalformedResponseError):
+                raise  # another profile would hit the same throttle/outage/bug
             except PlayAPIError:
                 continue
         return None
@@ -872,6 +875,8 @@ def _acquire_delivery(
             if not replacement:
                 raise PlayAPIError("Token expired and replacement failed.") from None
             return flow(replacement)
+    except DispenserRateLimitedError as exc:
+        raise RateLimitedError(str(exc), retry_after=exc.retry_after) from None
     except (AppNotSupportedError, AppNotAvailableError) as exc:
         profiles = (
             get_compat_profiles(arch)[:6]
@@ -1122,7 +1127,7 @@ def _download_arch(
             "retry later.[/red]"
         )
         raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
-    except (VersionUnavailableError, AppNotAvailableError) as exc:
+    except VersionUnavailableError as exc:
         err.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=VERSION_UNAVAILABLE_EXIT_CODE) from None
     except PlayAPIError as exc:
@@ -1344,7 +1349,7 @@ def fast_download(
 
 
 def _exit_transient_play_error(exc: PlayAPIError) -> NoReturn:
-    """Exit on Google Play throttling (code 5) or a network failure (code 1)."""
+    """Exit on Google Play throttling (code 5) or network/malformed reply (code 1)."""
     if isinstance(exc, RateLimitedError):
         err.print("[red]Google Play rate limited requests (HTTP 429); retry later.[/red]")
         raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
@@ -1406,17 +1411,26 @@ def _require_auth(
 
 
 def _fetch_probe_token(**kwargs) -> dict | None:
-    """Stop profile/cohort probes on token endpoint throttling or outages."""
-    try:
-        return fetch_token(**kwargs, raise_on_error=True)
-    except DirectAuthError as exc:
-        if exc.status == 429:
-            raise RateLimitedError(str(exc), retry_after=exc.retry_after) from None
-        if isinstance(exc, DispenserUnavailableError):
-            if exc.reason == "profile_rejected":
-                return None  # another device profile/cohort may still get a token
-            raise NetworkError(str(exc)) from None
-        raise PlayAPIError(str(exc), status_code=exc.status) from None
+    """Stop profile/cohort probes on token endpoint throttling or outages.
+
+    Direct auth 5xx/transport failures first get download_app's bounded
+    cooldown retries; direct 400/401/403 (revoked credentials) do not.
+    """
+    attempt = 1
+    while True:
+        try:
+            return fetch_token(**kwargs, raise_on_error=True)
+        except DirectAuthError as exc:
+            if exc.status == 429:
+                raise RateLimitedError(str(exc), retry_after=exc.retry_after) from None
+            if isinstance(exc, DispenserUnavailableError):
+                if exc.reason == "profile_rejected":
+                    return None  # another device profile/cohort may still get a token
+                raise NetworkError(str(exc)) from None
+            if exc.status in (400, 401, 403) or attempt >= _TOKEN_FETCH_ATTEMPTS:
+                raise PlayAPIError(str(exc), status_code=exc.status) from None
+        attempt += 1
+        time.sleep(_TOKEN_FETCH_COOLDOWN)
 
 
 def _resolve_version_string(
@@ -1452,7 +1466,7 @@ def _resolve_version_string(
             continue
         try:
             details = get_details(package, token, country=country, proxy=proxy)
-        except (RateLimitedError, NetworkError):
+        except (RateLimitedError, NetworkError, MalformedResponseError):
             raise  # more fresh tokens would only spend dispenser quota
         except PlayAPIError as exc:
             err.print(f"[dim]  attempt {attempt}: {exc}[/dim]")

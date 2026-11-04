@@ -170,6 +170,10 @@ class AppNotPurchasedError(PlayAPIError):
     """Raised when account has not acquired requested app."""
 
 
+class MalformedResponseError(PlayAPIError):
+    """Google Play returned an undecodable protobuf; another token won't help."""
+
+
 def _send(method: Any, *args: Any, **kwargs: Any) -> Any:
     """Call an httpx request function, wrapping transport failures."""
     # Messages name only the error type: request URLs may carry tokens.
@@ -192,11 +196,11 @@ def _send(method: Any, *args: Any, **kwargs: Any) -> Any:
 
 @contextmanager
 def _malformed_proto() -> Iterator[None]:
-    """Turn ProtoDecoder failures into PlayAPIError (usable as decorator)."""
+    """Turn ProtoDecoder failures into MalformedResponseError (usable as decorator)."""
     try:
         yield
     except (ValueError, EOFError) as exc:
-        raise PlayAPIError("Malformed protobuf response from Google Play.") from exc
+        raise MalformedResponseError("Malformed protobuf response from Google Play.") from exc
 
 
 class InvalidPackageError(GoopdlError, ValueError):
@@ -1056,7 +1060,7 @@ def search_apps(
 # ---------------------------------------------------------------------------
 
 _TOKEN_FETCH_ATTEMPTS = 3
-_TOKEN_FETCH_COOLDOWN = 5  # seconds — transient direct Google auth failures
+_TOKEN_FETCH_COOLDOWN = 5  # seconds — fixed-profile rejections, direct auth 5xx
 
 
 def _acquire_single_token(
@@ -1066,10 +1070,12 @@ def _acquire_single_token(
     dispenser_url: str | None,
     profile: str,
 ) -> dict | None:
-    """pick_pool_token(size=1), retrying transient direct Google auth failures.
+    """Acquire one token for a fixed *profile*, retrying with a cooldown.
 
-    Dispenser failures propagate immediately: a fixed profile cannot rotate,
-    and repeated requests cannot repair a throttled or unavailable endpoint.
+    A fixed profile cannot rotate, so dispenser rejections of it and direct
+    auth 5xx/transport failures share a _TOKEN_FETCH_ATTEMPTS budget. 429,
+    direct 400/401/403 and dispenser transport/5xx (already retried by
+    fetch_token) raise at once.
     """
     last_error: DirectAuthError | None = None
     for attempt in range(_TOKEN_FETCH_ATTEMPTS):
@@ -1083,8 +1089,12 @@ def _acquire_single_token(
                 size=1,
                 raise_on_error=True,
             )
-        except (PoolBusyError, DispenserUnavailableError):
+        except PoolBusyError:
             raise
+        except DispenserUnavailableError as exc:
+            if exc.reason != "profile_rejected":
+                raise
+            auth, last_error = None, exc
         except DirectAuthError as exc:
             if exc.status in (400, 401, 403, 429):
                 raise
@@ -1279,14 +1289,17 @@ def download_app(
     try:
         details, delivery = _fetch_latest_delivery(package, auth, country, proxy)
     except AuthExpiredError:
-        auth = replace_pool_token(
-            auth,
-            arch=arch,
-            country=country,
-            proxy=proxy,
-            dispenser_url=dispenser_url,
-            profile=chosen_profile,
-        )
+        try:
+            auth = replace_pool_token(
+                auth,
+                arch=arch,
+                country=country,
+                proxy=proxy,
+                dispenser_url=dispenser_url,
+                profile=chosen_profile,
+            )
+        except DispenserRateLimitedError as exc:
+            raise RateLimitedError(str(exc), retry_after=exc.retry_after) from exc
         if not auth:
             raise PlayAPIError("Token expired and replacement failed.") from None
         details, delivery = _fetch_latest_delivery(package, auth, country, proxy)
