@@ -2,6 +2,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from typer.testing import CliRunner
 
+from _envutil import isolated_env
 from goopdl import cli
 from goopdl.api import (
     AdditionalFile,
@@ -276,6 +278,11 @@ class RequireIntegrityTest(unittest.TestCase):
 
 
 class MultiArchManifestTest(unittest.TestCase):
+    def setUp(self):
+        environment = isolated_env()
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def test_manifest_covers_every_architecture(self):
         def delivery(split):
             return DeliveryResult(

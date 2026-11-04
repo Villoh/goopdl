@@ -97,13 +97,6 @@ def get_config_dir() -> Path:
     return Path.home() / ".config" / "goopdl"
 
 
-def __getattr__(name: str):
-    # _CONFIG_DIR used to be an import-time constant; keep it readable.
-    if name == "_CONFIG_DIR":
-        return get_config_dir()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
 # Library code only logs; the CLI attaches a handler. Never log secrets here.
 logger = logging.getLogger(__name__)
 
@@ -224,6 +217,32 @@ class DirectAuthConfigurationError(GoopdlError, ValueError):
 
 class DirectAuthError(GoopdlError, RuntimeError):
     """Direct Google authentication failed at a non-secret protocol stage."""
+
+
+# Dispenser errors subclass DirectAuthError, the token-acquisition failure
+# base: one ``except DirectAuthError`` covers fetch_token(raise_on_error=True).
+# They cannot subclass api.PlayAPIError (api imports auth); api.download_app
+# translates them into PlayAPIError/RateLimitedError for its callers.
+class DispenserRateLimitedError(DirectAuthError):
+    """The Aurora token dispenser answered HTTP 429."""
+
+    status = 429
+
+    def __init__(self, retry_after: Optional[float] = None):
+        super().__init__("Token dispenser rate limited token requests (HTTP 429).")
+        self.retry_after = retry_after
+
+
+class DispenserUnavailableError(DirectAuthError):
+    """No dispenser attempt yielded a token; *status* is the last HTTP error."""
+
+    def __init__(self, status: Optional[int] = None):
+        super().__init__(
+            f"Token dispenser unavailable (HTTP {status})."
+            if status
+            else "Token dispenser unavailable."
+        )
+        self.status = status
 
 
 def _direct_credentials() -> Optional[tuple[str, str]]:
@@ -539,13 +558,17 @@ def fetch_token(
     proxy: Optional[str] = None,
     country: Optional[str] = None,
     profile: Optional[str] = None,
+    raise_on_error: bool = False,
 ) -> Optional[dict]:
     """Obtain direct Google auth when configured, otherwise use the dispenser.
 
     Anonymous mode rotates through device profiles until one yields an authToken.
     When *country* is set, patches each profile's CellOperator/SimOperator
     with the matching MCC/MNC so the GSF registration is tied to that region.
-    Returns the full auth dict on success, None on failure.
+    Returns the full auth dict on success, None on failure. With
+    *raise_on_error*, failures raise instead: DispenserRateLimitedError (429),
+    DispenserUnavailableError (every attempt failed) or DirectAuthError (direct
+    mode). An unknown *profile* still returns None.
     """
     credentials = _direct_credentials()
     if credentials:
@@ -559,11 +582,17 @@ def fetch_token(
             )
         except DirectAuthError as exc:
             logger.error("Direct Google authentication failed at %s.", exc)
-            return None
+            error = DirectAuthError(str(exc))  # stage only; messages are safe
         except Exception:
             # No exc_info: tracebacks can carry credentials from request locals.
             logger.error("Direct Google authentication failed unexpectedly.")
-            return None
+            error = DirectAuthError("an unexpected stage")
+        # Raised outside the except blocks so neither __context__ nor the
+        # traceback reach _direct_auth's frames (locals hold the AAS token).
+        credentials = None
+        if raise_on_error:
+            raise error
+        return None
 
     url = dispenser_url or DEFAULT_DISPENSER_URL
     headers = {
@@ -583,6 +612,7 @@ def fetch_token(
     # ponytail: random start so single-profile callers don't always land on
     # the same region (index 0) and pile all their requests on one exit IP
     region_start = random.randrange(len(DISPENSER_PROXY_REGIONS))
+    last_status: Optional[int] = None
     for idx, (profile_name, profile_data) in enumerate(profiles):
         device = profile_data.get("UserReadableName", profile_name)
         payload = (
@@ -608,14 +638,25 @@ def fetch_token(
                 logger.warning(
                     "Dispenser returned HTTP %s for %s", resp.status_code, device
                 )
+                last_status = resp.status_code
                 if resp.status_code == 429:
+                    if raise_on_error:
+                        from goopdl.api import _parse_retry_after  # api imports auth
+
+                        raise DispenserRateLimitedError(
+                            _parse_retry_after(resp.headers)
+                        )
                     return None
+        except DispenserRateLimitedError:
+            raise
         except Exception as exc:
             logger.warning(
                 "Dispenser request failed for %s: %s", device, type(exc).__name__
             )
             continue
 
+    if raise_on_error:
+        raise DispenserUnavailableError(last_status)
     return None
 
 
@@ -823,6 +864,7 @@ def ensure_pool(
 def _ensure_pool_unlocked(
     arch: str, country: Optional[str], proxy: Optional[str],
     dispenser_url: Optional[str], profile: Optional[str], size: int,
+    raise_on_error: bool = False,
 ) -> list[dict]:
     pool = _load_pool_unlocked(arch, country, profile)
     deficit = size - len(pool)
@@ -834,13 +876,19 @@ def _ensure_pool_unlocked(
         )
         _save_pool(pool, arch, country, profile)
         for _ in range(deficit):
-            t = fetch_token(
-                dispenser_url=dispenser_url,
-                arch=arch,
-                proxy=proxy,
-                profile=profile,
-                country=country,
-            )
+            try:
+                t = fetch_token(
+                    dispenser_url=dispenser_url,
+                    arch=arch,
+                    proxy=proxy,
+                    profile=profile,
+                    country=country,
+                    raise_on_error=raise_on_error,
+                )
+            except DirectAuthError:
+                if pool:
+                    break  # a partial pool still serves the caller
+                raise
             if t is None:
                 break
             t.setdefault("_cached_at", time.time())
@@ -880,20 +928,26 @@ def pick_pool_token(
     dispenser_url: Optional[str] = None,
     profile: Optional[str] = None,
     size: int = DEFAULT_PROBES,
+    raise_on_error: bool = False,
 ) -> Optional[dict]:
     """Ensure the pool is full, then return the next token in round-robin order.
 
     Expired tokens are pruned and refetched by ensure_pool before picking.
     The round-robin index is persisted to disk so it survives across invocations.
+    *raise_on_error* raises fetch_token's typed errors when no token is left.
     """
     if direct_auth_enabled():
-        return fetch_token(arch=arch, country=country, proxy=proxy, profile=profile)
+        return fetch_token(
+            arch=arch, country=country, proxy=proxy, profile=profile,
+            raise_on_error=raise_on_error,
+        )
 
     with _pool_lock(arch, country, profile) as acquired:
         if acquired:
             try:
                 pool = _ensure_pool_unlocked(
-                    arch, country, proxy, dispenser_url, profile, size
+                    arch, country, proxy, dispenser_url, profile, size,
+                    raise_on_error,
                 )
                 if not pool:
                     return None
@@ -1062,3 +1116,26 @@ def build_headers(auth: dict, country: Optional[str] = None) -> dict[str, str]:
         headers["X-DFE-MCCMNC"] = device_info["mccMnc"]
 
     return headers
+
+
+def __getattr__(name: str):
+    # _CONFIG_DIR used to be an import-time constant; keep it readable.
+    if name == "_CONFIG_DIR":
+        return get_config_dir()
+    if name in ("Console", "console"):
+        import warnings
+
+        warnings.warn(
+            f"goopdl.auth.{name} is deprecated; use rich.console.Console directly.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from rich.console import Console
+
+        if name == "Console":
+            return Console
+        # Compatibility only: library internals never print through this console.
+        if "_compat_console" not in globals():
+            globals()["_compat_console"] = Console()
+        return globals()["_compat_console"]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

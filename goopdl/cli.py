@@ -9,6 +9,7 @@ import re
 import shlex
 import time
 from pathlib import Path
+from typing import NoReturn
 
 import httpx
 import typer
@@ -24,6 +25,7 @@ from goopdl.api import (
     AppNotSupportedError,
     AuthExpiredError,
     InvalidPackageError,
+    NetworkError,
     PlayAPIError,
     RateLimitedError,
     VersionUnavailableError,
@@ -43,6 +45,9 @@ from goopdl.api import (
 from goopdl.auth import (
     DEFAULT_PROBES,
     DirectAuthConfigurationError,
+    DirectAuthError,
+    DispenserRateLimitedError,
+    DispenserUnavailableError,
     clear_auth,
     direct_auth_enabled,
     ensure_pool,
@@ -217,14 +222,18 @@ def auth(
         if direct
         else "Rotating through device profiles..."
     )
-    with console.status(status):
-        data = fetch_token(
-            dispenser_url=dispenser,
-            arch=arch,
-            country=country,
-            proxy=proxy,
-            profile=profile,
-        )
+    try:
+        with console.status(status):
+            data = fetch_token(
+                dispenser_url=dispenser,
+                arch=arch,
+                country=country,
+                proxy=proxy,
+                profile=profile,
+                raise_on_error=True,
+            )
+    except DirectAuthError as exc:
+        _exit_token_error(exc)
 
     if not data:
         message = (
@@ -446,9 +455,13 @@ def latest(
             tokens[i] = new_token
             try:
                 details = get_details(package, new_token, country=country, proxy=proxy)
+            except (RateLimitedError, NetworkError) as exc:
+                _exit_transient_play_error(exc)
             except PlayAPIError as exc:
                 err.print(f"[dim]  probe {i + 1}: retry failed: {exc}[/dim]")
                 continue
+        except (RateLimitedError, NetworkError) as exc:
+            _exit_transient_play_error(exc)
         except PlayAPIError as exc:
             err.print(f"[dim]  probe {i + 1}: {gsf_prefix}... error: {exc}[/dim]")
             continue
@@ -792,8 +805,8 @@ def _acquire_delivery(
                 continue
             try:
                 return flow(retry_auth)
-            except RateLimitedError:
-                raise
+            except (RateLimitedError, NetworkError):
+                raise  # another profile would hit the same throttle/outage
             except PlayAPIError:
                 continue
         return None
@@ -998,13 +1011,17 @@ def _download_arch(
     require_integrity: bool,
 ) -> list[DownloadSpec]:
     """Download one architecture's files and return their specs."""
-    auth_data = pick_pool_token(
-        arch=arch,
-        country=country,
-        proxy=proxy,
-        dispenser_url=dispenser,
-        profile=profile,
-    )
+    try:
+        auth_data = pick_pool_token(
+            arch=arch,
+            country=country,
+            proxy=proxy,
+            dispenser_url=dispenser,
+            profile=profile,
+            raise_on_error=True,
+        )
+    except DirectAuthError as exc:
+        _exit_token_error(exc)
     if not auth_data:
         message = (
             "Direct Google authentication failed."
@@ -1032,6 +1049,8 @@ def _download_arch(
             except VersionUnavailableError as exc:
                 err.print(f"[red]{exc}[/red]")
                 raise typer.Exit(code=VERSION_UNAVAILABLE_EXIT_CODE) from None
+            except RateLimitedError as exc:
+                _exit_transient_play_error(exc)
             except PlayAPIError as exc:
                 err.print(f"[red]{exc}[/red]")
                 raise typer.Exit(code=1) from None
@@ -1254,7 +1273,9 @@ def fast_download(
     except (IntegrityError, DownloadError) as exc:
         err.print(str(exc), style="red", markup=False)
         raise typer.Exit(code=1) from None
-    except RateLimitedError:
+    except RateLimitedError as exc:
+        if isinstance(exc.__cause__, DispenserRateLimitedError):
+            _exit_token_error(exc.__cause__)
         err.print(
             "[red]Google Play rate limited delivery requests (HTTP 429); "
             "retry later.[/red]"
@@ -1273,6 +1294,30 @@ def fast_download(
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
+
+
+def _exit_transient_play_error(exc: PlayAPIError) -> NoReturn:
+    """Exit on Google Play throttling (code 5) or a network failure (code 1)."""
+    if isinstance(exc, RateLimitedError):
+        err.print("[red]Google Play rate limited requests (HTTP 429); retry later.[/red]")
+        raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
+    err.print(f"[red]{exc}[/red]")
+    raise typer.Exit(code=1) from None
+
+
+def _exit_token_error(exc: DirectAuthError) -> NoReturn:
+    """Exit telling dispenser throttling (code 5) apart from an outage (code 3)."""
+    if isinstance(exc, DispenserRateLimitedError):
+        err.print(
+            "[red]Token dispenser rate limited token requests (HTTP 429); "
+            "retry later.[/red]"
+        )
+        raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
+    if isinstance(exc, DispenserUnavailableError):
+        err.print(f"[red]{exc} It may be down; retry later.[/red]")
+    else:
+        err.print("[red]Direct Google authentication failed.[/red]")
+    raise typer.Exit(code=AUTH_UNAVAILABLE_EXIT_CODE) from None
 
 
 def _device_label(auth_data: dict) -> str:
@@ -1342,6 +1387,8 @@ def _resolve_version_string(
             continue
         try:
             details = get_details(package, token, country=country, proxy=proxy)
+        except (RateLimitedError, NetworkError):
+            raise  # more fresh tokens would only spend dispenser quota
         except PlayAPIError as exc:
             err.print(f"[dim]  attempt {attempt}: {exc}[/dim]")
             time.sleep(1)

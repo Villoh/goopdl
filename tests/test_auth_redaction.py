@@ -1,10 +1,17 @@
 import unittest
 from unittest.mock import Mock, patch
 
+from _envutil import isolated_env
 from goopdl.auth import fetch_token
 
 
 class FetchTokenRedactionTest(unittest.TestCase):
+    def setUp(self) -> None:
+        # Direct-auth env vars would divert fetch_token away from the dispenser.
+        patcher = isolated_env()
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     @patch("goopdl.auth.get_priority_profiles")
     @patch("goopdl.auth.httpx.post")
     @patch("goopdl.auth.logger")
