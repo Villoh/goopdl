@@ -20,6 +20,8 @@ import re
 import tempfile
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator, Optional
 from urllib.parse import urlparse, urlunparse
@@ -75,13 +77,41 @@ DISPENSER_PROXY_REGIONS = [
     "KE",
 ]
 
+@dataclass(frozen=True)
+class _Scope:
+    """Per-context overrides set by goopdl.client.Client (see _use_scope)."""
+
+    config_dir: Optional[Path] = None
+    credentials: Optional[tuple[str, str]] = field(default=None, repr=False)
+    # True: *credentials* (None = anonymous) replace the GOOPDL_* variables.
+    explicit_credentials: bool = False
+
+
+# A ContextVar, not a global: each thread and asyncio task sees its own scope.
+_scope: ContextVar[Optional[_Scope]] = ContextVar("goopdl_scope", default=None)
+
+
+@contextmanager
+def _use_scope(scope: _Scope) -> Iterator[None]:
+    """Apply *scope* to get_config_dir/_direct_credentials in this context."""
+    token = _scope.set(scope)
+    try:
+        yield
+    finally:
+        _scope.reset(token)
+
+
 def get_config_dir() -> Path:
     """Resolve the credential cache directory on use, never at import time.
 
-    Order: GOOPDL_CONFIG_DIR, $XDG_CONFIG_HOME/goopdl, ~/.config/goopdl.
+    Order: a Client's config_dir, GOOPDL_CONFIG_DIR,
+    $XDG_CONFIG_HOME/goopdl, ~/.config/goopdl.
     GOOPDL_CONFIG_DIR is ``~``-expanded; like XDG_CONFIG_HOME, a relative
     value is ignored (with a warning) so it never lands in the CWD.
     """
+    scope = _scope.get()
+    if scope is not None and scope.config_dir is not None:
+        return scope.config_dir
     # Tests and embedders may still set or patch auth._CONFIG_DIR directly.
     override = globals().get("_CONFIG_DIR")
     if override is not None:
@@ -268,8 +298,22 @@ class DispenserUnavailableError(DirectAuthError):
 
 
 def _direct_credentials() -> Optional[tuple[str, str]]:
-    email = os.environ.get("GOOPDL_ACCOUNT_EMAIL", "").strip()
-    aas_token = os.environ.get("GOOPDL_AAS_TOKEN", "").strip()
+    scope = _scope.get()
+    if scope is not None and scope.explicit_credentials:
+        return scope.credentials  # never falls back to os.environ
+    return _env_credentials()
+
+
+def _env_credentials() -> Optional[tuple[str, str]]:
+    return _checked_credentials(
+        os.environ.get("GOOPDL_ACCOUNT_EMAIL", ""),
+        os.environ.get("GOOPDL_AAS_TOKEN", ""),
+    )
+
+
+def _checked_credentials(email: str, aas_token: str) -> Optional[tuple[str, str]]:
+    """Strip and validate; None when both are empty. Messages carry no secrets."""
+    email, aas_token = email.strip(), aas_token.strip()
     if not email and not aas_token:
         return None
     message = None
