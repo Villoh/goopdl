@@ -1055,7 +1055,9 @@ def _find_docv2(data: bytes, depth: int = 0, max_depth: int = 10) -> list[dict]:
 
     f1_str = _first_string(fields, 1)
     f5_str = _first_string(fields, 5)
-    if f1_str and "." in f1_str and " " not in f1_str and f5_str:
+    # Field 1 can also be a nested message (a Play Pass banner, say) that decodes
+    # as text with a dot in it, so require a real package name, not just a dot.
+    if f1_str and _PACKAGE_RE.fullmatch(f1_str) and f5_str:
         return [
             {"package": f1_str, "title": f5_str, "creator": _first_string(fields, 6)}
         ]
