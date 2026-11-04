@@ -222,19 +222,25 @@ class RestoreTest(ScopeTestCase):
         self.assertIsNone(current_scope())
 
     def test_cancellation_inside_one_context_resets_it(self) -> None:
+        after = []
+
         async def main():
             async def scoped():
-                with scope(self.tmp / "a"):
-                    await asyncio.sleep(10)
+                try:
+                    with scope(self.tmp / "a"):
+                        await asyncio.sleep(10)
+                finally:
+                    # The task's own context was reset by the with-block, too.
+                    after.append(current_scope())
 
             inner = asyncio.ensure_future(scoped())
             await asyncio.sleep(0)
             inner.cancel()
             await asyncio.gather(inner, return_exceptions=True)
-            # The task's own context was reset by the with-block, too.
-            return inner.get_context().run(current_scope)
+            return inner.cancelled()
 
-        self.assertIsNone(asyncio.run(main()))
+        self.assertTrue(asyncio.run(main()))
+        self.assertEqual([None], after)
 
 
 if __name__ == "__main__":
