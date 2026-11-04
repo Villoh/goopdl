@@ -171,5 +171,178 @@ class DirectTocRateLimitTest(unittest.TestCase):
         self.assertEqual(raised.exception.retry_after, 60.0)
 
 
+SECRETS = (
+    "pool-sentinel", "dtok-sentinel", "sig-sentinel", "cookie-sentinel",
+    "email-sentinel", "aas-sentinel", "proxy-sentinel",
+)
+PROXY = "http://user:proxy-sentinel@localhost:8080"
+POOL_TOKEN = {"authToken": "pool-sentinel", "gsfId": "1", "_device_profile": PIXEL}
+
+
+@patch.dict(os.environ, {}, clear=True)
+@patch("time.sleep")
+class PublicEntrySecretFramesTest(unittest.TestCase):
+    def capture(self, call) -> BaseException:
+        try:
+            call()
+        except Exception as exc:  # noqa: BLE001 -- inspect the failure graph
+            return exc
+        raise AssertionError("expected an exception")
+
+    def assert_clean(self, error: BaseException, *, caller_auth: bool = False) -> None:
+        seen: set[int] = set()
+        pending: list[BaseException | None] = [error]
+        while pending:
+            exc = pending.pop()
+            if exc is None or id(exc) in seen:
+                continue
+            seen.add(id(exc))
+            for secret in SECRETS:
+                self.assertNotIn(secret, f"{exc} {exc!r}")
+            tb = exc.__traceback__
+            while tb is not None:
+                frame = tb.tb_frame
+                if frame.f_code.co_name != "capture":
+                    for name, value in frame.f_locals.items():
+                        if caller_auth and name == "auth":
+                            continue  # the caller's own dict is accepted
+                        text = f"{value!s} {value!r}"
+                        if isinstance(value, httpx.Response):
+                            # repr hides it, but the request URL keeps the dtok.
+                            text += f" {value.request.url} {value.request.headers}"
+                        for secret in SECRETS:
+                            self.assertNotIn(secret, text, (frame.f_code.co_name, name))
+                tb = tb.tb_next
+            pending.extend((exc.__cause__, exc.__context__))
+
+    def test_download_app_failures(self, _sleep) -> None:
+        from goopdl import api
+        from goopdl.download import DownloadError
+
+        delivery = api.DeliveryResult(
+            version_code=1,
+            download_url="https://play.googleapis.com/x?sig-sentinel",
+            cookies=[{"name": "c", "value": "cookie-sentinel"}],
+            sha256="0" * 64,
+        )
+        details = api.AppDetails(package="com.example.pkg", version_code=1)
+        cases = {
+            "cdn": {
+                "fetch": patch.object(
+                    api, "_fetch_latest_delivery", return_value=(details, delivery)
+                ),
+                "batch": patch.object(
+                    api, "download_batch", side_effect=DownloadError("cdn failed")
+                ),
+            },
+            "network": {
+                "fetch": patch("httpx.get", side_effect=httpx.ConnectError("x")),
+                "batch": patch.object(api, "download_batch"),
+            },
+        }
+        out = Path(tempfile.mkdtemp())
+        for name, mocks in cases.items():
+            with (
+                self.subTest(name),
+                patch.object(api, "pick_pool_token", return_value=dict(POOL_TOKEN)),
+                mocks["fetch"],
+                mocks["batch"],
+            ):
+                error = self.capture(
+                    lambda: api.download_app(
+                        "com.example.pkg", out, proxy=PROXY, profile=PIXEL
+                    )
+                )
+                self.assertIsInstance(error, api.PlayAPIError if name == "network" else DownloadError)
+                self.assert_clean(error)
+
+    def test_download_app_dispenser_429_keeps_a_clean_cause(self, _sleep) -> None:
+        from goopdl import api
+
+        def throttled(**kwargs):
+            raise auth.DispenserRateLimitedError(60)
+
+        with patch.object(api, "pick_pool_token", side_effect=throttled):
+            error = self.capture(
+                lambda: api.download_app("com.example.pkg", Path("x"), proxy=PROXY, profile=PIXEL)
+            )
+        assert isinstance(error, api.RateLimitedError)
+        self.assertEqual(error.retry_after, 60)
+        self.assertIsInstance(error.__cause__, auth.DispenserRateLimitedError)
+        self.assert_clean(error)
+
+    def test_download_app_lets_keyboard_interrupt_through(self, _sleep) -> None:
+        from goopdl import api
+
+        interrupt = KeyboardInterrupt()
+        with patch.object(api, "pick_pool_token", side_effect=interrupt):
+            try:
+                api.download_app("com.example.pkg", Path("x"), profile=PIXEL)
+            except KeyboardInterrupt as exc:
+                raised = exc
+            else:
+                self.fail("KeyboardInterrupt was swallowed")
+        self.assertIs(raised, interrupt)
+        # Untouched: the traceback still reaches the raising mock.
+        names = []
+        tb = raised.__traceback__
+        while tb is not None:
+            names.append(tb.tb_frame.f_code.co_name)
+            tb = tb.tb_next
+        self.assertIn("_acquire_single_token", names)
+
+    def test_fetch_app_item_failures(self, _sleep) -> None:
+        from goopdl import api
+
+        for name, get in (
+            ("network", {"side_effect": httpx.ConnectError("x")}),
+            ("server", {"return_value": httpx.Response(500)}),
+        ):
+            with (
+                self.subTest(name),
+                patch.object(api, "pick_pool_token", return_value=dict(POOL_TOKEN)),
+                patch("httpx.get", **get),
+            ):
+                error = self.capture(
+                    lambda: api.fetch_app_item("com.example.pkg", proxy=PROXY, profile=PIXEL)
+                )
+                self.assertIsInstance(error, api.PlayAPIError)
+                self.assert_clean(error)
+
+    def test_get_delivery_drops_the_dtok_response(self, _sleep) -> None:
+        from goopdl import api
+
+        def respond(status):
+            def get(url, params=None, **kwargs):
+                request = httpx.Request("GET", url, params=params)
+                return httpx.Response(
+                    status, headers={"Retry-After": "9999"}, request=request
+                )
+            return get
+
+        for status in (401, 404, 429, 500, 200):
+            with self.subTest(status=status), patch("httpx.get", side_effect=respond(status)):
+                error = self.capture(
+                    lambda: api.get_delivery(
+                        "com.example.pkg", 1, dict(POOL_TOKEN), proxy=PROXY,
+                        delivery_token="dtok-sentinel",
+                    )
+                )
+                self.assertIsInstance(error, api.PlayAPIError)
+                self.assert_clean(error, caller_auth=True)
+
+    def test_malformed_direct_credentials(self, _sleep) -> None:
+        for env in (
+            {"GOOPDL_ACCOUNT_EMAIL": "email-sentinel@x", "GOOPDL_AAS_TOKEN": "g.aas-sentinel"},
+            {"GOOPDL_AAS_TOKEN": "aas_et/aas-sentinel"},
+            {"GOOPDL_ACCOUNT_EMAIL": "email-sentinel@x"},
+        ):
+            for entry in (auth.ensure_pool, auth.pick_pool_token):
+                with self.subTest(env=sorted(env), entry=entry.__name__), patch.dict(os.environ, env):
+                    error = self.capture(entry)
+                    self.assertIsInstance(error, auth.DirectAuthConfigurationError)
+                    self.assert_clean(error)
+
+
 if __name__ == "__main__":
     unittest.main()
