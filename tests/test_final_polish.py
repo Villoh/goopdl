@@ -122,5 +122,54 @@ class DispenserLogDeviceTest(unittest.TestCase):
                 self.assertNotIn("pass", " ".join(messages))
 
 
+def _direct_responses():
+    checkin = httpx.Response(
+        200, content=auth._proto_varint(7, 1234) + auth._proto_bytes(12, "consistency")
+    )
+    upload = httpx.Response(
+        200,
+        content=auth._proto_bytes(
+            1, auth._proto_bytes(28, auth._proto_bytes(1, "config"))
+        ),
+    )
+    return checkin, upload, httpx.Response(200, text="Auth=bearer-secret\n")
+
+
+@patch.dict(os.environ, {}, clear=True)
+class DirectTocRateLimitTest(unittest.TestCase):
+    def _direct_auth(self):
+        return auth._direct_auth(
+            "email@example.test", "aas_et/aas-secret", "arm64", None, None, "Pv"
+        )
+
+    def test_toc_429_keeps_the_bundle_without_dfe_cookie(self) -> None:
+        limited = httpx.Response(429, headers={"Retry-After": "60"})
+        with (
+            patch("goopdl.auth.httpx.post", side_effect=_direct_responses()),
+            patch("goopdl.auth.httpx.get", return_value=limited),
+            self.assertLogs("goopdl.auth", level="WARNING") as logs,
+        ):
+            bundle = self._direct_auth()
+        assert bundle is not None
+        self.assertEqual(bundle["authToken"], "bearer-secret")
+        self.assertEqual(bundle["dfeCookie"], "")
+        text = " ".join(logs.output)
+        self.assertIn("toc", text)
+        for secret in ("bearer-secret", "aas-secret", "email@"):
+            self.assertNotIn(secret, text)
+
+    def test_checkin_429_still_aborts_with_retry_after(self) -> None:
+        limited = httpx.Response(429, headers={"Retry-After": "60"})
+        with (
+            patch("goopdl.auth.httpx.post", return_value=limited),
+            patch("goopdl.auth.httpx.get", side_effect=AssertionError("toc")),
+            self.assertRaises(auth.DirectAuthError) as raised,
+        ):
+            self._direct_auth()
+        self.assertEqual(raised.exception.status, 429)
+        self.assertEqual(raised.exception.stage, "checkin")
+        self.assertEqual(raised.exception.retry_after, 60.0)
+
+
 if __name__ == "__main__":
     unittest.main()

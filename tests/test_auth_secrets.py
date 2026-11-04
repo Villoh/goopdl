@@ -118,7 +118,8 @@ class AuthSecretsTest(unittest.TestCase):
         )
         exchange = httpx.Response(200, text="Auth=bearer-sentinel\n")
         for index, stage in enumerate(
-            ("checkin", "device config upload", "token exchange", "toc")
+            # toc is optional: its 429 keeps the token (test_final_polish).
+            ("checkin", "device config upload", "token exchange")
         ):
             success = [checkin, upload, exchange]
             limited = httpx.Response(429, headers={"Retry-After": "120"})
