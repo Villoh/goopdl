@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
+import httpx
+
 from goopdl import api, auth
 from goopdl.api import (
     AppDetails,
@@ -397,3 +399,44 @@ class Client:
                         dispenser_url=dispenser_url)
         return _run(cfg, _download, package, output, splits, extras, on_progress,
                     max_concurrent)
+
+    async def adownload(
+        self, package: str, output: Path | str, *, splits: bool = False,
+        extras: bool = False, on_progress: ProgressCallback | None = None,
+        max_concurrent: int = MAX_CONCURRENT,
+        http_client: httpx.AsyncClient | None = None, country: str | None = None,
+        proxy: str | None = None, arch: str | None = None,
+        profile: str | None = None, dispenser_url: str | None = None,
+    ) -> DownloadResult:
+        """Async download(): blocking steps in a worker thread, files natively.
+
+        *http_client* is used for the CDN downloads and never closed.
+        """
+        cfg = self._cfg(country=country, proxy=proxy, arch=arch, profile=profile,
+                        dispenser_url=dispenser_url)
+        failure = None
+        try:
+            return await _adownload(
+                cfg, package, output, splits, extras, on_progress, max_concurrent,
+                http_client,
+            )
+        except BaseException as exc:
+            failure = _detached(exc)
+        finally:
+            cfg = None  # type: ignore[assignment]
+        raise failure from failure.__cause__
+
+
+async def _adownload(
+    cfg: Config, package: str, output: Path | str, splits: bool, extras: bool,
+    on_progress: ProgressCallback | None, max_concurrent: int,
+    http_client: httpx.AsyncClient | None,
+) -> DownloadResult:
+    specs, version_string = await asyncio.to_thread(
+        _run, cfg, _prepare, package, output, splits, extras
+    )
+    await download_files(
+        specs, on_progress=on_progress, max_concurrent=max_concurrent,
+        client=http_client,
+    )
+    return _result(specs, version_string)

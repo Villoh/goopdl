@@ -398,6 +398,87 @@ class MultiTenantTest(ClientTestCase):
 
         self.check(asyncio.run(main()))
 
+    def test_concurrent_adownloads(self):
+        clients = self.tenants()
+
+        async def main():
+            return await asyncio.gather(
+                *(c.adownload(PKG, self.tmp / "out" / str(i)) for i, c in enumerate(clients))
+            )
+
+        results = asyncio.run(main())
+        for result in results:
+            self.assertEqual(FILES["/dl/base"], result.path.read_bytes())
+        delivery_bearers = sorted(b.rsplit("-", 1)[0] if b.startswith("anon-") else b
+                                  for b in self.fake.bearers("delivery"))
+        self.assertEqual(["anon-c.invalid", "anon-d.invalid",
+                          "bearer-a@x.test", "bearer-b@x.test"], delivery_bearers)
+        for i in range(len(clients)):
+            self.assertEqual(f"{PKG}-{VC}.apk", results[i].path.name)
+            self.assertEqual(self.tmp / "out" / str(i), results[i].path.parent)
+        self.assert_no_scope()
+
+
+class AsyncDownloadTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.fake = FakePlay()
+        for patcher in (
+            isolated_env({"GOOPDL_CONFIG_DIR": str(self.tmp / "env")}),
+            patch.object(socket.socket, "connect", no_sockets),
+            patch("httpx.post", side_effect=lambda *a, **k: self.fake.post(*a, **k)),
+            patch("httpx.get", side_effect=lambda *a, **k: self.fake.get(*a, **k)),
+            patch("time.sleep"),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.client = Client(config_dir=self.tmp / "c", profile="Pv")
+
+    async def test_injected_client_progress_and_result(self):
+        events = []
+        async with REAL_ASYNC_CLIENT(transport=self.fake.transport()) as http:
+            result = await self.client.adownload(
+                PKG, self.tmp / "out", splits=True, http_client=http,
+                on_progress=lambda *e: events.append(e), max_concurrent=1,
+            )
+            self.assertFalse(http.is_closed)
+        self.assertEqual([f"{PKG}-{VC}.apk", f"{PKG}-{VC}-config.en.apk"],
+                         [p.name for p in result.files])
+        self.assertEqual("4.2", result.version_string)
+        self.assertEqual(FILES["/dl/split"], result.files[1].read_bytes())
+        labels = {label for label, _, _ in events}
+        self.assertEqual({p.name for p in result.files}, labels)
+        self.assertIn((f"{PKG}-{VC}.apk", len(FILES["/dl/base"]), len(FILES["/dl/base"])),
+                      events)
+        self.assertIsNone(auth._scope.get())
+
+    async def test_cancellation_leaves_no_part_files(self):
+        self.fake.hang = asyncio.Event()
+        started = asyncio.Event()
+        out = self.tmp / "out"
+        async with REAL_ASYNC_CLIENT(transport=self.fake.transport()) as http:
+            task = asyncio.create_task(self.client.adownload(
+                PKG, out, http_client=http,
+                on_progress=lambda _l, done, _t: done and started.set(),
+            ))
+            await asyncio.wait_for(started.wait(), 10)
+            self.assertTrue(list(out.glob("*.part")))
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            self.assertFalse(http.is_closed)
+        self.assertEqual([], list(out.iterdir()))
+        self.assertIsNone(auth._scope.get())
+
+    async def test_errors_propagate_from_the_worker_thread(self):
+        self.fake.faults["dispenser"] = [httpx.Response(429, headers={"Retry-After": "30"})]
+        with self.assertRaises(RateLimitedError) as raised:
+            await self.client.adownload(PKG, self.tmp / "out")
+        self.assertEqual(30.0, raised.exception.retry_after)
+        self.assertIsInstance(raised.exception.__cause__, DispenserRateLimitedError)
+        with self.assertRaises(InvalidPackageError):
+            await self.client.adownload("nodots", self.tmp / "out")
+
 
 class ErrorsTest(ClientTestCase):
     def client(self, **kw):
@@ -547,6 +628,15 @@ class SecretFramesTest(ClientTestCase):
         self.assertIsInstance(error, DownloadError)
         self.assert_clean(error)
 
+        error = self.capture(lambda: asyncio.run(self.client.adownload(PKG, self.tmp / "o")))
+        self.assertIsInstance(error, DownloadError)
+        self.assert_clean(error)
+
+    def test_adownload_sign_in_failure(self):
+        self.fake.faults["auth"] = [httpx.Response(403, text="Error=BadAuthentication\n")]
+        error = self.capture(lambda: asyncio.run(self.client.adownload(PKG, self.tmp / "o")))
+        self.assertIsInstance(error, PlayAPIError)
+        self.assert_clean(error)
 
 
 if __name__ == "__main__":
