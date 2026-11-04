@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["markdown-it-py>=4,<5"]
+# dependencies = ["markdown-it-py>=4,<5", "pygments>=2.17,<3"]
 # ///
 """Build the static site into _site/: English at /, Spanish at /es/, docs prerendered from docs/*.md.
 
@@ -26,6 +26,10 @@ from urllib.parse import unquote, urljoin, urlsplit
 
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
+from pygments import highlight
+from pygments.formatters import HtmlFormatter
+from pygments.lexers import get_lexer_by_name
+from pygments.util import ClassNotFound
 
 SRC = Path(__file__).resolve().parent
 REPO = SRC.parent
@@ -114,11 +118,21 @@ def highlight_shell(code: str) -> str:
     return "\n".join(lines)
 
 
+def highlight_code(code: str, lang: str) -> str:
+    """Pygments spans (class prefix `tk-`, colored in style.css); unknown languages stay escaped text."""
+    try:
+        lexer = get_lexer_by_name(lang, stripnl=False, ensurenl=False)
+    except ClassNotFound:
+        return esc(code)
+    # Pygments ends the output with a newline; drop it so the block has no blank last line.
+    return highlight(code, lexer, HtmlFormatter(nowrap=True, classprefix="tk-")).removesuffix("\n")
+
+
 def render_fence(self, tokens, idx, options, env) -> str:
     tok = tokens[idx]
     lang = tok.info.strip().split(" ")[0]
     code = tok.content.rstrip("\n")
-    body = highlight_shell(code) if lang in SHELL_LANGS else esc(code)
+    body = highlight_shell(code) if lang in SHELL_LANGS else highlight_code(code, lang) if lang else esc(code)
     cls = f' class="language-{esc(lang)}"' if lang else ""
     # The bar sits above the scrolling <pre>, so the button never covers code and doesn't scroll with it.
     button = f'<button type="button" class="copy-code" aria-label="{env["copy"]}" title="{env["copy"]}">{COPY_ICONS}</button>'
