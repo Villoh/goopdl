@@ -650,6 +650,8 @@ _GOOGLE_CDN_SUFFIXES = (
     ".googleapis.com",
     ".ggpht.com",
     ".googleusercontent.com",
+    # play.googleapis.com/download/by-token 302s here (e.g. rr4---sn-xxxx.gvt1.com)
+    ".gvt1.com",
 )
 _DELIVERY_RETRIES = 2
 _DELIVERY_BACKOFF = (1.0, 3.0)
