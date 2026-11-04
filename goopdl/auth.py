@@ -12,12 +12,14 @@ again; move the files or set GOOPDL_CONFIG_DIR=~/.config/goopdl to keep them.
 from __future__ import annotations
 
 import errno
+import hashlib
 import json
 import logging
 import os
 import random
 import re
 import tempfile
+import threading
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -196,10 +198,25 @@ def load_cached_auth(
 
 
 def clear_auth() -> None:
-    """Remove cached credentials and indexes, preserving stable lock sidecars."""
+    """Remove cached credentials and indexes, preserving stable lock sidecars.
+
+    Also forgets the in-memory account-mode sessions of this config directory.
+    """
+    _clear_cached(None)
+
+
+def _clear_cached(email: Optional[str]) -> None:
+    """clear_auth; with *email*, forget only that account's sessions."""
+    directory = get_config_dir()
     for pattern in ("auth-*.json", "token-pool-*.json", "pool-index-*.json"):
-        for f in get_config_dir().glob(pattern):
+        for f in directory.glob(pattern):
             f.unlink(missing_ok=True)
+    acct = _account_hash(email) if email else None
+    with _direct_guard:
+        for store in (_direct_sessions, _direct_devices):
+            for key in list(store):
+                if key[0] == str(directory) and acct in (None, key[1]):
+                    store.pop(key, None)
 
 
 def _build_httpx_proxy(proxy: Optional[str | httpx.Proxy]) -> Optional[httpx.Proxy]:
@@ -486,7 +503,17 @@ def _direct_auth(
 ) -> Optional[dict]:
     """Credential boundary for embedders as well as fetch_token callers."""
     try:
-        return _direct_auth_impl(email, aas_token, arch, country, proxy, profile_name)
+        return _direct_step(
+            _direct_auth_impl, email, aas_token, arch, country, proxy, profile_name
+        )
+    finally:
+        del email, aas_token, proxy
+
+
+def _direct_step(step, *args):
+    """Run a direct auth protocol step; only a rebuilt DirectAuthError escapes."""
+    try:
+        return step(*args)
     except DirectAuthError as exc:
         error = DirectAuthError(
             str(exc), stage=exc.stage, status=exc.status, retry_after=exc.retry_after
@@ -497,7 +524,7 @@ def _direct_auth(
         error = DirectAuthError("an unexpected stage")
     finally:
         # Only this thin frame survives; all protocol tokens/cookies live inside.
-        del email, aas_token, proxy
+        del args
     raise error
 
 
@@ -521,21 +548,52 @@ def _direct_auth_impl(
     proxy: Optional[str],
     profile_name: Optional[str],
 ) -> Optional[dict]:
+    selected = _direct_profile(arch, profile_name)
+    if not selected:
+        return None
+    device = _register_device(selected, country, proxy)
+    return _exchange(email, aas_token, device, selected, country, proxy)[0]
+
+
+def _direct_profile(arch: str, profile_name: Optional[str]) -> Optional[tuple[str, dict]]:
+    """The profile account mode signs in with; None for an unknown name."""
     if profile_name:
-        selected = find_profile(profile_name, arch)
-        if not selected:
-            return None
-    else:
-        profiles = get_priority_profiles(arch) or [("fallback", FALLBACK_PROFILE)]
-        selected = profiles[0]
+        return find_profile(profile_name, arch)
+    return (get_priority_profiles(arch) or [("fallback", FALLBACK_PROFILE)])[0]
+
+
+def _device_context(
+    selected: tuple[str, dict], country: Optional[str]
+) -> tuple[dict, str]:
     profile = patch_profile_country(selected[1], country) if country else selected[1]
     locale = (
         _COUNTRY_LOCALE.get(country.upper(), f"en_{country.upper()}")
         if country
         else "en_US"
     )
+    return profile, locale
+
+
+def _session_bundle(device: dict, profile: dict, bearer: str) -> dict:
+    return {
+        "authToken": bearer,
+        "gsfId": device["gsfId"],
+        "deviceCheckInConsistencyToken": device["deviceCheckInConsistencyToken"],
+        "deviceConfigToken": device["deviceConfigToken"],
+        "dfeCookie": "",
+        "deviceInfoProvider": {
+            "userAgentString": _finsky_user_agent(profile),
+            "mccMnc": profile.get("SimOperator", ""),
+        },
+    }
+
+
+def _register_device(
+    selected: tuple[str, dict], country: Optional[str], proxy: Optional[str]
+) -> dict:
+    """checkin + uploadDeviceConfig: a new device (gsfId) for the account."""
+    profile, locale = _device_context(selected, country)
     auth_user_agent = _google_auth_user_agent(profile)
-    user_agent = _finsky_user_agent(profile)
     device_config = _device_configuration(profile)
     httpx_proxy = _build_httpx_proxy(proxy)
 
@@ -560,20 +618,12 @@ def _direct_auth_impl(
         raise DirectAuthError("checkin response") from exc
     if not isinstance(android_id, int):
         raise DirectAuthError("checkin response")
-    gsf_id = format(android_id, "x")
-
-    partial = {
-        "authToken": "",
-        "gsfId": gsf_id,
+    device = {
+        "gsfId": format(android_id, "x"),
         "deviceCheckInConsistencyToken": consistency_token,
         "deviceConfigToken": "",
-        "dfeCookie": "",
-        "deviceInfoProvider": {
-            "userAgentString": user_agent,
-            "mccMnc": profile.get("SimOperator", ""),
-        },
     }
-    upload_headers = build_headers(partial, country=country)
+    upload_headers = build_headers(_session_bundle(device, profile, ""), country=country)
     upload_headers.pop("Authorization")
     upload_headers["Content-Type"] = "application/x-protobuf"
     upload = httpx.post(
@@ -586,10 +636,21 @@ def _direct_auth_impl(
     if upload.status_code != 200:
         raise _direct_http_error("device config upload", upload)
     try:
-        config_token = _response_string(upload.content, 1, 28, 1)
+        device["deviceConfigToken"] = _response_string(upload.content, 1, 28, 1)
     except (EOFError, UnicodeDecodeError, ValueError) as exc:
         raise DirectAuthError("device config response") from exc
+    return device
 
+
+def _exchange(
+    email: str, aas_token: str, device: dict, selected: tuple[str, dict],
+    country: Optional[str], proxy: Optional[str],
+) -> tuple[dict, float]:
+    """/auth + toc for *device*: (bundle, seconds the bearer may be reused)."""
+    profile, locale = _device_context(selected, country)
+    auth_user_agent = _google_auth_user_agent(profile)
+    httpx_proxy = _build_httpx_proxy(proxy)
+    gsf_id = device["gsfId"]
     auth_response = httpx.post(
         "https://android.clients.google.com/auth",
         data={
@@ -632,12 +693,16 @@ def _direct_auth_impl(
     bearer = auth_values.get("Auth")
     if not bearer:
         raise DirectAuthError("token exchange response")
+    ttl = float(_MAX_TOKEN_AGE)
+    try:
+        if "ExpiresInDurationSec" in auth_values:
+            ttl = float(auth_values["ExpiresInDurationSec"]) - _DIRECT_EXPIRY_MARGIN
+        elif "Expiry" in auth_values:
+            ttl = float(auth_values["Expiry"]) - time.time() - _DIRECT_EXPIRY_MARGIN
+    except ValueError:
+        pass
 
-    bundle = {
-        **partial,
-        "authToken": bearer,
-        "deviceConfigToken": config_token,
-    }
+    bundle = _session_bundle(device, profile, bearer)
     toc_headers = build_headers(bundle, country=country)
     toc = httpx.get(
         "https://android.clients.google.com/fdfe/toc",
@@ -655,7 +720,7 @@ def _direct_auth_impl(
             bundle["dfeCookie"] = _response_string(toc.content, 1, 6, 22)
         except (EOFError, UnicodeDecodeError, ValueError):
             pass
-    return bundle
+    return bundle, ttl
 
 
 def fetch_token(
@@ -1141,9 +1206,8 @@ def pick_pool_token(
     or PoolBusyError if the patchable _POOL_LOCK_TIMEOUT expires.
     """
     if direct_auth_enabled():
-        return fetch_token(
-            arch=arch, country=country, proxy=proxy, profile=profile,
-            raise_on_error=raise_on_error,
+        return _direct_session(
+            arch, country, proxy, profile, raise_on_error=raise_on_error
         )
 
     with _pool_lock(arch, country, profile, raise_on_error=raise_on_error) as acquired:
@@ -1183,8 +1247,8 @@ def replace_pool_token(
     PoolBusyError on lock timeout, so probe loops can skip the failed member.
     """
     if direct_auth_enabled():
-        return fetch_token(
-            arch=arch, country=country, proxy=proxy, profile=profile,
+        return _direct_session(
+            arch, country, proxy, profile, failed=failed_token,
             raise_on_error=raise_on_error,
         )
 
@@ -1227,6 +1291,145 @@ def replace_pool_token(
     return None
 
 
+# ── account-mode sessions ─────────────────────────────────────────────────────
+# The bearer stays in process memory: one per (config dir, account, arch,
+# country, profile), reused until it expires or Play rejects it with 401.
+# fetch_token/ensure_pool stay fresh on purpose (cohort probes).
+
+_DIRECT_EXPIRY_MARGIN = 300  # seconds before Expiry, like microG
+
+
+@dataclass
+class _DirectEntry:
+    bundle: dict = field(repr=False)
+    expires_at: float
+    replaced: bool = False  # minted after a 401: another 401 retires the device
+
+
+# ponytail: unbounded dicts; keys are bounded by dirs x accounts x arch x
+# country x profile. Add an LRU if a backend multiplexes thousands of accounts.
+_direct_sessions: dict[tuple, _DirectEntry] = {}
+_direct_devices: dict[tuple, dict] = {}
+_direct_locks: dict[tuple, threading.Lock] = {}
+_direct_guard = threading.Lock()
+
+
+def _reset_direct_cache() -> None:
+    """Forget every in-memory session, device and lock (also after fork)."""
+    global _direct_guard
+    _direct_sessions.clear()
+    _direct_devices.clear()
+    _direct_locks.clear()
+    _direct_guard = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):  # a child must not inherit held locks
+    os.register_at_fork(after_in_child=_reset_direct_cache)
+
+
+def _account_hash(email: str) -> str:
+    digest = hashlib.sha256(b"goopdl-direct-device-v1\0" + email.casefold().encode())
+    return digest.hexdigest()[:16]
+
+
+def _session_copy(bundle: dict) -> dict:
+    return {**bundle, "deviceInfoProvider": dict(bundle["deviceInfoProvider"])}
+
+
+def _direct_session(
+    arch: str, country: Optional[str], proxy: Optional[str], profile: Optional[str],
+    *, failed: Optional[dict] = None, force: bool = False,
+    raise_on_error: bool = False,
+) -> Optional[dict]:
+    """Account-mode token for pick/replace_pool_token and ensure_auth.
+
+    Reuses the cached bearer unless it expired, *force* is set or *failed*
+    (the token Play rejected) is it. Failures are not cached; errors, the log
+    line and frame hygiene match fetch_token's.
+    """
+    try:
+        return _direct_session_impl(arch, country, proxy, profile, failed, force)
+    except PoolBusyError:
+        logger.error("Direct auth session lock acquisition timed out.")
+        error: GoopdlError = PoolBusyError("Direct auth session lock acquisition timed out")
+    except DirectAuthError as exc:
+        logger.error("Direct Google authentication failed at %s.", exc)
+        error = DirectAuthError(
+            str(exc), stage=exc.stage, status=exc.status, retry_after=exc.retry_after
+        )
+    except GoopdlError as exc:
+        error = exc.with_traceback(None)
+        error.__cause__ = error.__context__ = None
+        raise_on_error = True  # configuration errors raise, like fetch_token
+    except Exception:
+        # No exc_info: tracebacks can carry credentials from request locals.
+        logger.error("Direct Google authentication failed unexpectedly.")
+        error = DirectAuthError("an unexpected stage")
+    finally:
+        proxy = failed = None
+    if raise_on_error:
+        raise error
+    return None
+
+
+def _direct_session_impl(
+    arch: str, country: Optional[str], proxy: Optional[str], profile: Optional[str],
+    failed: Optional[dict], force: bool,
+) -> Optional[dict]:
+    email, aas_token = _direct_credentials()  # type: ignore[misc]
+    try:
+        selected = _direct_profile(arch, profile)
+        if not selected:
+            return None
+        devkey = (str(get_config_dir()), _account_hash(email), arch,
+                  country.upper() if country else None, selected[0])
+        # The AAS token is part of the key: a rotated one never reuses a bearer.
+        key = devkey + (hashlib.sha256(
+            f"goopdl-direct-session-v1\0{email.casefold()}\0{aas_token}".encode()
+        ).hexdigest(),)
+        entry = _direct_sessions.get(key)
+        if failed is None and not force and entry and entry.expires_at > time.time():
+            return _session_copy(entry.bundle)
+        with _direct_guard:
+            lock = _direct_locks.setdefault(devkey, threading.Lock())
+        if not lock.acquire(timeout=_POOL_LOCK_TIMEOUT):
+            raise PoolBusyError("Direct auth session lock acquisition timed out")
+        try:
+            entry = _direct_sessions.get(key)
+            replaced = reset = False
+            if entry and (force or (
+                failed is not None and entry.bundle["authToken"] == failed.get("authToken")
+            )):
+                del _direct_sessions[key]  # compare-and-invalidate
+                reset = failed is not None and entry.replaced  # second 401 in a row
+                replaced, entry = failed is not None, None
+            if entry and entry.expires_at > time.time():
+                return _session_copy(entry.bundle)  # another caller renewed it
+            device = _direct_device(devkey, selected, country, proxy, reset)
+            bundle, ttl = _direct_step(
+                _exchange, email, aas_token, device, selected, country, proxy
+            )
+            _direct_sessions[key] = _DirectEntry(bundle, time.time() + ttl, replaced)
+            return _session_copy(bundle)
+        finally:
+            lock.release()
+    finally:
+        email = aas_token = None  # type: ignore[assignment]
+
+
+def _direct_device(
+    devkey: tuple, selected: tuple[str, dict], country: Optional[str],
+    proxy: Optional[str], reset: bool,
+) -> dict:
+    """The account's device for *devkey*; registers one if none (or *reset*)."""
+    device = None if reset else _direct_devices.get(devkey)
+    if device is None:
+        device = _direct_step(_register_device, selected, country, proxy)
+        logger.debug("Registered a direct-auth device (gsfId ***%s).", device["gsfId"][-4:])
+    _direct_devices[devkey] = device
+    return device
+
+
 def ensure_auth(
     arch: str = "arm64",
     dispenser_url: Optional[str] = None,
@@ -1242,7 +1445,7 @@ def ensure_auth(
     Pass *force_refresh=True* to ignore cache entirely (e.g. after a 401).
     """
     if direct_auth_enabled():
-        return fetch_token(arch=arch, country=country, proxy=proxy, profile=profile)
+        return _direct_session(arch, country, proxy, profile, force=force_refresh)
 
     if not force_refresh:
         cached = load_cached_auth(arch, country, profile)

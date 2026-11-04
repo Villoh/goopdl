@@ -389,7 +389,7 @@ class DirectAuthTest(unittest.TestCase):
         }
         with (
             isolated_env(environment),
-            patch("goopdl.auth.fetch_token", return_value=token) as fetch,
+            patch("goopdl.auth._direct_session", return_value=token) as fetch,
             patch("goopdl.auth._load_pool") as load_pool,
             patch("goopdl.auth._save_pool") as save_pool,
             patch("goopdl.auth._read_index") as read_index,
