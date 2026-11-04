@@ -1,10 +1,10 @@
-import os
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from typer.testing import CliRunner
 
+from _envutil import isolated_env
 from goopdl.api import AppNotSupportedError, NetworkError, RateLimitedError
 from goopdl.cli import (
     RATE_LIMIT_EXIT_CODE,
@@ -17,7 +17,7 @@ TOKEN = {"authToken": "token", "gsfId": "1234567890"}
 PKG = "com.example.pkg"
 
 
-@patch.dict(os.environ, {}, clear=True)
+@isolated_env()
 @patch("goopdl.cli.time.sleep")
 class TransientErrorsStopRetriesTest(unittest.TestCase):
     """Network failures and throttling must not rotate to another profile/token."""

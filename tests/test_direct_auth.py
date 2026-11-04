@@ -467,7 +467,7 @@ class DirectAuthTest(unittest.TestCase):
         for name, failure in failures.items():
             with (
                 self.subTest(name),
-                patch.dict(os.environ, environment, clear=True),
+                isolated_env(environment),
                 patch("goopdl.auth.httpx.post", side_effect=[failure]),
                 patch("goopdl.auth.logger"),
             ):

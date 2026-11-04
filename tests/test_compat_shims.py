@@ -12,13 +12,14 @@ from unittest.mock import patch
 
 import httpx
 
+from _envutil import isolated_env
 from goopdl import auth, download
 from goopdl.api import NetworkError, PlayAPIError
 
 
 class CompatShimsTest(unittest.TestCase):
     def setUp(self):
-        environment = patch.dict(os.environ, {}, clear=True)
+        environment = isolated_env()
         environment.start()
         self.addCleanup(environment.stop)
 
@@ -29,6 +30,8 @@ class CompatShimsTest(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=15,
+            # The child must see the parent's dependencies (Nix passes them via PYTHONPATH).
+            env={**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p)},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 

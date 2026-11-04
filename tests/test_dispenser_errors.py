@@ -1,4 +1,3 @@
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,6 +6,7 @@ from unittest.mock import patch
 import httpx
 from typer.testing import CliRunner
 
+from _envutil import isolated_env
 from goopdl import api, auth
 from goopdl.api import PlayAPIError, RateLimitedError, download_app
 from goopdl.auth import (
@@ -21,7 +21,7 @@ from goopdl.cli import AUTH_UNAVAILABLE_EXIT_CODE, RATE_LIMIT_EXIT_CODE, app
 class DispenserFetchTokenTest(unittest.TestCase):
     def setUp(self) -> None:
         for patcher in (
-            patch.dict(os.environ, {}, clear=True),
+            isolated_env(),
             patch.object(auth, "logger"),
         ):
             patcher.start()
@@ -55,7 +55,7 @@ class DispenserFetchTokenTest(unittest.TestCase):
         self.assertIsNone(raised.exception.status)
 
 
-@patch.dict(os.environ, {}, clear=True)
+@isolated_env()
 @patch("goopdl.api.time.sleep")
 class DownloadAppDispenserTest(unittest.TestCase):
     def test_dispenser_429_becomes_rate_limited(self, sleep) -> None:
@@ -80,7 +80,7 @@ class DownloadAppDispenserTest(unittest.TestCase):
 
 
 class DownloadAppDirectAuthTest(unittest.TestCase):
-    @patch.dict(os.environ, {}, clear=True)
+    @isolated_env()
     @patch("goopdl.api.time.sleep")
     def test_direct_auth_failure_keeps_its_stage(self, _sleep) -> None:
         with (
@@ -97,7 +97,7 @@ class DownloadAppDirectAuthTest(unittest.TestCase):
         self.assertNotIsInstance(raised.exception, RateLimitedError)
 
 
-@patch.dict(os.environ, {}, clear=True)
+@isolated_env()
 class CliDispenserMessageTest(unittest.TestCase):
     def download(self, error: Exception):
         with (

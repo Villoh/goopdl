@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
+from _envutil import isolated_env
 from goopdl.api import AppDetails, DeliveryResult
 from goopdl.cli import (
     AUTH_UNAVAILABLE_EXIT_CODE,
@@ -20,7 +21,7 @@ from goopdl.download import IntegrityError
 
 class AuthExitCodeTest(unittest.TestCase):
     def setUp(self):
-        environment = patch.dict(os.environ, {}, clear=True)
+        environment = isolated_env()
         environment.start()
         self.addCleanup(environment.stop)
 
