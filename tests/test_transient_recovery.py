@@ -202,13 +202,12 @@ class TransientRecoveryTest(unittest.TestCase):
         self.assertEqual(self.calls["GET"], 1)
         self.sleep.assert_not_called()
 
-    def test_partial_pool_does_not_hide_rate_limit(self):
+    def test_partial_pool_serves_caller_through_rate_limit(self):
         auth.ensure_pool(profile="Pv", size=1)
         self.failures = [httpx.Response(429, headers={"Retry-After": "120"})]
-        with self.assertRaises(auth.DispenserRateLimitedError) as raised:
-            auth.ensure_pool(profile="Pv", raise_on_error=True)
-        self.assertEqual(raised.exception.retry_after, 120)
-        self.assertEqual(self.calls["POST"], 2)
+        pool = auth.ensure_pool(profile="Pv", raise_on_error=True)
+        self.assertEqual([t["authToken"] for t in pool], ["token-1"])
+        self.assertEqual(self.calls["POST"], 2)  # one refill attempt, no rotation
         self.sleep.assert_not_called()
 
     def test_version_resolution_recovers_with_cooldown(self):

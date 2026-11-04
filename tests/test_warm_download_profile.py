@@ -147,7 +147,7 @@ class WarmDownloadProfileTest(unittest.TestCase):
         self.choice.assert_called_once_with(self.candidates)
         self.fetch.assert_called_once_with(
             dispenser_url=None, arch="arm64", proxy=None, profile=self.b, country="US",
-            raise_on_error=True,
+            raise_on_error=True, cooldown_retry=True,
         )
         self.assertEqual(self.fresh, self.delivery.call_args.args[1])
         self.assertEqual(1, len(auth._load_pool("arm64", "US", self.b)))

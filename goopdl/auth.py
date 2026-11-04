@@ -1164,12 +1164,18 @@ def _ensure_pool_unlocked(
                     profile=profile,
                     country=country,
                     raise_on_error=raise_on_error,
+                    # Usable tokens already serve the caller: no 5 s cooldown.
+                    cooldown_retry=not pool,
                 )
-            except DispenserRateLimitedError:
-                raise  # even a partial pool must respect endpoint throttling
             except DirectAuthError:
+                # 429 included: fetch_token stopped at the first one, and the
+                # next call retries the refill. Raise only with no token left.
                 if pool:
-                    break  # a partial pool still serves the caller
+                    logger.warning(
+                        "Pool [%s]: refill stopped; using %d/%d valid tokens.",
+                        label, len(pool), size,
+                    )
+                    break
                 raise
             if t is None:
                 break
