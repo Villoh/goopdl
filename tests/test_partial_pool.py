@@ -174,6 +174,55 @@ class PartialPoolTest(unittest.TestCase):
         self.assertIn("Direct Google authentication rate limited", result.output)
         self.assertEqual(self.calls["dispenser"], 0)
 
+    # ── replacement (replace_pool_token) ──────────────────────────────────────
+
+    def test_replacement_429_returns_survivor(self):
+        for raise_on_error in (False, True):
+            with self.subTest(raise_on_error=raise_on_error):
+                self.calls.clear()
+                failed, *survivors = self.seed(3, "Pv", expired=1)[1:]
+                token = auth.replace_pool_token(
+                    failed, profile="Pv", raise_on_error=raise_on_error
+                )
+                self.assertIn(token, survivors)
+                self.assertEqual(auth._load_pool("arm64", None, "Pv"), survivors)
+                self.assertEqual(self.calls["dispenser"], 1)
+                self.sleep.assert_not_called()
+
+    def test_replacement_429_without_survivor_raises(self):
+        for raise_on_error in (False, True):
+            with self.subTest(raise_on_error=raise_on_error):
+                (failed,) = self.seed(1, "Pv", expired=2)[2:]  # expired: no survivor
+                with self.assertRaises(auth.DispenserRateLimitedError) as raised:
+                    auth.replace_pool_token(
+                        failed, profile="Pv", raise_on_error=raise_on_error
+                    )
+                self.assertEqual(raised.exception.retry_after, 120)
+        self.seed(1)
+        self.expire_first = True
+        with self.assertRaises(api.RateLimitedError) as raised:
+            api.fetch_app_item(PACKAGE)
+        self.assertEqual(raised.exception.retry_after, 120)
+        self.sleep.assert_not_called()
+
+    def test_replacement_429_with_survivor_serves_callers(self):
+        for command in (("info",), ("info", "--raw"), ("download", "-o", str(self.output))):
+            with self.subTest(command=command):
+                self.calls.clear()
+                self.seed(3)
+                self.expire_first = True
+                result = self.invoke(command[0], PACKAGE, *command[1:])
+                self.assertEqual(result.exit_code, 0, result.output)
+                self.assertEqual(self.calls["details"], 2)  # 401, then a survivor
+                self.assertEqual(self.calls["dispenser"], 2)  # refill + replacement
+        self.calls.clear()
+        self.seed(3)
+        self.assertEqual(api.fetch_app_item(PACKAGE)["package_name"], PACKAGE)
+        self.calls.clear()
+        self.seed(3)
+        self.assertEqual(Client().details(PACKAGE).version_code, 7)
+        self.assertEqual(self.calls["details"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

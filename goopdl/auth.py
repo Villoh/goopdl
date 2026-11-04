@@ -1262,9 +1262,10 @@ def replace_pool_token(
     Called when a mid-request AuthExpiredError reveals a token died early.
     Reuses a current member if another caller already removed that credential.
     On replacement failure, returns a surviving token without refilling (or
-    None if none remain). HTTP 429 always raises DispenserRateLimitedError.
-    With *raise_on_error*, propagate other typed token failures as well as
-    PoolBusyError on lock timeout, so probe loops can skip the failed member.
+    None if none remain). HTTP 429 returns a survivor too, even with
+    *raise_on_error*, and raises DispenserRateLimitedError only when none
+    remain. With *raise_on_error*, propagate other typed token failures as well
+    as PoolBusyError on lock timeout, so probe loops can skip the failed member.
     """
     if direct_auth_enabled():
         return _direct_session(
@@ -1286,8 +1287,9 @@ def replace_pool_token(
                     return survivors[0]
                 _save_pool(survivors, arch, country, profile)
                 try:
-                    # Keep 429 distinguishable from a failed replacement even
-                    # for legacy callers; never refill just to pick a survivor.
+                    # With no survivor, keep 429 distinguishable from a failed
+                    # replacement even for legacy callers (it raises); never
+                    # refill just to pick a survivor.
                     # Survivors already serve the caller: no cooldown retry.
                     new_token = fetch_token(
                         dispenser_url=dispenser_url, arch=arch, proxy=proxy,
@@ -1295,6 +1297,8 @@ def replace_pool_token(
                         cooldown_retry=not survivors,
                     )
                 except DispenserRateLimitedError:
+                    if survivors:
+                        return survivors[0]  # the next call retries the refill
                     raise
                 except DirectAuthError:
                     if raise_on_error:
