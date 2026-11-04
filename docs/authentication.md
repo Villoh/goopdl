@@ -20,7 +20,7 @@ need a Google account.
 goopdl auth                    # arm64 token
 goopdl auth --arch armv7       # token for older 32-bit devices
 goopdl auth --country IN       # register the device with India's MCC/MNC
-goopdl auth --clear            # delete every cached token
+goopdl auth --clear            # delete every cached token and device record
 ```
 
 You don't have to run `auth` first. Other commands fetch a token when they need
@@ -49,6 +49,7 @@ permissions `0700` and token files are written `0600`.
 | ---------------------- | -------- |
 | `auth-{arch}[-{country}][-profile-{key}].json` | Token from the last `auth` run |
 | `token-pool-{arch}[-{country}][-profile-{key}].json` | Pool of up to 5 tokens used by `download`, `latest`, and `fast-download` |
+| `direct-device-{account}-{arch}[-{country}]-profile-{key}.json` | [Google account](#what-account-mode-saves) mode only: the registered device, no token |
 
 The `-profile-{key}` part appears when you pin a device with `--profile`, so
 each profile keeps its own tokens. `goopdl auth --clear` deletes all of them.
@@ -81,9 +82,37 @@ goopdl download com.whatsapp
 - If you set only one variable, goopdl exits with an error. It does not fall
   back to anonymous mode.
 - goopdl reads no config files, secret files, or CLI flags for this mode.
-- Short-lived Google Play bearer tokens stay in memory and are never cached.
+- Short-lived Google Play bearer tokens stay in memory and are never written
+  to disk. Each process signs in once per account, architecture, country, and
+  device profile, and reuses the token until it expires (Google's expiry minus
+  5 minutes, or 50 minutes) or Google rejects it.
+- goopdl writes only the device registration to disk, see below.
 - From Python, a [`Client`](library.md#credentials) takes the account as
   `Credentials` instead and ignores these variables.
+
+### What account mode saves
+
+Signing in registers an Android device on the account. So that every command
+doesn't add another one, goopdl saves the device it registered and reuses it
+in later runs and in other processes:
+
+| File in the [config directory](#where-tokens-live) | Contents |
+| -------------------------------------------------- | -------- |
+| `direct-device-{account}-{arch}[-{country}]-profile-{key}.json` | The device registration: GSF ID, check-in consistency token, and device config token |
+
+- `{account}` is a hash of the email address. The email, the AAS token, and
+  the bearer token are never written, neither in the name nor in the file.
+- The file is written atomically with permissions `0600`, in the `0700`
+  directory. A `.lock` file next to it lets several processes share one
+  registration, so they register a single device.
+- If Google rejects two tokens in a row on that device (HTTP 401), goopdl
+  registers a new one.
+- If the directory isn't writable, goopdl keeps the registration in memory
+  for the current process and logs a warning.
+- `goopdl auth --clear` deletes these files. From Python, use
+  `auth.clear_auth()` or [`Client.clear_cache()`](library.md#clearing-the-cache).
+- `latest`, `download --version`, and the retries with other device profiles
+  still sign in on a new device for each probe: they need different GSF IDs.
 
 > [!WARNING]
 > An AAS token is a long-lived credential with full Play Store access to the

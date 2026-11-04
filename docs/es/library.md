@@ -125,6 +125,7 @@ Lanza `DirectAuthConfigurationError` si solo está definida una de las dos.
 | `delivery` | `DeliveryResult` | Token del pool, y luego [`purchase`](#purchase) y [`get_delivery`](#get_delivery) con ese mismo token |
 | `download` | `DownloadResult` | Como [`download_app`](#download_app), sin barras de progreso |
 | `adownload` | `DownloadResult` | `download` para asyncio |
+| `clear_cache` | `None` | Borra lo que este cliente guardó en caché, ver [borrar la caché](#borrar-la-caché) |
 
 - `Client.details(package, *, country=None, proxy=None, arch=None, profile=None, dispenser_url=None) -> AppDetails`
 - `Client.search(query, *, limit=10, country=None, proxy=None, arch=None, profile=None, dispenser_url=None) -> list[dict]`
@@ -133,6 +134,7 @@ Lanza `DirectAuthConfigurationError` si solo está definida una de las dos.
 - `Client.delivery(package, version_code=None, *, country=None, proxy=None, arch=None, profile=None, dispenser_url=None) -> DeliveryResult`
 - `Client.download(package, output, *, splits=False, extras=False, on_progress=None, max_concurrent=4, country=None, proxy=None, arch=None, profile=None, dispenser_url=None) -> DownloadResult`
 - `Client.adownload(package, output, *, splits=False, extras=False, on_progress=None, max_concurrent=4, http_client=None, country=None, proxy=None, arch=None, profile=None, dispenser_url=None) -> DownloadResult`
+- `Client.clear_cache() -> None`
 - `DownloadResult(path, version_string, files)`
 
 Detalles:
@@ -158,6 +160,20 @@ Detalles:
   una caída del dispensador o un inicio de sesión fallido, un `PlayAPIError`.
   Un pool ocupado lanza `PoolBusyError`, salvo en `item`, que se comporta como
   `fetch_app_item`.
+
+### Borrar la caché
+
+`clear_cache()` borra lo que el cliente guardó en su `config_dir`, como
+`goopdl auth --clear` en ese directorio: los archivos de tokens anónimos y, en
+modo cuenta, el [registro de dispositivo](authentication.md#qué-guarda-el-modo-cuenta)
+de esta cuenta y su sesión en memoria. Las demás cuentas que compartan el
+directorio conservan los suyos. Sin credenciales equivale a
+`auth.clear_auth()` en ese directorio, que borra también los registros de
+dispositivo de todas las cuentas. Los archivos de bloqueo se quedan.
+
+```python
+account.clear_cache()  # la siguiente llamada registra un dispositivo nuevo y vuelve a iniciar sesión
+```
 
 ### Async
 
@@ -305,15 +321,18 @@ llamada:
 | Modo | Origen | Caché en disco |
 | ---- | ------ | -------------- |
 | Anónimo (por defecto) | El dispensador de Aurora, o `dispenser_url` | Sí, ver [pool de tokens](#pool-de-tokens-y-caché) |
-| Cuenta de Google | `GOOPDL_ACCOUNT_EMAIL` y `GOOPDL_AAS_TOKEN` en el entorno, o las [`Credentials`](#credentials) de un `Client` | No, cada llamada vuelve a iniciar sesión |
+| Cuenta de Google | `GOOPDL_ACCOUNT_EMAIL` y `GOOPDL_AAS_TOKEN` en el entorno, o las [`Credentials`](#credentials) de un `Client` | Solo el registro del dispositivo, sin token. El token se queda en memoria |
 
 El modo cuenta se explica en [autenticación](authentication.md#cuenta-de-google).
 Las funciones del módulo leen las variables de `os.environ` en cada llamada,
 así que para ellas afectan a todo el proceso; un `Client` solo usa sus propias
 `credentials`. Si solo defines una, o el token no empieza por `aas_et/`, todas
 las funciones de tokens lanzan `DirectAuthConfigurationError`. En modo cuenta
-`pick_pool_token` inicia sesión en cada llamada, así que reutiliza el
-diccionario hasta que caduque.
+`pick_pool_token`, `replace_pool_token` y `ensure_auth` comparten un inicio de
+sesión por directorio de caché, cuenta, arquitectura, país y perfil, guardado
+en la memoria del proceso hasta que caduca o Google lo rechaza con HTTP 401.
+Las llamadas simultáneas esperan a un único inicio de sesión. `fetch_token` y
+`ensure_pool` siguen iniciando sesión con un dispositivo nuevo en cada llamada.
 
 Para conseguir un token AAS desde código hay dos funciones. Las dos hablan con
 Google y necesitan a una persona delante, así que van en un script de
@@ -363,11 +382,16 @@ print(auth.get_config_dir())
 | `pool-index-{arch}[-{country}][-profile-{key}].json` | `pick_pool_token` (posición del round-robin) |
 | `token-pool-…lock` | Archivos de bloqueo, nunca se borran |
 | `auth-{arch}[-{country}][-profile-{key}].json` | `ensure_auth` (un único token en caché) |
+| `direct-device-{account}-{arch}[-{country}]-profile-{key}.json` | Modo cuenta: el dispositivo registrado, identificado por un hash del email |
 
 En POSIX el directorio se crea con permisos `0700` (si ya existe y es tuyo, se
 restringe a `0700`) y los archivos se escriben de forma atómica con `0600`.
-`auth.clear_auth()` borra los JSON y conserva los archivos de bloqueo. El modo
-cuenta no escribe archivos.
+`auth.clear_auth()` borra los JSON y conserva los archivos de bloqueo. En modo
+cuenta el único archivo es el registro del dispositivo (GSF ID, token de
+consistencia del check-in y token de configuración del dispositivo). El email,
+el token AAS y el bearer token nunca se escriben; si no se puede escribir en el
+directorio, el registro se queda en memoria. Ver
+[qué guarda el modo cuenta](authentication.md#qué-guarda-el-modo-cuenta).
 
 ### Perfiles de dispositivo y arquitecturas
 
@@ -694,8 +718,8 @@ details, token = details_with_refresh(package, token)
 | Función | Qué hace |
 | ------- | -------- |
 | `get_config_dir() -> Path` | El directorio de caché vigente ahora mismo |
-| `ensure_auth(arch="arm64", dispenser_url=None, force_refresh=False, proxy=None, country=None, profile=None) -> dict \| None` | Un único token en caché en `auth-*.json`, renovado a los 50 minutos. Nunca lanza errores del dispensador |
-| `clear_auth() -> None` | Borra todos los tokens en caché |
+| `ensure_auth(arch="arm64", dispenser_url=None, force_refresh=False, proxy=None, country=None, profile=None) -> dict \| None` | Un único token en caché en `auth-*.json`, renovado a los 50 minutos (en modo cuenta, la sesión en memoria). Nunca lanza errores del dispensador |
+| `clear_auth() -> None` | Borra todos los tokens en caché y los registros de dispositivo de las cuentas, y olvida las sesiones en memoria de ese directorio |
 | `direct_auth_enabled() -> bool` | Si el modo cuenta está configurado. Lanza `DirectAuthConfigurationError` si lo está a medias |
 
 ### `goopdl.download`

@@ -124,6 +124,7 @@ It raises `DirectAuthConfigurationError` if only one of the two is set.
 | `delivery` | `DeliveryResult` | Pool token, then [`purchase`](#purchase) and [`get_delivery`](#get_delivery) with that same token |
 | `download` | `DownloadResult` | Like [`download_app`](#download_app), without progress bars |
 | `adownload` | `DownloadResult` | `download` for asyncio |
+| `clear_cache` | `None` | Delete what this client cached, see [clearing the cache](#clearing-the-cache) |
 
 - `Client.details(package, *, country=None, proxy=None, arch=None, profile=None, dispenser_url=None) -> AppDetails`
 - `Client.search(query, *, limit=10, country=None, proxy=None, arch=None, profile=None, dispenser_url=None) -> list[dict]`
@@ -132,6 +133,7 @@ It raises `DirectAuthConfigurationError` if only one of the two is set.
 - `Client.delivery(package, version_code=None, *, country=None, proxy=None, arch=None, profile=None, dispenser_url=None) -> DeliveryResult`
 - `Client.download(package, output, *, splits=False, extras=False, on_progress=None, max_concurrent=4, country=None, proxy=None, arch=None, profile=None, dispenser_url=None) -> DownloadResult`
 - `Client.adownload(package, output, *, splits=False, extras=False, on_progress=None, max_concurrent=4, http_client=None, country=None, proxy=None, arch=None, profile=None, dispenser_url=None) -> DownloadResult`
+- `Client.clear_cache() -> None`
 - `DownloadResult(path, version_string, files)`
 
 Details:
@@ -156,6 +158,19 @@ Details:
   `retry_after` (the `DispenserRateLimitedError` is the `__cause__`), a
   dispenser outage or failed sign-in a `PlayAPIError`. A busy pool raises
   `PoolBusyError`, except in `item`, which follows `fetch_app_item`.
+
+### Clearing the cache
+
+`clear_cache()` deletes what the client cached in its `config_dir`, like
+`goopdl auth --clear` there: the anonymous token files and, in account mode,
+this account's [device record](authentication.md#what-account-mode-saves) and
+its signed-in token in memory. Other accounts sharing the directory keep
+theirs. Without credentials it is `auth.clear_auth()` for that directory, which
+also deletes every account's device record. Lock files stay.
+
+```python
+account.clear_cache()  # the next call registers a new device and signs in again
+```
 
 ### Async
 
@@ -300,14 +315,18 @@ Tokens come from one of two places, picked automatically on every call:
 | Mode | Source | Cached on disk |
 | ---- | ------ | -------------- |
 | Anonymous (default) | Aurora's token dispenser, or `dispenser_url` | Yes, see [token pool](#token-pool-and-cache) |
-| Google account | `GOOPDL_ACCOUNT_EMAIL` and `GOOPDL_AAS_TOKEN` in the environment, or a `Client`'s [`Credentials`](#credentials) | No, every call signs in again |
+| Google account | `GOOPDL_ACCOUNT_EMAIL` and `GOOPDL_AAS_TOKEN` in the environment, or a `Client`'s [`Credentials`](#credentials) | Only the device registration, no token. The token stays in memory |
 
 Account mode is described in [authentication](authentication.md#google-account).
 The module functions read the variables from `os.environ` on each call, so for
 them they apply to the whole process; a `Client` uses only its own
 `credentials`. If only one is set, or the token doesn't start with `aas_et/`,
 every token function raises `DirectAuthConfigurationError`. In account mode
-`pick_pool_token` signs in on every call, so reuse the dict until it expires.
+`pick_pool_token`, `replace_pool_token`, and `ensure_auth` share one sign-in
+per cache directory, account, architecture, country, and profile, held in
+process memory until it expires or Google rejects it with HTTP 401.
+Concurrent callers wait for a single sign-in. `fetch_token` and `ensure_pool`
+still sign in on a new device on every call.
 
 To get an AAS token from code there are two helpers. Both talk to Google and
 need a person in the loop, so they belong in a setup script, not a request
@@ -356,11 +375,15 @@ print(auth.get_config_dir())
 | `pool-index-{arch}[-{country}][-profile-{key}].json` | `pick_pool_token` (round-robin position) |
 | `token-pool-…lock` | Lock sidecars, never deleted |
 | `auth-{arch}[-{country}][-profile-{key}].json` | `ensure_auth` (single cached token) |
+| `direct-device-{account}-{arch}[-{country}]-profile-{key}.json` | Account mode: the registered device, keyed by a hash of the email |
 
 On POSIX the directory is created `0700` (an existing one you own is tightened
 to `0700`) and files are written atomically as `0600`. `auth.clear_auth()`
-deletes the JSON files and keeps the lock sidecars. Account mode writes no
-files.
+deletes the JSON files and keeps the lock sidecars. In account mode the only
+file is the device registration (GSF ID, check-in consistency token, device
+config token). The email, the AAS token, and the bearer token are never
+written; if the directory isn't writable, the registration stays in memory.
+See [what account mode saves](authentication.md#what-account-mode-saves).
 
 ### Device profiles and architectures
 
@@ -676,8 +699,8 @@ details, token = details_with_refresh(package, token)
 | Function | What it does |
 | -------- | ------------ |
 | `get_config_dir() -> Path` | The cache directory in effect now |
-| `ensure_auth(arch="arm64", dispenser_url=None, force_refresh=False, proxy=None, country=None, profile=None) -> dict \| None` | One cached token in `auth-*.json`, refreshed after 50 minutes. Never raises dispenser errors |
-| `clear_auth() -> None` | Delete every cached token |
+| `ensure_auth(arch="arm64", dispenser_url=None, force_refresh=False, proxy=None, country=None, profile=None) -> dict \| None` | One cached token in `auth-*.json`, refreshed after 50 minutes (account mode: the in-memory sign-in). Never raises dispenser errors |
+| `clear_auth() -> None` | Delete every cached token and account device record, and forget this directory's in-memory sign-ins |
 | `direct_auth_enabled() -> bool` | Whether account mode is configured. Raises `DirectAuthConfigurationError` if half-configured |
 
 ### `goopdl.download`

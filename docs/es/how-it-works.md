@@ -38,7 +38,8 @@ de configuración (`~/.config/goopdl` salvo que definas `GOOPDL_CONFIG_DIR` o
 
 El pool mantiene a goopdl por debajo del límite de Aurora, de unas 20
 peticiones por hora. En el [modo cuenta de Google](authentication.md#cuenta-de-google)
-no hay pool.
+no hay pool: cada proceso inicia sesión una vez y reutiliza el dispositivo que
+[registró y guardó](authentication.md#qué-guarda-el-modo-cuenta).
 
 ## Encontrar la última versión
 

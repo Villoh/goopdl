@@ -269,7 +269,7 @@ goopdl auth --clear
 
 | Flag | Short | Default | Description |
 | ---- | ----- | ------- | ----------- |
-| `--clear` | | off | Delete every cached token |
+| `--clear` | | off | Delete every cached token and [account-mode device record](authentication.md#what-account-mode-saves) |
 | `--country` | `-c` | — | Register the device with that country's MCC/MNC, so later calls with the same `--country` see its catalog without a proxy |
 
 Also accepts the [common flags](#common-flags).

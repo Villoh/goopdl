@@ -273,7 +273,7 @@ goopdl auth --clear
 
 | Opción | Corta | Por defecto | Descripción |
 | ------ | ----- | ----------- | ----------- |
-| `--clear` | | no | Borra todos los tokens en caché |
+| `--clear` | | no | Borra todos los tokens en caché y los [registros de dispositivo del modo cuenta](authentication.md#qué-guarda-el-modo-cuenta) |
 | `--country` | `-c` | — | Registra el dispositivo con el MCC/MNC de ese país, para que las llamadas posteriores con el mismo `--country` vean su catálogo sin proxy |
 
 También acepta las [opciones comunes](#opciones-comunes).
