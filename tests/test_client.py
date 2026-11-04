@@ -16,6 +16,7 @@ from urllib.parse import parse_qs
 import httpx
 
 from _envutil import isolated_env
+from _nonet import no_sockets
 from goopdl import Client, Config, Credentials, DownloadResult, api, auth
 from goopdl.errors import (
     AppNotAvailableError,
@@ -47,10 +48,6 @@ def f(number, value):
 
 def sha256(data):
     return base64.urlsafe_b64encode(hashlib.sha256(data).digest()).decode().rstrip("=")
-
-
-def no_sockets(*_args, **_kwargs):
-    raise AssertionError("real network access attempted")
 
 
 class FakePlay:
@@ -173,9 +170,11 @@ class ConfigTest(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError) as raised:
                 Config(config_dir=value)
             self.assertIn("absolute", str(raised.exception))
-        with isolated_env({"HOME": "/home/u", "USERPROFILE": "/home/u"}):
-            self.assertEqual(Path("/home/u/g"), Config(config_dir="~/g").config_dir)
-        self.assertEqual(Path("/srv/g"), Config(config_dir="/srv/g").config_dir)
+        # Absolute on every OS: "/srv/g" has no drive letter, so it is not on Windows.
+        base = Path(tempfile.gettempdir()).resolve()
+        with isolated_env({"HOME": str(base / "u"), "USERPROFILE": str(base / "u")}):
+            self.assertEqual(base / "u" / "g", Config(config_dir="~/g").config_dir)
+        self.assertEqual(base / "srv", Config(config_dir=base / "srv").config_dir)
 
     def test_arch_and_types_are_validated(self):
         with self.assertRaises(InvalidArchError):
@@ -224,7 +223,7 @@ class ConfigTest(unittest.TestCase):
 
     def test_repr_has_no_secrets(self):
         creds = Credentials("someone.secret@example.com", "aas_et/aas-sentinel")
-        config = Config(config_dir="/srv/x", credentials=creds,
+        config = Config(config_dir=Path(tempfile.gettempdir()).resolve() / "x", credentials=creds,
                         proxy="http://user:proxy-sentinel@h:1")
         for text in (repr(creds), str(creds), repr(config), str(config),
                      repr(Client(config))):

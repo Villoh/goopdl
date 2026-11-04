@@ -13,13 +13,10 @@ from unittest.mock import patch
 import httpx
 
 from _envutil import isolated_env
+from _nonet import no_sockets
 from goopdl import auth
 
 ENV_ACCOUNT = {"GOOPDL_ACCOUNT_EMAIL": "env@x.test", "GOOPDL_AAS_TOKEN": "aas_et/env"}
-
-
-def _no_sockets(*_a, **_k):
-    raise AssertionError("real network access attempted")
 
 
 class FakeEndpoints:
@@ -84,7 +81,7 @@ class ScopeTestCase(unittest.TestCase):
         self.fake = FakeEndpoints()
         for patcher in (
             isolated_env({"GOOPDL_CONFIG_DIR": str(self.tmp / "env"), **self.env}),
-            patch.object(socket.socket, "connect", _no_sockets),
+            patch.object(socket.socket, "connect", no_sockets),
             patch("httpx.post", side_effect=lambda *a, **k: self.fake.post(*a, **k)),
             patch("httpx.get", side_effect=lambda *a, **k: self.fake.get(*a, **k)),
             patch("goopdl.auth.time.sleep"),
