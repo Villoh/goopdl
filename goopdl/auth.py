@@ -272,18 +272,16 @@ def _direct_credentials() -> Optional[tuple[str, str]]:
     aas_token = os.environ.get("GOOPDL_AAS_TOKEN", "").strip()
     if not email and not aas_token:
         return None
+    message = None
     if not email:
-        raise DirectAuthConfigurationError(
-            "Missing required environment variable: GOOPDL_ACCOUNT_EMAIL"
-        )
-    if not aas_token:
-        raise DirectAuthConfigurationError(
-            "Missing required environment variable: GOOPDL_AAS_TOKEN"
-        )
-    if not aas_token.startswith("aas_et/"):
-        raise DirectAuthConfigurationError(
-            "GOOPDL_AAS_TOKEN must start with aas_et/ (not g.a or oauth2_4/)"
-        )
+        message = "Missing required environment variable: GOOPDL_ACCOUNT_EMAIL"
+    elif not aas_token:
+        message = "Missing required environment variable: GOOPDL_AAS_TOKEN"
+    elif not aas_token.startswith("aas_et/"):
+        message = "GOOPDL_AAS_TOKEN must start with aas_et/ (not g.a or oauth2_4/)"
+    if message:
+        email = aas_token = None  # the traceback keeps this frame's locals
+        raise DirectAuthConfigurationError(message)
     return email, aas_token
 
 
@@ -604,7 +602,10 @@ def _direct_auth_impl(
         proxy=httpx_proxy,
     )
     if toc.status_code == 429:
-        raise _direct_http_error("toc", toc)
+        # toc is optional (it only adds dfeCookie): keep the token, like before.
+        logger.warning(
+            "Google toc request rate limited (HTTP 429); continuing without dfeCookie."
+        )
     if toc.status_code == 200:
         try:
             bundle["dfeCookie"] = _response_string(toc.content, 1, 6, 22)
@@ -741,7 +742,9 @@ def _fetch_token_impl(
             last_status = resp.status_code
             last_reason = "server" if resp.status_code >= 500 else "profile_rejected"
             if resp.status_code >= 500:
-                logger.warning("Dispenser returned HTTP %s", resp.status_code)
+                logger.warning(
+                    "Dispenser returned HTTP %s for %s", resp.status_code, device
+                )
                 transport_failures += 1
                 if transport_failures >= _MAX_DISPENSER_TRANSPORT_FAILURES:
                     break
@@ -771,7 +774,9 @@ def _fetch_token_impl(
         except GoopdlError:
             raise
         except httpx.TransportError as exc:
-            logger.warning("Dispenser transport failed: %s", type(exc).__name__)
+            logger.warning(
+                "Dispenser transport failed for %s: %s", device, type(exc).__name__
+            )
             last_status = None
             last_reason = "transport"
             transport_failures += 1

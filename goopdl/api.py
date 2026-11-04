@@ -7,6 +7,7 @@ validated against gpapi's googleplay.proto definitions.
 
 from __future__ import annotations
 
+import asyncio
 import math
 import random
 import re
@@ -192,6 +193,20 @@ def _send(method: Any, *args: Any, **kwargs: Any) -> Any:
         del method, args, kwargs
     error.__cause__ = error.__context__ = None
     raise error
+
+
+def _detached(exc: BaseException) -> BaseException:
+    """Strip frames and chains that may hold pool tokens, proxies or signed URLs.
+
+    A GoopdlError ``__cause__`` (documented, e.g. DispenserRateLimitedError)
+    survives, detached the same way.
+    """
+    cause = exc.__cause__
+    exc = exc.with_traceback(None)
+    exc.__cause__ = exc.__context__ = None
+    if isinstance(cause, GoopdlError):
+        exc.__cause__ = _detached(cause)
+    return exc
 
 
 @contextmanager
@@ -425,12 +440,36 @@ def fetch_app_item(
 
     Handles token pool management and expired-token retry internally.
     Returns ``{}`` when Play answers without a document for *package*.
+    Raises GoopdlError subclasses: mostly PlayAPIError; a dispenser HTTP 429
+    while replacing an expired token raises RateLimitedError whose
+    ``__cause__`` is the DispenserRateLimitedError; InvalidPackageError and
+    DirectAuthConfigurationError for bad input or environment.
 
     Example::
 
         from goopdl.api import fetch_app_item
         item = fetch_app_item("com.whatsapp", country="US", proxy="http://user:pass@host:port/")
     """
+    try:
+        return _fetch_app_item(package, arch, country, proxy, profile, dispenser_url)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        raise
+    except BaseException as exc:
+        error = _detached(exc)
+    finally:
+        proxy = dispenser_url = None
+    # Raised outside except: no frame keeps the pool token or the proxy.
+    raise error from error.__cause__
+
+
+def _fetch_app_item(
+    package: str,
+    arch: str,
+    country: str | None,
+    proxy: str | None,
+    profile: str | None,
+    dispenser_url: str | None,
+) -> dict:
     validate_package(package)
     auth = pick_pool_token(
         arch=arch,
@@ -444,14 +483,17 @@ def fetch_app_item(
     try:
         raw = get_details_raw(package, auth, country=country, proxy=proxy)
     except AuthExpiredError:
-        auth = replace_pool_token(
-            auth,
-            arch=arch,
-            country=country,
-            proxy=proxy,
-            dispenser_url=dispenser_url,
-            profile=profile,
-        )
+        try:
+            auth = replace_pool_token(
+                auth,
+                arch=arch,
+                country=country,
+                proxy=proxy,
+                dispenser_url=dispenser_url,
+                profile=profile,
+            )
+        except DispenserRateLimitedError as exc:
+            raise RateLimitedError(str(exc), retry_after=exc.retry_after) from exc
         if not auth:
             raise PlayAPIError("Token expired and replacement failed.") from None
         raw = get_details_raw(package, auth, country=country, proxy=proxy)
@@ -866,7 +908,8 @@ def get_delivery(
         params["dtok"] = delivery_token
     if country:
         params["gl"] = country.upper()
-    resp: Any = None
+    status: int | None = None
+    content = b""
     try:
         for attempt in range(_DELIVERY_RETRIES + 1):
             resp = _send(
@@ -877,12 +920,16 @@ def get_delivery(
                 timeout=30,
                 proxy=_build_httpx_proxy(proxy),
             )
-            if resp.status_code == 401:
+            # Keep only what is parsed: resp.request.url carries the dtok.
+            status, content = resp.status_code, resp.content
+            resp_headers = getattr(resp, "headers", {})
+            del resp
+            if status == 401:
                 raise AuthExpiredError("Auth token expired.")
-            if resp.status_code == 404:
+            if status == 404:
                 raise VersionUnavailableError("Requested version code is unavailable.")
-            if resp.status_code == 429:
-                retry_after = _parse_retry_after(getattr(resp, "headers", {}))
+            if status == 429:
+                retry_after = _parse_retry_after(resp_headers)
                 # A wait longer than we are willing to sleep: retrying inside the
                 # server's window only burns quota, so give up straight away.
                 too_long = retry_after is not None and retry_after > _RETRY_AFTER_MAX
@@ -894,21 +941,21 @@ def get_delivery(
                 # Never retry sooner than our own backoff, even on "Retry-After: 0".
                 time.sleep(max(retry_after or 0.0, _DELIVERY_BACKOFF[attempt]))
                 continue
-            if resp.status_code != 200:
+            if status != 200:
                 raise PlayAPIError(
-                    f"Delivery failed (HTTP {resp.status_code}).",
-                    status_code=resp.status_code,
+                    f"Delivery failed (HTTP {status}).", status_code=status
                 )
             break
     finally:
         del headers, params, proxy, delivery_token
 
-    if resp is None:
+    if status is None:
         raise PlayAPIError("Delivery request did not return a response.")
-    result = _parse_delivery(resp.content)
+    result = _parse_delivery(content)
 
     if not result.download_url:
-        status = _first_int(_navigate(resp.content, 1, 21), 1)
+        status = _first_int(_navigate(content, 1, 21), 1)
+        del content
         if status == 2:
             raise AppNotSupportedError(
                 f"Google Play does not serve version {version_code} of {package} "
@@ -1244,7 +1291,37 @@ def download_app(
     Returns (apk_path, dotted version string) — not the numeric version code.
     A dispenser HTTP 429 raises RateLimitedError whose ``__cause__`` is the
     DispenserRateLimitedError; a dispenser outage raises PlayAPIError.
+    Other failures raise GoopdlError subclasses, not only PlayAPIError:
+    PoolBusyError when another process holds the token pool lock (older
+    releases raised PlayAPIError), DownloadError/IntegrityError from the CDN,
+    InvalidPackageError and DirectAuthConfigurationError.
     """
+    try:
+        return _download_app(
+            package, output, arch, country, proxy, dispenser_url, profile,
+            no_splits, no_extras,
+        )
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        raise
+    except BaseException as exc:
+        error = _detached(exc)
+    finally:
+        proxy = dispenser_url = None
+    # Raised outside except: no frame keeps the pool token, proxy or CDN URLs.
+    raise error from error.__cause__
+
+
+def _download_app(
+    package: str,
+    output: Path,
+    arch: str,
+    country: str | None,
+    proxy: str | None,
+    dispenser_url: str | None,
+    profile: str | None,
+    no_splits: bool,
+    no_extras: bool,
+) -> tuple[Path, str]:
     validate_package(package)
     if profile:
         chosen_profile = profile

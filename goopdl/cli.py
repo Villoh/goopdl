@@ -16,6 +16,7 @@ import httpx
 import typer
 from rich import print as rprint
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -52,6 +53,7 @@ from goopdl.auth import (
     DirectAuthError,
     DispenserRateLimitedError,
     DispenserUnavailableError,
+    PoolBusyError,
     clear_auth,
     direct_auth_enabled,
     ensure_pool,
@@ -128,6 +130,8 @@ app = typer.Typer(
     help="Download APKs from Google Play Store.",
     add_completion=False,
     no_args_is_help=True,
+    # Explicit: typer < 0.20 defaults to True and would print secret locals.
+    pretty_exceptions_show_locals=False,
 )
 
 
@@ -180,7 +184,7 @@ def main(
         try:
             direct_auth_enabled()
         except DirectAuthConfigurationError as exc:
-            err.print(f"[red]{exc}[/red]")
+            err.print(f"[red]{escape(str(exc))}[/red]")
             raise typer.Exit(code=2) from None
 
 
@@ -268,8 +272,8 @@ def auth(
     rprint(
         Panel.fit(
             f"[bold green]Authenticated[/bold green]\n"
-            f"Email  : {data.get('email', 'N/A')}\n"
-            f"GSF ID : {data.get('gsfId', 'N/A')}\n"
+            f"Email  : {escape(str(data.get('email', 'N/A')))}\n"
+            f"GSF ID : {escape(str(data.get('gsfId', 'N/A')))}\n"
             f"Saved  : {path}",
             title="Token",
         )
@@ -323,7 +327,10 @@ def _run_aastoken(email: str | None, password: str | None, oauth: bool, browser:
             err.print("[red]Browser OAuth capture failed.[/red]")
             raise typer.Exit(code=1) from None
         if email is not None and email.casefold() != captured_email.casefold():
-            err.print(f"[red]Browser signed in as {captured_email}, not {email}.[/red]")
+            err.print(
+                f"[red]Browser signed in as {escape(captured_email)}, "
+                f"not {escape(email)}.[/red]"
+            )
             raise typer.Exit(code=2) from None
         email = captured_email
     else:
@@ -456,6 +463,8 @@ def latest(
             profile=profile_key,
             raise_on_error=True,
         )
+    except PoolBusyError:
+        _exit_pool_busy(1)
     except DispenserUnavailableError as exc:
         if exc.reason != "profile_rejected":
             _exit_token_error(exc)
@@ -490,6 +499,8 @@ def latest(
                     profile=profile_key,
                     raise_on_error=True,
                 )
+            except PoolBusyError:
+                new_token = None  # another process owns the pool; skip this probe
             except DirectAuthError as exc:
                 if exc.status == 429:
                     _exit_token_error(exc)
@@ -506,12 +517,12 @@ def latest(
             except (RateLimitedError, NetworkError, MalformedResponseError) as exc:
                 _exit_transient_play_error(exc)
             except PlayAPIError as exc:
-                err.print(f"[dim]  probe {i + 1}: retry failed: {exc}[/dim]")
+                err.print(f"[dim]  probe {i + 1}: retry failed: {escape(str(exc))}[/dim]")
                 continue
         except (RateLimitedError, NetworkError, MalformedResponseError) as exc:
             _exit_transient_play_error(exc)
         except PlayAPIError as exc:
-            err.print(f"[dim]  probe {i + 1}: {gsf_prefix}... error: {exc}[/dim]")
+            err.print(f"[dim]  probe {i + 1}: {gsf_prefix}... error: {escape(str(exc))}[/dim]")
             continue
 
         vc = details.version_code
@@ -522,12 +533,12 @@ def latest(
             best_vc = vc
             consecutive_stable = 0
             rprint(
-                f"  probe {i + 1}/{len(tokens)}: gsf={gsf_prefix}... {vs} ({vc}) [bold green]^ new max[/bold green]"
+                f"  probe {i + 1}/{len(tokens)}: gsf={gsf_prefix}... {escape(vs)} ({vc}) [bold green]^ new max[/bold green]"
             )
         else:
             consecutive_stable += 1
             rprint(
-                f"  probe {i + 1}/{len(tokens)}: gsf={gsf_prefix}... {vs} ({vc}) [dim](stable {consecutive_stable}/{stable})[/dim]"
+                f"  probe {i + 1}/{len(tokens)}: gsf={gsf_prefix}... {escape(vs)} ({vc}) [dim](stable {consecutive_stable}/{stable})[/dim]"
             )
 
         if consecutive_stable >= stable:
@@ -547,11 +558,11 @@ def latest(
     table.add_column("Version Code", justify="right")
     for gsf, vs, vc in results:
         style = "bold green" if vc == best_vc_final else ""
-        table.add_row(gsf + "...", vs, str(vc), style=style)
+        table.add_row(gsf + "...", escape(vs), str(vc), style=style)
     console.print(table)
 
     rprint(
-        f"\n[bold green]Latest:[/bold green] {best_version} ({best_vc_final})"
+        f"\n[bold green]Latest:[/bold green] {escape(best_version)} ({best_vc_final})"
         + (f"  [dim]Region: {country.upper()}[/dim]" if country else "")
     )
 
@@ -638,7 +649,9 @@ def info(
         except DirectAuthError as exc:
             _exit_token_error(exc)
         except PlayAPIError as exc:
-            err.print(f"[red]{exc}[/red]")
+            if isinstance(exc.__cause__, DispenserRateLimitedError):
+                _exit_token_error(exc.__cause__)  # fetch_app_item (--raw)
+            err.print(f"[red]{escape(str(exc))}[/red]")
             raise typer.Exit(code=1) from None
 
     if raw:
@@ -647,18 +660,22 @@ def info(
         return
 
     assert details is not None and auth_data is not None
-    table = Table(title=details.title or package, show_header=False, title_style="bold")
+    table = Table(
+        title=escape(details.title or package), show_header=False, title_style="bold"
+    )
     table.add_column("Field", style="dim")
     table.add_column("Value")
-    table.add_row("Package", details.package)
-    table.add_row("Version", f"{details.version_string} ({details.version_code})")
+    table.add_row("Package", escape(details.package))
+    table.add_row(
+        "Version", f"{escape(details.version_string)} ({details.version_code})"
+    )
     if country:
         table.add_row("Region", country.upper())
-    table.add_row("Device", _device_label(auth_data))
-    table.add_row("Developer", details.developer or "N/A")
-    table.add_row("Rating", details.rating or "N/A")
-    table.add_row("Downloads", details.downloads or "N/A")
-    table.add_row("Play Store", details.play_url)
+    table.add_row("Device", escape(_device_label(auth_data)))
+    table.add_row("Developer", escape(details.developer or "N/A"))
+    table.add_row("Rating", escape(details.rating or "N/A"))
+    table.add_row("Downloads", escape(details.downloads or "N/A"))
+    table.add_row("Play Store", escape(details.play_url))
     console.print(table)
 
 
@@ -712,19 +729,19 @@ def search(
                     query, auth_data, limit=limit, country=country, proxy=proxy
                 )
         except PlayAPIError as exc:
-            err.print(f"[red]{exc}[/red]")
+            err.print(f"[red]{escape(str(exc))}[/red]")
             raise typer.Exit(code=1) from None
 
     if not results:
         rprint("[yellow]No results found.[/yellow]")
         raise typer.Exit()
 
-    table = Table(title=f'Results for "{query}"')
+    table = Table(title=f'Results for "{escape(query)}"')
     table.add_column("#", style="dim", width=4)
     table.add_column("Title", style="bold")
     table.add_column("Package")
     for i, app_item in enumerate(results, 1):
-        table.add_row(str(i), app_item["title"], app_item["package"])
+        table.add_row(str(i), escape(app_item["title"]), escape(app_item["package"]))
     console.print(table)
 
 
@@ -754,7 +771,7 @@ def list_splits_cmd(
                 auth_data = _require_auth(arch, dispenser, force=True)
                 splits = api_list_splits(package, auth_data)
         except PlayAPIError as exc:
-            err.print(f"[red]{exc}[/red]")
+            err.print(f"[red]{escape(str(exc))}[/red]")
             raise typer.Exit(code=1) from None
 
     if not splits:
@@ -765,7 +782,7 @@ def list_splits_cmd(
     table.add_column("#", style="dim", width=4)
     table.add_column("Split name")
     for i, name in enumerate(splits, 1):
-        table.add_row(str(i), name)
+        table.add_row(str(i), escape(name))
     console.print(table)
     rprint(f"\n[dim]Total: {len(splits)} splits[/dim]")
 
@@ -929,10 +946,10 @@ def inspect_delivery_cmd(
         )
         raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
     except VersionUnavailableError as exc:
-        err.print(f"[red]{exc}[/red]")
+        err.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=VERSION_UNAVAILABLE_EXIT_CODE) from None
     except PlayAPIError as exc:
-        err.print(f"[red]{exc}[/red]")
+        err.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None
     # Play Store details describe the current listing, not necessarily this version.
     version_name = (
@@ -954,11 +971,11 @@ def inspect_delivery_cmd(
         print(encoded)
     elif not json_output:
         rprint(
-            f"[bold]{package}[/bold] {version_name or 'version name unknown'} "
-            f"({version_code}) [{arch}]"
+            f"[bold]{package}[/bold] {escape(version_name or 'version name unknown')} "
+            f"({version_code}) \\[{arch}]"
         )
         for split in payload["splits"]:
-            rprint(f"- {split}")
+            rprint(f"- {escape(split)}")
 
 
 @app.command()
@@ -1071,6 +1088,8 @@ def _download_arch(
             profile=profile,
             raise_on_error=True,
         )
+    except PoolBusyError:
+        _exit_pool_busy(AUTH_UNAVAILABLE_EXIT_CODE)
     except DirectAuthError as exc:
         _exit_token_error(exc)
     if not auth_data:
@@ -1098,12 +1117,12 @@ def _download_arch(
                     package, version, arch, dispenser, country, proxy, profile
                 )
             except VersionUnavailableError as exc:
-                err.print(f"[red]{exc}[/red]")
+                err.print(f"[red]{escape(str(exc))}[/red]")
                 raise typer.Exit(code=VERSION_UNAVAILABLE_EXIT_CODE) from None
             except RateLimitedError as exc:
                 _exit_transient_play_error(exc)
             except PlayAPIError as exc:
-                err.print(f"[red]{exc}[/red]")
+                err.print(f"[red]{escape(str(exc))}[/red]")
                 raise typer.Exit(code=1) from None
 
     try:
@@ -1128,18 +1147,18 @@ def _download_arch(
         )
         raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
     except VersionUnavailableError as exc:
-        err.print(f"[red]{exc}[/red]")
+        err.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=VERSION_UNAVAILABLE_EXIT_CODE) from None
     except PlayAPIError as exc:
-        err.print(f"[red]{exc}[/red]")
+        err.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None
 
     label = (
         f"requested version code {vc}"
         if version is not None and version.isdigit()
-        else f"{version or details.version_string}  (vc {vc})"
+        else f"{escape(version or details.version_string)}  (vc {vc})"
     )
-    rprint(Panel.fit(f"[bold]{details.title}[/bold]\n{label}", title=package))
+    rprint(Panel.fit(f"[bold]{escape(details.title)}[/bold]\n{label}", title=package))
 
     # ── build download specs ────────────────────────────────────────────
     base_name = f"{package}-{vc}.apk"
@@ -1325,6 +1344,8 @@ def fast_download(
     except (IntegrityError, DownloadError) as exc:
         err.print(str(exc), style="red", markup=False)
         raise typer.Exit(code=1) from None
+    except PoolBusyError:
+        _exit_pool_busy(1)
     except RateLimitedError as exc:
         if isinstance(exc.__cause__, DispenserRateLimitedError):
             _exit_token_error(exc.__cause__)
@@ -1334,13 +1355,14 @@ def fast_download(
         )
         raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
     except PlayAPIError as exc:
-        err.print(f"[red]{exc}[/red]")
+        err.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=1) from None
 
     # soft_wrap: a long --output path must never get line-broken here — scripts
     # (e.g. the Airflow goopdl fallback) parse this exact line from stdout.
     console.print(
-        f"[green bold]Downloaded[/green bold] {path}  [dim]({version_string})[/dim]",
+        f"[green bold]Downloaded[/green bold] {escape(str(path))}  "
+        f"[dim]({escape(version_string)})[/dim]",
         soft_wrap=True,
     )
 
@@ -1353,8 +1375,16 @@ def _exit_transient_play_error(exc: PlayAPIError) -> NoReturn:
     if isinstance(exc, RateLimitedError):
         err.print("[red]Google Play rate limited requests (HTTP 429); retry later.[/red]")
         raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
-    err.print(f"[red]{exc}[/red]")
+    err.print(f"[red]{escape(str(exc))}[/red]")
     raise typer.Exit(code=1) from None
+
+
+def _exit_pool_busy(code: int) -> NoReturn:
+    err.print(
+        "[red]Token pool is busy (another goopdl process holds the lock); "
+        "retry later.[/red]"
+    )
+    raise typer.Exit(code=code) from None
 
 
 def _exit_token_error(exc: DirectAuthError) -> NoReturn:
@@ -1369,8 +1399,15 @@ def _exit_token_error(exc: DirectAuthError) -> NoReturn:
             "retry later.[/red]"
         )
         raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
-    if isinstance(exc, DispenserUnavailableError):
-        err.print(f"[red]{exc} It may be down; retry later.[/red]")
+    if isinstance(exc, DispenserUnavailableError) and exc.reason == "profile_rejected":
+        # The dispenser answered: it is up, it just refused every profile.
+        last = "no authToken" if exc.status == 200 else f"HTTP {exc.status}"
+        err.print(
+            "[red]Authentication failed — all profiles rejected "
+            f"(last dispenser response: {last}).[/red]"
+        )
+    elif isinstance(exc, DispenserUnavailableError):
+        err.print(f"[red]{escape(str(exc))} It may be down; retry later.[/red]")
     else:
         err.print("[red]Direct Google authentication failed.[/red]")
     raise typer.Exit(code=AUTH_UNAVAILABLE_EXIT_CODE) from None
@@ -1449,7 +1486,7 @@ def _resolve_version_string(
     stays consistent.
     Raises PlayAPIError if not found within 20 probes.
     """
-    rprint(f"[dim]Resolving [bold]{version_str}[/bold] — probing fresh tokens...[/dim]")
+    rprint(f"[dim]Resolving [bold]{escape(version_str)}[/bold] — probing fresh tokens...[/dim]")
     for attempt in range(1, 21):
         token = _fetch_probe_token(
             arch=arch,
@@ -1469,16 +1506,17 @@ def _resolve_version_string(
         except (RateLimitedError, NetworkError, MalformedResponseError):
             raise  # more fresh tokens would only spend dispenser quota
         except PlayAPIError as exc:
-            err.print(f"[dim]  attempt {attempt}: {exc}[/dim]")
+            err.print(f"[dim]  attempt {attempt}: {escape(str(exc))}[/dim]")
             time.sleep(1)
             continue
         if details.version_string == version_str:
             rprint(
-                f"[green]  Found {version_str} -> vc={details.version_code} (attempt {attempt})[/green]"
+                f"[green]  Found {escape(version_str)} -> vc={details.version_code} (attempt {attempt})[/green]"
             )
             return details.version_code, token
         err.print(
-            f"[dim]  attempt {attempt}: got {details.version_string}, want {version_str}[/dim]"
+            f"[dim]  attempt {attempt}: got {escape(details.version_string)}, "
+            f"want {escape(version_str)}[/dim]"
         )
         time.sleep(1)
     raise VersionUnavailableError(
