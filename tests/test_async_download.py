@@ -1,0 +1,236 @@
+import asyncio
+import base64
+import contextlib
+import hashlib
+import io
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import httpx
+
+from goopdl.download import (
+    DownloadError,
+    DownloadSpec,
+    IntegrityError,
+    download_batch,
+    download_files,
+)
+
+
+def sha256(content):
+    value = hashlib.sha256(content).digest()
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def mock_client(handler):
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+class DownloadFilesTest(unittest.IsolatedAsyncioTestCase):
+    async def test_runs_in_event_loop_without_stdout_and_reports_progress(self):
+        events = []
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            dest = Path(directory) / "base.apk"
+            spec = DownloadSpec(
+                "https://cdn.invalid/base",
+                dest,
+                label="base.apk",
+                expected_size=4,
+                sha256=sha256(b"good"),
+            )
+            async with mock_client(lambda _r: httpx.Response(200, content=b"good")) as client:
+                with contextlib.redirect_stdout(stdout):
+                    result = await download_files(
+                        [spec],
+                        require_integrity=True,
+                        on_progress=lambda *event: events.append(event),
+                        client=client,
+                    )
+            self.assertEqual(dest.read_bytes(), b"good")
+        self.assertIsNone(result)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(events[0], ("base.apk", 0, 4))
+        self.assertEqual(events[-1], ("base.apk", 4, 4))
+
+    async def test_cdn_status_errors_are_download_errors(self):
+        for status, retryable in ((403, False), (429, True), (503, True)):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                spec = DownloadSpec(
+                    "https://cdn.invalid/base?token=secret",
+                    Path(directory) / "base.apk",
+                    label="base.apk",
+                )
+                async with mock_client(lambda _r, s=status: httpx.Response(s)) as client:
+                    with self.assertRaises(DownloadError) as raised:
+                        await download_files([spec], client=client)
+                # Compat: pre-existing "except IntegrityError" still catches it.
+                self.assertIsInstance(raised.exception, IntegrityError)
+                self.assertEqual(raised.exception.status_code, status)
+                self.assertEqual(raised.exception.retryable, retryable)
+                self.assertNotIn("secret", str(raised.exception))
+                self.assertEqual(list(Path(directory).iterdir()), [])
+
+    async def test_transport_errors_are_retryable_only_when_transient(self):
+        cases = [
+            (httpx.ReadTimeout, True),
+            (httpx.PoolTimeout, True),
+            (httpx.ConnectError, True),
+            (httpx.ReadError, True),
+            (httpx.RemoteProtocolError, True),
+            (httpx.UnsupportedProtocol, False),
+            (httpx.ProxyError, False),
+            (httpx.LocalProtocolError, False),
+        ]
+        for error, retryable in cases:
+
+            def handler(request, error=error):
+                raise error("failed", request=request)
+
+            with (
+                self.subTest(error=error.__name__),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                spec = DownloadSpec("https://cdn.invalid/b", Path(directory) / "b.apk")
+                async with mock_client(handler) as client:
+                    with self.assertRaises(DownloadError) as raised:
+                        await download_files([spec], client=client)
+                self.assertIsNone(raised.exception.status_code)
+                self.assertEqual(raised.exception.retryable, retryable)
+
+    async def test_corrupt_gzip_is_non_retryable_download_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spec = DownloadSpec(
+                "https://cdn.invalid/obb?token=secret",
+                Path(directory) / "main.obb",
+                label="main.obb",
+                gzipped=True,
+            )
+            async with mock_client(lambda _r: httpx.Response(200, content=b"nope")) as client:
+                with self.assertRaises(DownloadError) as raised:
+                    await download_files([spec], client=client)
+            self.assertEqual(list(Path(directory).iterdir()), [])
+        self.assertFalse(raised.exception.retryable)
+        self.assertIsNone(raised.exception.status_code)
+        self.assertIn("main.obb", str(raised.exception))
+        self.assertNotIn("secret", str(raised.exception))
+
+    async def test_digest_mismatch_stays_integrity_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spec = DownloadSpec(
+                "https://cdn.invalid/base",
+                Path(directory) / "base.apk",
+                label="base.apk",
+                expected_size=4,
+                sha256=sha256(b"good"),
+            )
+            async with mock_client(lambda _r: httpx.Response(200, content=b"bad!")) as client:
+                with self.assertRaisesRegex(IntegrityError, "digest mismatch") as raised:
+                    await download_files([spec], client=client)
+            self.assertNotIsInstance(raised.exception, DownloadError)
+
+    @staticmethod
+    def _slow_handler(started, fail=None):
+        """Slow URLs stream one chunk, set ``started``, then stall for 0.3 s."""
+
+        async def slow_body():
+            yield b"a"
+            started.set()  # the consumer has written the first chunk to .part
+            await asyncio.sleep(0.3)
+            yield b"b"
+
+        async def handler(request):
+            if request.url.path == "/fail":
+                await started.wait()
+                return httpx.Response(fail)
+            return httpx.Response(200, content=slow_body())
+
+        return handler
+
+    async def test_failure_cancels_sibling_downloads(self):
+        started = asyncio.Event()
+        with tempfile.TemporaryDirectory() as directory:
+            specs = [
+                DownloadSpec("https://cdn.invalid/slow", Path(directory) / "slow.apk"),
+                DownloadSpec("https://cdn.invalid/fail", Path(directory) / "fail.apk"),
+            ]
+            async with mock_client(self._slow_handler(started, 503)) as client:
+                with self.assertRaises(DownloadError) as raised:
+                    await download_files(specs, client=client)
+                self.assertEqual(raised.exception.status_code, 503)
+                self.assertEqual(list(Path(directory).iterdir()), [])
+                await asyncio.sleep(0.5)  # longer than the slow download
+                self.assertEqual(list(Path(directory).iterdir()), [])
+
+    async def test_external_cancel_stops_all_downloads(self):
+        started = asyncio.Event()
+        with tempfile.TemporaryDirectory() as directory:
+            specs = [
+                DownloadSpec("https://cdn.invalid/a", Path(directory) / "a.apk"),
+                DownloadSpec("https://cdn.invalid/b", Path(directory) / "b.apk"),
+            ]
+            async with mock_client(self._slow_handler(started)) as client:
+                task = asyncio.create_task(download_files(specs, client=client))
+                await started.wait()
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                self.assertEqual(list(Path(directory).iterdir()), [])
+                await asyncio.sleep(0.5)
+                self.assertEqual(list(Path(directory).iterdir()), [])
+
+    async def test_on_progress_exception_aborts_and_propagates(self):
+        class Stop(Exception):
+            pass
+
+        def on_progress(_label, done, _total):
+            if done:
+                raise Stop
+
+        with tempfile.TemporaryDirectory() as directory:
+            spec = DownloadSpec("https://cdn.invalid/b", Path(directory) / "b.apk")
+            async with mock_client(lambda _r: httpx.Response(200, content=b"x")) as client:
+                with self.assertRaises(Stop):
+                    await download_files([spec], on_progress=on_progress, client=client)
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
+    async def test_max_concurrent_below_one_is_rejected(self):
+        spec = DownloadSpec("https://cdn.invalid/b", Path("unused.apk"))
+        async with mock_client(lambda _r: httpx.Response(200)) as client:
+            for value in (0, -1):
+                with (
+                    self.subTest(value=value),
+                    self.assertRaisesRegex(ValueError, "max_concurrent"),
+                ):
+                    await asyncio.wait_for(
+                        download_files([spec], max_concurrent=value, client=client),
+                        timeout=1,
+                    )
+
+    async def test_download_batch_in_running_loop_points_to_download_files(self):
+        with self.assertRaisesRegex(RuntimeError, "download_files"):
+            download_batch([])
+
+
+class SyncDownloadBatchTest(unittest.TestCase):
+    def test_download_batch_still_works_without_a_loop(self):
+        def handler(_request):
+            return httpx.Response(200, content=b"good")
+
+        real_client = httpx.AsyncClient
+
+        def fake_client(**kwargs):
+            return real_client(transport=httpx.MockTransport(handler))
+
+        with tempfile.TemporaryDirectory() as directory:
+            dest = Path(directory) / "base.apk"
+            spec = DownloadSpec("https://cdn.invalid/base", dest, label="base.apk")
+            with patch("goopdl.download.httpx.AsyncClient", fake_client):
+                download_batch([spec])
+            self.assertEqual(dest.read_bytes(), b"good")
+
+
+if __name__ == "__main__":
+    unittest.main()

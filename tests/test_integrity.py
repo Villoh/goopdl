@@ -20,12 +20,12 @@ from goopdl.api import (
     _extract_delivery_from_fields,
 )
 from goopdl.download import (
+    DownloadError,
     DownloadSpec,
     IntegrityError,
     _download_one,
     _select_digest,
     download_batch,
-    make_progress,
     write_manifest,
 )
 
@@ -146,6 +146,19 @@ class DeliveryIntegrityTest(unittest.TestCase):
             )
             self.assertNotIn("secret", manifest.read_text(encoding="utf-8"))
 
+    def test_manifest_failure_leaves_no_temp_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec = DownloadSpec(
+                "url", root / "base.apk", expected_size=4, sha256=digest(b"base", "sha256")
+            )
+            with (
+                patch("goopdl.download.os.replace", side_effect=OSError("disk full")),
+                self.assertRaises(OSError),
+            ):
+                write_manifest(root / "manifest.json", [spec])
+            self.assertEqual(list(root.iterdir()), [])
+
 
 class DownloadErrorRedactionTest(unittest.IsolatedAsyncioTestCase):
     async def test_http_error_does_not_expose_url(self):
@@ -167,15 +180,17 @@ class DownloadErrorRedactionTest(unittest.IsolatedAsyncioTestCase):
                 label="base.apk",
             )
             with self.assertRaisesRegex(
-                IntegrityError, "download failed for base.apk"
+                DownloadError, "download failed for base.apk"
             ) as raised:
                 await _download_one(
                     spec,
                     cast(httpx.AsyncClient, Client()),
-                    make_progress(),
+                    None,
                     asyncio.Semaphore(1),
                 )
             self.assertNotIn("secret", str(raised.exception))
+            self.assertIsNone(raised.exception.__cause__)
+            self.assertTrue(raised.exception.__suppress_context__)
 
 
 class IncrementalDownloadTest(unittest.IsolatedAsyncioTestCase):
@@ -197,7 +212,7 @@ class IncrementalDownloadTest(unittest.IsolatedAsyncioTestCase):
             result = await _download_one(
                 spec,
                 cast(httpx.AsyncClient, Client()),
-                make_progress(),
+                None,
                 asyncio.Semaphore(1),
             )
 
@@ -237,7 +252,7 @@ class IncrementalDownloadTest(unittest.IsolatedAsyncioTestCase):
             await _download_one(
                 spec,
                 cast(httpx.AsyncClient, Client()),
-                make_progress(),
+                None,
                 asyncio.Semaphore(1),
             )
 

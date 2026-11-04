@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import unittest
+from importlib import import_module
 from unittest.mock import patch
 
 import httpx
@@ -22,7 +23,7 @@ from goopdl.api import (
 )
 from goopdl.auth import DirectAuthConfigurationError, DirectAuthError
 from goopdl.browser_oauth import BrowserOAuthError
-from goopdl.download import IntegrityError
+from goopdl.download import DownloadError, IntegrityError
 
 AUTH = {"authToken": "token"}
 DTOK = "signed-dtok-value"
@@ -45,6 +46,7 @@ class HierarchyTest(unittest.TestCase):
             (AuthExpiredError, PlayAPIError),
             (NetworkError, PlayAPIError),
             (IntegrityError, RuntimeError),
+            (DownloadError, IntegrityError),
             (DirectAuthError, RuntimeError),
             (DirectAuthConfigurationError, ValueError),
             (AASTokenError, ValueError),
@@ -52,8 +54,24 @@ class HierarchyTest(unittest.TestCase):
         ]
         for cls, base in cases:
             with self.subTest(cls=cls.__name__):
-                self.assertTrue(issubclass(cls, errors.GoopdlError))
+                self.assertIn(cls.__name__, errors.__all__)
                 self.assertTrue(issubclass(cls, base))
+
+    def test_every_public_exception_is_exported(self):
+        import inspect
+
+        for module in {import_module(m) for m in errors._LAZY.values()}:
+            for name, obj in vars(module).items():
+                if (
+                    inspect.isclass(obj)
+                    and issubclass(obj, BaseException)
+                    and obj.__module__ == module.__name__
+                    and not name.startswith("_")
+                ):
+                    with self.subTest(module=module.__name__, name=name):
+                        self.assertIn(name, errors.__all__)
+                        self.assertIn(name, goopdl.__all__)
+                        self.assertEqual(errors._LAZY.get(name), module.__name__)
 
     def test_reexports_are_the_same_objects(self):
         for name in errors.__all__:
