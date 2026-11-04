@@ -272,18 +272,16 @@ def _direct_credentials() -> Optional[tuple[str, str]]:
     aas_token = os.environ.get("GOOPDL_AAS_TOKEN", "").strip()
     if not email and not aas_token:
         return None
+    message = None
     if not email:
-        raise DirectAuthConfigurationError(
-            "Missing required environment variable: GOOPDL_ACCOUNT_EMAIL"
-        )
-    if not aas_token:
-        raise DirectAuthConfigurationError(
-            "Missing required environment variable: GOOPDL_AAS_TOKEN"
-        )
-    if not aas_token.startswith("aas_et/"):
-        raise DirectAuthConfigurationError(
-            "GOOPDL_AAS_TOKEN must start with aas_et/ (not g.a or oauth2_4/)"
-        )
+        message = "Missing required environment variable: GOOPDL_ACCOUNT_EMAIL"
+    elif not aas_token:
+        message = "Missing required environment variable: GOOPDL_AAS_TOKEN"
+    elif not aas_token.startswith("aas_et/"):
+        message = "GOOPDL_AAS_TOKEN must start with aas_et/ (not g.a or oauth2_4/)"
+    if message:
+        email = aas_token = None  # the traceback keeps this frame's locals
+        raise DirectAuthConfigurationError(message)
     return email, aas_token
 
 
