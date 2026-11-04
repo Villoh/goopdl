@@ -19,7 +19,7 @@ irm https://villoh.github.io/goopdl/install.ps1 | iex
 El script descarga el binario de la release de GitHub, comprueba su SHA-256 y lo
 copia a `~/.local/bin` (Linux/macOS) o `%LOCALAPPDATA%\goopdl\bin` (Windows).
 Nunca modifica tu `PATH`: si hace falta, imprime el comando para añadir el
-directorio. Define `GOOPDL_VERSION=1.4.1` para fijar una versión y
+directorio. Define `GOOPDL_VERSION=2.0.0` para fijar una versión y
 `GOOPDL_INSTALL_DIR` para cambiar el destino. Para actualizar, vuelve a ejecutarlo.
 
 El resto de esta página da por hecho Python 3.10 o posterior.
