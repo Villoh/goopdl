@@ -481,6 +481,13 @@ html:not(.js) .tabs { display: none; }
 .md pre code { font-size: inherit; }
 .md pre .c { color: var(--t-muted); }
 .md pre .p { color: var(--orange); }
+/* Pygments (`tk-` prefix): keywords, strings, numbers, comments, def/class names. The block surface stays dark in both themes. */
+.md pre [class^="tk-k"], .md pre .tk-ow { color: var(--orange); }
+.md pre [class^="tk-s"] { color: #A9C98E; }
+.md pre [class^="tk-m"], .md pre .tk-il { color: #E2B866; }
+.md pre [class^="tk-c"] { color: var(--t-muted); }
+.md pre .tk-nf, .md pre .tk-nc, .md pre .tk-nd, .md pre .tk-fm, .md pre .tk-nn, .md pre .tk-ne { color: #8DB7E0; }
+.md pre .tk-nb { color: #D9A5E6; }
 /* icon button: copy → check; the two icons cross-fade and pop */
 .copy-code {
   position: relative; display: grid; place-items: center; width: 32px; height: 32px; flex: none;
