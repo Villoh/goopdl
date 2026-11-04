@@ -95,6 +95,19 @@ goopdl download com.whatsapp -v 231205015        # una versión concreta
 goopdl download com.whatsapp -a armv7            # build para ARM de 32 bits
 ```
 
+## Como librería
+
+```python
+from pathlib import Path
+
+from goopdl import api
+
+apk, version = api.download_app("com.whatsapp", Path("apks"))
+```
+
+Para servicios y código async, la API paso a paso, los errores y los
+reintentos, mira la [guía de la librería](https://github.com/Villoh/goopdl/blob/main/docs/es/library.md).
+
 ## Documentación
 
 | Guía | Contenido |
@@ -103,6 +116,7 @@ goopdl download com.whatsapp -a armv7            # build para ARM de 32 bits
 | [Referencia de comandos](https://github.com/Villoh/goopdl/blob/main/docs/es/commands.md) | Todos los comandos y opciones, archivos generados y códigos de salida |
 | [Autenticación](https://github.com/Villoh/goopdl/blob/main/docs/es/authentication.md) | Tokens anónimos, dispensadores propios, modo cuenta de Google y tokens AAS |
 | [Cómo funciona](https://github.com/Villoh/goopdl/blob/main/docs/es/how-it-works.md) | Flujo de descarga, pool de tokens, despliegues por fases y perfiles de dispositivo |
+| [Librería de Python](https://github.com/Villoh/goopdl/blob/main/docs/es/library.md) | Referencia de la API, backends async, errores y reintentos, migración desde 1.4.x |
 
 ## Créditos
 

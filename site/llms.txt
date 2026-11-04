@@ -10,6 +10,7 @@ Key facts:
 - Any version: `-v` takes a version code (`231205015`) or a version string (`434.0.0.44.74`).
 - Regional builds: `--country` plus `--proxy`. Verified downloads: `--integrity-manifest` checks files against Google's SHA-256 digests.
 - After a split download it prints the matching `adb install-multiple` command.
+- Also a Python library: `goopdl.api` (details, purchase, delivery, `download_app`), `goopdl.auth` (token pool), `goopdl.download` (async `download_files`), `goopdl.errors` (typed errors).
 - Independent project, not affiliated with or endorsed by Google. Hard fork of appknox/gplaydl.
 
 ## Docs
@@ -18,6 +19,7 @@ Key facts:
 - [Command reference](https://villoh.github.io/goopdl/docs/commands.md): every command and flag, output file names, integrity manifest, exit codes
 - [Authentication](https://villoh.github.io/goopdl/docs/authentication.md): anonymous tokens, custom dispensers, Google account mode, getting an AAS token
 - [How it works](https://villoh.github.io/goopdl/docs/how-it-works.md): download pipeline, token pool, staged rollouts, device profiles, architectures
+- [Python library](https://villoh.github.io/goopdl/docs/library.md): using goopdl from Python and async backends, API reference, error hierarchy and retries, security, migrating from 1.4.x
 
 Every guide is also a web page at https://villoh.github.io/goopdl/docs/<name>/ (Spanish: /es/docs/<name>/). The full English text in one file: https://villoh.github.io/goopdl/llms-full.txt
 
@@ -27,6 +29,7 @@ Every guide is also a web page at https://villoh.github.io/goopdl/docs/<name>/ (
 - [Referencia de comandos](https://villoh.github.io/goopdl/docs/es/commands.md)
 - [Autenticación](https://villoh.github.io/goopdl/docs/es/authentication.md)
 - [Cómo funciona](https://villoh.github.io/goopdl/docs/es/how-it-works.md)
+- [Librería de Python](https://villoh.github.io/goopdl/docs/es/library.md)
 
 ## Optional
 
