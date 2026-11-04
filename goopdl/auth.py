@@ -2,7 +2,9 @@
 
 Tokens are cached as 0600 JSON files (auth-*, token-pool-*, pool-index-*)
 in a 0700 directory resolved by :func:`get_config_dir`: ``$GOOPDL_CONFIG_DIR``,
-else ``$XDG_CONFIG_HOME/goopdl``, else ``~/.config/goopdl``.
+else ``$XDG_CONFIG_HOME/goopdl``, else ``~/.config/goopdl``. Account mode
+stores only its device registration there (direct-device-*, no email, AAS
+token or bearer); its bearer stays in process memory.
 
 Note: older releases always used ``~/.config/goopdl``. If XDG_CONFIG_HOME
 points elsewhere, existing cached tokens are not found there and are minted
@@ -206,12 +208,13 @@ def clear_auth() -> None:
 
 
 def _clear_cached(email: Optional[str]) -> None:
-    """clear_auth; with *email*, forget only that account's sessions."""
+    """clear_auth; with *email*, only that account's device records and sessions."""
     directory = get_config_dir()
-    for pattern in ("auth-*.json", "token-pool-*.json", "pool-index-*.json"):
+    acct = _account_hash(email) if email else None
+    devices = f"direct-device-{acct}-*.json" if acct else "direct-device-*.json"
+    for pattern in ("auth-*.json", "token-pool-*.json", "pool-index-*.json", devices):
         for f in directory.glob(pattern):
             f.unlink(missing_ok=True)
-    acct = _account_hash(email) if email else None
     with _direct_guard:
         for store in (_direct_sessions, _direct_devices):
             for key in list(store):
@@ -961,6 +964,29 @@ def _pool_lock(
     handle releases the native lock, including on exceptions or process death.
     """
     path = _pool_path(arch, country, profile).with_suffix(".lock")
+    try:
+        handle = _acquire_file_lock(path, blocking=blocking)
+    except OSError as exc:
+        _pool_cache_error(exc)
+        if raise_on_error and isinstance(exc, TimeoutError):
+            raise PoolBusyError("Token pool lock acquisition timed out") from None
+        yield False
+        return
+    if handle is None:
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        handle.close()
+
+
+def _acquire_file_lock(path: Path, *, blocking: bool = True):
+    """Open and lock the stable sidecar *path*; close the handle to release.
+
+    None when *blocking* is False and another holder has it. Raises OSError,
+    TimeoutError after the patchable _POOL_LOCK_TIMEOUT.
+    """
     handle = None
     acquired = False
     try:
@@ -1012,26 +1038,14 @@ def _pool_lock(
         # otherwise a simultaneous first opener could write another owner's byte.
         if acquired and os.fstat(handle.fileno()).st_size == 0:
             handle.write(b"\0")
-    except OSError as exc:
-        if handle is not None:
-            handle.close()
-        _pool_cache_error(exc)
-        if raise_on_error and isinstance(exc, TimeoutError):
-            raise PoolBusyError("Token pool lock acquisition timed out") from None
-        yield False
-        return
     except BaseException:
         if handle is not None:
             handle.close()
         raise
     if not acquired:
         handle.close()
-        yield False
-        return
-    try:
-        yield True
-    finally:
-        handle.close()
+        return None
+    return handle
 
 
 def _load_pool(
@@ -1417,17 +1431,111 @@ def _direct_session_impl(
         email = aas_token = None  # type: ignore[assignment]
 
 
+_DEVICE_SCHEMA = 1
+_DEVICE_FIELDS = ("gsfId", "deviceCheckInConsistencyToken", "deviceConfigToken")
+
+
+def _device_path(
+    acct: str, arch: str, country: Optional[str], profile_key: str
+) -> Optional[Path]:
+    """direct-device-<account hash>-<arch>[-CC]-profile-<key>.json, or None."""
+    suffix = f"-{_sanitize_country(country)}" if country else ""
+    try:
+        suffix += _profile_suffix(arch, profile_key)
+        return get_config_dir() / f"direct-device-{acct}-{_arch_key(arch)}{suffix}.json"
+    except ValueError:  # unknown arch or unsafe key: keep this one in memory
+        return None
+
+
+def _load_device(path: Path, acct: str) -> Optional[dict]:
+    """A valid persisted registration, or None (a bad one is logged and ignored)."""
+    if path.is_symlink():
+        raise OSError(errno.ELOOP, "Direct auth device record must not be a symlink")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except ValueError:  # truncated, not JSON or not UTF-8
+        data = None
+    if (
+        isinstance(data, dict) and data.get("v") == _DEVICE_SCHEMA
+        and data.get("acct") == acct
+        and all(isinstance(data.get(k), str) and data[k].isprintable()
+                for k in _DEVICE_FIELDS)
+        and re.fullmatch(r"[0-9a-f]{1,16}", data["gsfId"]) and data["deviceConfigToken"]
+    ):
+        return {k: data[k] for k in _DEVICE_FIELDS}
+    logger.warning("Discarding an unusable direct-auth device record (%s).", path.name)
+    return None
+
+
 def _direct_device(
     devkey: tuple, selected: tuple[str, dict], country: Optional[str],
     proxy: Optional[str], reset: bool,
 ) -> dict:
-    """The account's device for *devkey*; registers one if none (or *reset*)."""
-    device = None if reset else _direct_devices.get(devkey)
+    """The account's device for *devkey*; registers one if none (or *reset*).
+
+    The registration (never the email, AAS token or bearer) is shared with
+    other processes through a 0600 file; without a usable disk it stays in
+    memory, as account mode never required one.
+    """
+    _, acct, arch, _, profile_key = devkey
+    path = _device_path(acct, arch, country, profile_key)
+    known = None if reset else _direct_devices.get(devkey)
+    device = None
+    if path is not None:
+        try:
+            # One registration across threads (devkey lock) and processes.
+            handle = _acquire_file_lock(path.with_suffix(".lock"))
+            assert handle is not None  # blocking: acquired or raised
+            try:
+                if reset:
+                    path.unlink(missing_ok=True)
+                device = _load_device(path, acct)
+                if device is None:
+                    device = known or _new_device(selected, country, proxy)
+                    _atomic_pool_json(path, {"v": _DEVICE_SCHEMA, "acct": acct,
+                                             **device, "created_at": time.time()})
+                else:
+                    logger.debug("Reusing the direct-auth device ***%s.",
+                                 device["gsfId"][-4:])
+            finally:
+                handle.close()
+        except TimeoutError:
+            raise PoolBusyError("Direct auth device lock acquisition timed out") from None
+        except OSError as exc:
+            logger.warning(
+                "Direct auth device cache unavailable (%s); continuing in memory.",
+                type(exc).__name__,
+            )
     if device is None:
-        device = _direct_step(_register_device, selected, country, proxy)
-        logger.debug("Registered a direct-auth device (gsfId ***%s).", device["gsfId"][-4:])
+        device = known or _new_device(selected, country, proxy)
     _direct_devices[devkey] = device
     return device
+
+
+def _new_device(
+    selected: tuple[str, dict], country: Optional[str], proxy: Optional[str]
+) -> dict:
+    device = _direct_step(_register_device, selected, country, proxy)
+    logger.debug("Registered a direct-auth device ***%s.", device["gsfId"][-4:])
+    return device
+
+
+def _direct_device_known(
+    arch: str, country: Optional[str], profile: Optional[str] = None
+) -> bool:
+    """Whether account mode already registered a device for *profile* (no I/O lock)."""
+    email = _direct_credentials()[0]  # type: ignore[index]
+    acct = _account_hash(email)
+    email = None
+    selected = _direct_profile(arch, profile)
+    if not selected:
+        return False
+    devkey = (str(get_config_dir()), acct, arch,
+              country.upper() if country else None, selected[0])
+    path = _device_path(acct, arch, country, selected[0])
+    return devkey in _direct_devices or (path is not None and path.is_file())
 
 
 def ensure_auth(

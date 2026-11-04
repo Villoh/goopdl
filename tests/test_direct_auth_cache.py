@@ -4,9 +4,12 @@ Like Google, the fake hands out a new androidId on every checkin and a new
 bearer on every /auth, so request counts show reused and new devices.
 """
 
+import json
 import logging
+import multiprocessing
 import os
 import socket
+import stat
 import tempfile
 import threading
 import time
@@ -354,6 +357,229 @@ class MemoryCacheTest(DirectCacheCase):
             lock.release()
         self.assertEqual(0, os.waitstatus_to_exitcode(status))
         self.assertEqual(1, len(auth._direct_sessions))  # the parent keeps its own
+
+
+def _cold_process(config_dir, start, results):
+    """One spawned process with a cold memory cache (see DiskTest)."""
+    fake = DirectFake()
+    with isolated_env({"GOOPDL_CONFIG_DIR": config_dir, "GOOPDL_ACCOUNT_EMAIL": EMAIL,
+                       "GOOPDL_AAS_TOKEN": AAS}), \
+            patch.object(socket.socket, "connect", no_sockets), \
+            patch("httpx.post", side_effect=fake.post), \
+            patch("httpx.get", side_effect=fake.get):
+        start.wait(60)
+        try:
+            token = auth.pick_pool_token(profile="Pv", raise_on_error=True)
+            results.put((fake.n("checkin"), fake.n("auth"), token["gsfId"], os.getpid()))
+        except BaseException as exc:  # noqa: BLE001
+            results.put(repr(exc))
+
+
+class DiskTest(DirectCacheCase):
+    def records(self, name="c"):
+        return sorted((self.tmp / name).glob("direct-device-*.json"))
+
+    def test_record_name_contents_and_permissions(self):
+        self.client().details(PKG)
+        (record,) = self.records()
+        self.assertRegex(record.name, r"^direct-device-[0-9a-f]{16}-arm64-profile-Pv\.json$")
+        data = json.loads(record.read_text())
+        self.assertEqual({"v", "acct", "gsfId", "deviceCheckInConsistencyToken",
+                          "deviceConfigToken", "created_at"}, set(data))
+        self.assertEqual((1, "1001"), (data["v"], data["gsfId"]))
+        lock = record.with_suffix(".lock")
+        self.assertTrue(lock.is_file())
+        if os.name != "nt":
+            self.assertEqual(0o600, stat.S_IMODE(record.stat().st_mode))
+            self.assertEqual(0o600, stat.S_IMODE(lock.stat().st_mode))
+            self.assertEqual(0o700, stat.S_IMODE(record.parent.stat().st_mode))
+
+    @unittest.skipIf(os.name == "nt", "POSIX permissions")
+    def test_an_open_directory_is_tightened(self):
+        (self.tmp / "open").mkdir(mode=0o755)
+        os.chmod(self.tmp / "open", 0o755)
+        self.client("open").details(PKG)
+        self.assertEqual(0o700, stat.S_IMODE((self.tmp / "open").stat().st_mode))
+
+    def test_a_new_process_reuses_the_device(self):
+        self.client().details(PKG)
+        auth._reset_direct_cache()  # what a new process starts with
+        self.client().details(PKG)
+        self.assertEqual({"checkin": 1, "uploadDeviceConfig": 1, "auth": 2, "toc": 2},
+                         self.fake.handshake())
+        self.assertEqual(1, len(set(self.fake.android_ids)))
+
+    def test_unusable_records_are_discarded(self):
+        self.client().details(PKG)
+        (record,) = self.records()
+        good = json.loads(record.read_text())
+        cases = {
+            "truncated": record.read_text()[:20], "empty": "", "list": "[]",
+            "version": json.dumps({**good, "v": 2}),
+            "account": json.dumps({**good, "acct": "0" * 16}),
+            "types": json.dumps({**good, "gsfId": 4097}),
+            "control": json.dumps({**good, "deviceConfigToken": "a\nb"}),
+            "latin1": b"\xff\xfe",
+        }
+        for checkins, (name, content) in enumerate(cases.items(), start=2):
+            with self.subTest(name):
+                if isinstance(content, bytes):
+                    record.write_bytes(content)
+                else:
+                    record.write_text(content)
+                auth._reset_direct_cache()
+                with self.assertLogs("goopdl", "WARNING") as logs:
+                    self.client().details(PKG)
+                self.assertEqual(checkins, self.fake.n("checkin"))
+                self.assertIn("Discarding an unusable direct-auth device record",
+                              logs.output[0])
+                for secret in (*SECRETS, "100"):
+                    self.assertNotIn(secret, " ".join(logs.output))
+                self.assertEqual(1, json.loads(record.read_text())["v"])
+
+    def test_a_directory_in_place_of_the_record_falls_back_to_memory(self):
+        self.client().details(PKG)
+        (record,) = self.records()
+        record.unlink()
+        record.mkdir()
+        auth._reset_direct_cache()
+        with self.assertLogs("goopdl", "WARNING") as logs:
+            self.client().details(PKG)
+            self.client().details(PKG, country="US")
+        self.assertIn("continuing in memory", logs.output[0])
+        self.assertTrue(record.is_dir())
+
+    @unittest.skipIf(os.name == "nt", "symlinks need privileges on Windows")
+    def test_symlinks_are_not_followed(self):
+        outside = self.tmp / "outside.json"
+        for target in ("json", "lock"):
+            with self.subTest(target):
+                outside.write_text("untouched")
+                name = f"s{target}"
+                self.client(name).details(PKG)
+                (record,) = self.records(name)
+                link = record.with_suffix(f".{target}")
+                link.unlink()
+                link.symlink_to(outside)
+                auth._reset_direct_cache()
+                with self.assertLogs("goopdl", "WARNING") as logs:
+                    self.client(name).details(PKG)
+                self.assertIn("unavailable (OSError); continuing in memory", logs.output[0])
+                self.assertEqual("untouched", outside.read_text())
+                self.assertTrue(link.is_symlink())
+
+    def test_an_unwritable_disk_keeps_working_in_memory(self):
+        with patch.object(auth, "_atomic_pool_json", side_effect=PermissionError), \
+                self.assertLogs("goopdl", "WARNING") as logs:
+            self.client().details(PKG)
+            self.client().details(PKG, profile="D2")
+            with self.at(3001):  # expired bearer: same in-memory device
+                self.client().details(PKG)
+        self.assertEqual("WARNING:goopdl.auth:Direct auth device cache unavailable "
+                         "(PermissionError); continuing in memory.", logs.output[0])
+        self.assertEqual((2, 3), (self.fake.n("checkin"), self.fake.n("auth")))
+        self.assertEqual([], self.records())
+
+    @unittest.skipIf(os.name == "nt" or os.geteuid() == 0, "POSIX, not root")
+    def test_a_read_only_directory_keeps_working(self):
+        (self.tmp / "ro").mkdir(mode=0o500)
+        self.addCleanup(os.chmod, self.tmp / "ro", 0o700)
+        with self.assertLogs("goopdl", "WARNING"):
+            self.assertEqual(4242, self.client("ro").details(PKG).version_code)
+        self.assertEqual([], list((self.tmp / "ro").iterdir()))
+
+    def test_tenants_and_accounts_never_share_a_record(self):
+        self.client("t1").details(PKG)
+        self.client("t2").details(PKG)  # same account, other config_dir
+        self.client("t1", email="other@x.test", token="aas_et/other").details(PKG)
+        self.assertEqual(3, self.fake.n("checkin"))
+        self.assertEqual(1, len(self.records("t2")))
+        mine, other = self.records("t1")
+        self.assertNotEqual(mine.name.split("-")[2], other.name.split("-")[2])
+        self.assertNotEqual(json.loads(mine.read_text())["gsfId"],
+                            json.loads(other.read_text())["gsfId"])
+
+    def test_no_secrets_in_any_file(self):
+        client = self.client()
+        self.fake.faults["details"] = [httpx.Response(401)] * 3
+        for call in (client.details, client.details, client.item, client.list_splits):
+            try:
+                call(PKG)
+            except AuthExpiredError:
+                pass
+        client.download(PKG, self.tmp / "out")
+        client.details(PKG, country="DE")
+        files = [p for p in (self.tmp / "c").rglob("*")]
+        self.assertTrue(files)
+        for path in files:
+            content = path.read_bytes().decode("utf-8", "replace")
+            for secret in (*SECRETS, "x.test"):
+                self.assertNotIn(secret, path.name)
+                self.assertNotIn(secret, content, path.name)
+
+    def test_second_401_in_a_row_replaces_the_record(self):
+        client = self.client()
+        self.fake.faults["details"] = [httpx.Response(401)] * 3
+        with self.assertRaises(AuthExpiredError):
+            client.details(PKG)
+        client.details(PKG)
+        (record,) = self.records()
+        self.assertEqual("1002", json.loads(record.read_text())["gsfId"])
+
+    def test_clear_auth_removes_records_but_keeps_locks(self):
+        self.client().details(PKG)
+        self.client(email="other@x.test", token="aas_et/other").details(PKG)
+        with self.scope():
+            auth.clear_auth()
+        self.assertEqual([], self.records())
+        self.assertEqual(2, len(list((self.tmp / "c").glob("direct-device-*.lock"))))
+        self.client().details(PKG)
+        self.assertEqual(3, self.fake.n("checkin"))
+
+    def test_downloads_without_a_profile_reuse_the_registered_device(self):
+        from goopdl import api
+        client = self.client(profile=None)
+        picks = iter((0, -1))
+        with patch.object(api.random, "choice", side_effect=lambda c: c[next(picks)]):
+            client.download(PKG, self.tmp / "o1")
+            client.download(PKG, self.tmp / "o2")  # cold B would be a 2nd device
+        self.assertEqual(1, self.fake.n("checkin"))
+
+    def test_a_busy_device_lock_is_pool_busy(self):
+        with self.scope():
+            path = auth._device_path(auth._account_hash(EMAIL), "arm64", None, "Pv")
+            handle = auth._acquire_file_lock(path.with_suffix(".lock"))
+        try:
+            with self.scope(), patch.object(auth, "_POOL_LOCK_TIMEOUT", 0.05):
+                with self.assertRaises(PoolBusyError):
+                    auth.pick_pool_token(profile="Pv", raise_on_error=True)
+                with self.assertLogs("goopdl", "ERROR"):
+                    self.assertIsNone(auth.pick_pool_token(profile="Pv"))
+        finally:
+            handle.close()
+        self.assertEqual([], self.fake.requests)
+
+    def test_cold_processes_register_one_device(self):
+        ctx = multiprocessing.get_context("spawn")  # what Windows and macOS use
+        start, results = ctx.Event(), ctx.Queue()
+        procs = [ctx.Process(target=_cold_process,
+                             args=(str(self.tmp / "p"), start, results))
+                 for _ in range(3)]
+        for proc in procs:
+            proc.start()
+        start.set()
+        try:
+            outcomes = [results.get(timeout=90) for _ in procs]
+        finally:
+            for proc in procs:
+                proc.join(30)
+                if proc.is_alive():
+                    proc.terminate()
+        self.assertTrue(all(isinstance(o, tuple) for o in outcomes), outcomes)
+        self.assertEqual(1, sum(o[0] for o in outcomes), outcomes)  # one checkin
+        self.assertEqual([1, 1, 1], [o[1] for o in outcomes])
+        self.assertEqual(1, len({o[2] for o in outcomes}))
+        self.assertEqual(3, len({o[3] for o in outcomes} - {os.getpid()}))
 
 
 class SecretsTest(DirectCacheCase):

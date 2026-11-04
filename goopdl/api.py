@@ -30,6 +30,7 @@ from goopdl.auth import (
     DispenserUnavailableError,
     PoolBusyError,
     _build_httpx_proxy,
+    _direct_device_known,
     _load_pool,
     build_headers,
     direct_auth_enabled,
@@ -1285,7 +1286,8 @@ def download_app(
 
     Reuses a valid token from the country's profile pool if one exists;
     otherwise fetches exactly one fresh token. If *profile* is unset, picks
-    randomly from the two newest profiles, preferring warm anonymous pools.
+    randomly from the two newest profiles, preferring warm anonymous pools
+    (account mode: profiles whose device is already registered).
     The fresh dispenser call rotates proxy regions automatically (see fetch_token);
     *proxy* itself is passed through unpatched to the Google FDFE calls.
     Returns (apk_path, dotted version string) — not the numeric version code.
@@ -1352,9 +1354,10 @@ def _prepare_download(
         candidates = get_latest_probe_profiles(arch, n=2)
         if not candidates:
             raise PlayAPIError("No device profiles available.")
-        if not direct_auth_enabled():
-            warm = [p for p in candidates if _load_pool(arch, country, p[0])]
-            candidates = warm or candidates
+        # Prefer a warm anonymous pool, or a device account mode already registered.
+        is_warm = _direct_device_known if direct_auth_enabled() else _load_pool
+        warm = [p for p in candidates if is_warm(arch, country, p[0])]
+        candidates = warm or candidates
         chosen_profile = random.choice(candidates)[0]
 
     try:

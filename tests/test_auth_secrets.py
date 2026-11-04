@@ -28,7 +28,10 @@ def capture_failure(call) -> Any:
 
 class AuthSecretsTest(unittest.TestCase):
     def setUp(self):
-        environment = isolated_env()
+        # Account mode persists its device record: never in the real home.
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        environment = isolated_env({"GOOPDL_CONFIG_DIR": directory.name})
         environment.start()
         self.addCleanup(environment.stop)
         sleeper = patch("time.sleep")
