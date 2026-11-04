@@ -78,7 +78,7 @@ PROFILE = {
 
 
 class DirectAuthTest(unittest.TestCase):
-    @patch("goopdl.api.httpx.get")
+    @patch("goopdl._http.get")
     def test_delivery_exposes_app_version_code_metadata(self, get: Mock) -> None:
         # Field 29 is delivery-internal OBB metadata, not a guarantee that it
         # equals the requested vc, so get_delivery must not assert equality.
@@ -95,7 +95,7 @@ class DirectAuthTest(unittest.TestCase):
         result = get_delivery("com.example.app", 1561052633, auth)
         self.assertEqual(result.version_code, 1561052632)
 
-    @patch("goopdl.api.httpx.get")
+    @patch("goopdl._http.get")
     def test_delivery_404_is_version_unavailable(self, get: Mock) -> None:
         get.return_value = Mock(status_code=404, content=b"")
         auth = {"authToken": "temporary", "gsfId": "1234"}
@@ -134,8 +134,8 @@ class DirectAuthTest(unittest.TestCase):
 
     @patch("goopdl.auth.time.time", return_value=1_700_000_000)
     @patch("goopdl.auth.get_priority_profiles", return_value=[("test", PROFILE)])
-    @patch("goopdl.auth.httpx.get")
-    @patch("goopdl.auth.httpx.post")
+    @patch("goopdl._http.get")
+    @patch("goopdl._http.post")
     def test_direct_google_sequence_matches_aurora_aas_protocol(
         self, post: Mock, get: Mock, _profiles: Mock, _time: Mock
     ) -> None:
@@ -468,7 +468,7 @@ class DirectAuthTest(unittest.TestCase):
             with (
                 self.subTest(name),
                 isolated_env(environment),
-                patch("goopdl.auth.httpx.post", side_effect=[failure]),
+                patch("goopdl._http.post", side_effect=[failure]),
                 patch("goopdl.auth.logger"),
             ):
                 # Not assertRaises: it strips the traceback under test.

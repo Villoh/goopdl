@@ -97,8 +97,8 @@ class DirectCacheCase(unittest.TestCase):
         for patcher in (
             isolated_env({"GOOPDL_CONFIG_DIR": str(self.tmp / "env")}),
             patch.object(socket.socket, "connect", no_sockets),
-            patch("httpx.post", side_effect=lambda *a, **k: self.fake.post(*a, **k)),
-            patch("httpx.get", side_effect=lambda *a, **k: self.fake.get(*a, **k)),
+            patch("goopdl._http.post", side_effect=lambda *a, **k: self.fake.post(*a, **k)),
+            patch("goopdl._http.get", side_effect=lambda *a, **k: self.fake.get(*a, **k)),
             patch("httpx.AsyncClient", side_effect=self.async_client),
             patch("time.sleep"),
         ):
@@ -365,8 +365,8 @@ def _cold_process(config_dir, start, results):
     with isolated_env({"GOOPDL_CONFIG_DIR": config_dir, "GOOPDL_ACCOUNT_EMAIL": EMAIL,
                        "GOOPDL_AAS_TOKEN": AAS}), \
             patch.object(socket.socket, "connect", no_sockets), \
-            patch("httpx.post", side_effect=fake.post), \
-            patch("httpx.get", side_effect=fake.get):
+            patch("goopdl._http.post", side_effect=fake.post), \
+            patch("goopdl._http.get", side_effect=fake.get):
         start.wait(60)
         try:
             token = auth.pick_pool_token(profile="Pv", raise_on_error=True)

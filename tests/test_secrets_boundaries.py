@@ -14,7 +14,7 @@ import httpx
 import typer
 
 from _envutil import isolated_env
-from goopdl import aastoken, api, auth, browser_oauth, cli, download
+from goopdl import _http, aastoken, api, auth, browser_oauth, cli, download
 
 
 EMAIL = "EMAIL_SENTINEL@example.test"
@@ -178,7 +178,7 @@ class AccountBoundariesTest(BoundaryCase):
     def test_details_raw_drops_proxy_on_failure(self):
         def transport(*args, **kwargs):
             raise httpx.ConnectError(PROXY)
-        with patch.object(httpx, "get", side_effect=transport):
+        with patch.object(_http, "get", side_effect=transport):
             error = caught(lambda: api.get_details_raw(
                 "com.example.app", {"authToken": "bearer", "gsfId": "123"}, proxy=PROXY
             ))

@@ -15,7 +15,7 @@ class FetchTokenRedactionTest(unittest.TestCase):
         self.addCleanup(auth._reset_dispenser_backoff)  # in-memory 429 window
 
     @patch("goopdl.auth.get_priority_profiles")
-    @patch("goopdl.auth.httpx.post")
+    @patch("goopdl._http.post")
     @patch("goopdl.auth.logger")
     def test_does_not_log_dispenser_response(
         self, console_print, httpx_post, get_priority_profiles
@@ -33,7 +33,7 @@ class FetchTokenRedactionTest(unittest.TestCase):
         self.assertIn("No authToken in dispenser response", output)
 
     @patch("goopdl.auth.get_priority_profiles")
-    @patch("goopdl.auth.httpx.post")
+    @patch("goopdl._http.post")
     @patch("goopdl.auth.logger")
     def test_rate_limit_stops_profile_fallback_but_other_rejections_do_not(
         self, console_print, httpx_post, get_priority_profiles
@@ -58,7 +58,7 @@ class FetchTokenRedactionTest(unittest.TestCase):
                     self.assertEqual((result or {}).get("authToken"), "valid")
 
     @patch("goopdl.auth.get_priority_profiles")
-    @patch("goopdl.auth.httpx.post")
+    @patch("goopdl._http.post")
     @patch("goopdl.auth.logger")
     def test_does_not_log_exception_details(
         self, console_print, httpx_post, get_priority_profiles

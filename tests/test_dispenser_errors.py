@@ -28,7 +28,7 @@ class DispenserFetchTokenTest(unittest.TestCase):
             self.addCleanup(patcher.stop)
         self.addCleanup(auth._reset_dispenser_backoff)  # in-memory 429 window
 
-    @patch("goopdl.auth.httpx.post")
+    @patch("goopdl._http.post")
     def test_429_returns_none_by_default_and_raises_when_asked(self, post) -> None:
         post.return_value = httpx.Response(429, headers={"Retry-After": "120"})
         self.assertIsNone(fetch_token())
@@ -40,7 +40,7 @@ class DispenserFetchTokenTest(unittest.TestCase):
         # 429 stops profile rotation; the second call is inside its window.
         self.assertEqual(post.call_count, 1)
 
-    @patch("goopdl.auth.httpx.post")
+    @patch("goopdl._http.post")
     def test_outage_raises_unavailable_with_last_status(self, post) -> None:
         post.return_value = httpx.Response(503)
         self.assertIsNone(fetch_token())
@@ -50,7 +50,7 @@ class DispenserFetchTokenTest(unittest.TestCase):
         self.assertEqual(raised.exception.status, 503)
         self.assertNotIsInstance(raised.exception, DispenserRateLimitedError)
 
-    @patch("goopdl.auth.httpx.post", side_effect=httpx.ConnectError("down"))
+    @patch("goopdl._http.post", side_effect=httpx.ConnectError("down"))
     def test_unreachable_dispenser_raises_unavailable(self, _post) -> None:
         with self.assertRaises(DispenserUnavailableError) as raised:
             fetch_token(raise_on_error=True)

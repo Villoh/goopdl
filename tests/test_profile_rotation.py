@@ -9,7 +9,7 @@ import httpx
 from typer.testing import CliRunner
 
 from _envutil import isolated_env
-from goopdl import api, auth, cli
+from goopdl import _http, api, auth, cli
 
 
 class ProfileRotationTest(unittest.TestCase):
@@ -20,10 +20,10 @@ class ProfileRotationTest(unittest.TestCase):
             isolated_env(),
             patch.object(auth, "_CONFIG_DIR", Path(self.directory.name), create=True),
             patch.object(
-                httpx, "get", side_effect=AssertionError("unexpected network")
+                _http, "get", side_effect=AssertionError("unexpected network")
             ),
             patch.object(
-                httpx, "post", side_effect=AssertionError("unexpected network")
+                _http, "post", side_effect=AssertionError("unexpected network")
             ),
             patch.object(cli.time, "sleep"),
         ):
@@ -71,7 +71,7 @@ class ProfileRotationTest(unittest.TestCase):
                         return_value=cli.get_compat_profiles("arm64")[:6],
                     ),
                     patch.object(
-                        httpx, "post", return_value=self.rejected(status)
+                        _http, "post", return_value=self.rejected(status)
                     ) as post,
                 ):
                     result = self.download()
@@ -93,7 +93,7 @@ class ProfileRotationTest(unittest.TestCase):
                     "get_discovery_profiles",
                     return_value=cli.get_compat_profiles("arm64")[:6],
                 ),
-                patch.object(httpx, "post", return_value=self.rejected(200)) as post,
+                patch.object(_http, "post", return_value=self.rejected(200)) as post,
             ):
                 with self.assertRaises(kind) as raised:
                     cli._acquire_delivery(
@@ -140,7 +140,7 @@ class ProfileRotationTest(unittest.TestCase):
                     ],
                 ) as download,
                 patch.object(
-                    httpx,
+                    _http,
                     "post",
                     side_effect=[
                         self.rejected(200),
@@ -166,7 +166,7 @@ class ProfileRotationTest(unittest.TestCase):
                 with (
                     self.subTest(status=status, raising=raise_on_error),
                     patch.object(
-                        httpx,
+                        _http,
                         "post",
                         return_value=self.rejected(status),
                     ) as post,
@@ -184,7 +184,7 @@ class ProfileRotationTest(unittest.TestCase):
 
     def test_anonymous_fetch_finds_third_profile(self):
         with patch.object(
-            httpx,
+            _http,
             "post",
             side_effect=[
                 self.rejected(200),
@@ -217,7 +217,7 @@ class ProfileRotationTest(unittest.TestCase):
             with (
                 self.subTest(failure=repr(failure)),
                 patch.object(
-                    httpx,
+                    _http,
                     "post",
                     side_effect=[failure] * 19,
                 ) as post,
@@ -237,7 +237,7 @@ class ProfileRotationTest(unittest.TestCase):
             with (
                 self.subTest(status=status),
                 patch.object(
-                    httpx,
+                    _http,
                     "post",
                     return_value=self.rejected(status),
                 ) as post,
@@ -263,7 +263,7 @@ class ProfileRotationTest(unittest.TestCase):
                 patch.object(
                     cli, "get_details", side_effect=api.AppNotSupportedError("original")
                 ),
-                patch.object(httpx, "post", side_effect=[failure] * 19) as post,
+                patch.object(_http, "post", side_effect=[failure] * 19) as post,
             ):
                 auth._reset_dispenser_backoff()  # each subtest starts with no 429 window
                 result = self.download()
@@ -275,7 +275,7 @@ class ProfileRotationTest(unittest.TestCase):
             with (
                 self.subTest(status=status),
                 patch.object(
-                    httpx,
+                    _http,
                     "post",
                     side_effect=[
                         self.rejected(status),
@@ -299,7 +299,7 @@ class ProfileRotationTest(unittest.TestCase):
                 self.assertEqual(post.call_count, 3)
 
     def test_version_resolution_stops_on_server_failure(self):
-        with patch.object(httpx, "post", return_value=httpx.Response(503)) as post:
+        with patch.object(_http, "post", return_value=httpx.Response(503)) as post:
             with self.assertRaises(api.NetworkError):
                 cli._resolve_version_string(
                     "com.example.pkg", "1.2", "arm64", None, None, None, "Pv"
@@ -327,7 +327,7 @@ class ProfileRotationTest(unittest.TestCase):
                     ],
                 ),
                 patch.object(
-                    httpx,
+                    _http,
                     "post",
                     side_effect=[
                         self.rejected(status),
@@ -341,14 +341,14 @@ class ProfileRotationTest(unittest.TestCase):
                 self.assertEqual(post.call_count, 3)
 
     def test_latest_rejected_initial_profile_is_not_an_endpoint_outage(self):
-        with patch.object(httpx, "post", return_value=self.rejected(200)) as post:
+        with patch.object(_http, "post", return_value=self.rejected(200)) as post:
             result = CliRunner().invoke(cli.app, ["latest", "com.example.pkg"])
             self.assertEqual(result.exit_code, 1, result.output)
             self.assertNotIn("may be down", result.output)
             self.assertEqual(post.call_count, 1)
 
     def test_latest_stops_on_server_failure(self):
-        with patch.object(httpx, "post", return_value=httpx.Response(503)) as post:
+        with patch.object(_http, "post", return_value=httpx.Response(503)) as post:
             result = CliRunner().invoke(cli.app, ["latest", "com.example.pkg"])
             self.assertEqual(result.exit_code, 3, result.output)
             self.assertEqual(post.call_count, 2)

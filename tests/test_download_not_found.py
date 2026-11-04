@@ -8,7 +8,7 @@ import httpx
 from typer.testing import CliRunner
 
 from _envutil import isolated_env
-from goopdl import auth, cli
+from goopdl import _http, auth, cli
 
 
 class DownloadNotFoundTest(unittest.TestCase):
@@ -17,10 +17,10 @@ class DownloadNotFoundTest(unittest.TestCase):
             isolated_env(),
             tempfile.TemporaryDirectory() as directory,
             patch.object(auth, "_CONFIG_DIR", Path(directory) / "cache", create=True),
-            patch.object(httpx, "post", return_value=httpx.Response(
+            patch.object(_http, "post", return_value=httpx.Response(
                 200, json={"authToken": "token", "gsfId": "1"}
             )) as post,
-            patch.object(httpx, "get", return_value=httpx.Response(404)) as get,
+            patch.object(_http, "get", return_value=httpx.Response(404)) as get,
             patch("time.sleep") as sleep,
         ):
             result = CliRunner().invoke(cli.app, [

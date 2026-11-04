@@ -29,8 +29,8 @@ class PoolBusyCliTest(unittest.TestCase):
         for patcher in (
             patch.object(auth, "_CONFIG_DIR", tmp / "config", create=True),
             patch.object(auth, "_POOL_LOCK_TIMEOUT", 0.05),
-            patch("httpx.post", side_effect=AssertionError("network")),
-            patch("httpx.get", side_effect=AssertionError("network")),
+            patch("goopdl._http.post", side_effect=AssertionError("network")),
+            patch("goopdl._http.get", side_effect=AssertionError("network")),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -67,7 +67,7 @@ class DispenserRejectionMessageTest(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def _auth(self, **post):
-        with patch("goopdl.auth.httpx.post", **post):
+        with patch("goopdl._http.post", **post):
             return CliRunner().invoke(app, ["auth"])
 
     def test_answering_dispenser_is_not_reported_as_down(self, _sleep) -> None:
@@ -104,7 +104,7 @@ class DispenserLogDeviceTest(unittest.TestCase):
     def _messages(self, **post) -> list[str]:
         with (
             self.assertLogs("goopdl.auth", level="WARNING") as logs,
-            patch("goopdl.auth.httpx.post", **post),
+            patch("goopdl._http.post", **post),
         ):
             auth.fetch_token(profile=PIXEL, proxy="http://user:pass@proxy:1")
         return [record.getMessage() for record in logs.records]
@@ -146,8 +146,8 @@ class DirectTocRateLimitTest(unittest.TestCase):
     def test_toc_429_keeps_the_bundle_without_dfe_cookie(self) -> None:
         limited = httpx.Response(429, headers={"Retry-After": "60"})
         with (
-            patch("goopdl.auth.httpx.post", side_effect=_direct_responses()),
-            patch("goopdl.auth.httpx.get", return_value=limited),
+            patch("goopdl._http.post", side_effect=_direct_responses()),
+            patch("goopdl._http.get", return_value=limited),
             self.assertLogs("goopdl.auth", level="WARNING") as logs,
         ):
             bundle = self._direct_auth()
@@ -162,8 +162,8 @@ class DirectTocRateLimitTest(unittest.TestCase):
     def test_checkin_429_still_aborts_with_retry_after(self) -> None:
         limited = httpx.Response(429, headers={"Retry-After": "60"})
         with (
-            patch("goopdl.auth.httpx.post", return_value=limited),
-            patch("goopdl.auth.httpx.get", side_effect=AssertionError("toc")),
+            patch("goopdl._http.post", return_value=limited),
+            patch("goopdl._http.get", side_effect=AssertionError("toc")),
             self.assertRaises(auth.DirectAuthError) as raised,
         ):
             self._direct_auth()
@@ -237,7 +237,7 @@ class PublicEntrySecretFramesTest(unittest.TestCase):
                 ),
             },
             "network": {
-                "fetch": patch("httpx.get", side_effect=httpx.ConnectError("x")),
+                "fetch": patch("goopdl._http.get", side_effect=httpx.ConnectError("x")),
                 "batch": patch.object(api, "download_batch"),
             },
         }
@@ -302,7 +302,7 @@ class PublicEntrySecretFramesTest(unittest.TestCase):
             with (
                 self.subTest(name),
                 patch.object(api, "pick_pool_token", return_value=dict(POOL_TOKEN)),
-                patch("httpx.get", **get),
+                patch("goopdl._http.get", **get),
             ):
                 error = self.capture(
                     lambda: api.fetch_app_item("com.example.pkg", proxy=PROXY, profile=PIXEL)
@@ -322,7 +322,7 @@ class PublicEntrySecretFramesTest(unittest.TestCase):
             return get
 
         for status in (401, 404, 429, 500, 200):
-            with self.subTest(status=status), patch("httpx.get", side_effect=respond(status)):
+            with self.subTest(status=status), patch("goopdl._http.get", side_effect=respond(status)):
                 error = self.capture(
                     lambda: api.get_delivery(
                         "com.example.pkg", 1, dict(POOL_TOKEN), proxy=PROXY,
@@ -428,7 +428,7 @@ class FetchAppItemRateLimitTest(unittest.TestCase):
             patch.object(
                 api, "replace_pool_token", side_effect=auth.DispenserRateLimitedError(30)
             ),
-            patch("httpx.get", return_value=httpx.Response(401)),
+            patch("goopdl._http.get", return_value=httpx.Response(401)),
             self.assertRaises(api.RateLimitedError) as raised,
         ):
             api.fetch_app_item("com.example.pkg", profile=PIXEL)

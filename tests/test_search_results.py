@@ -54,7 +54,7 @@ class SearchAppsTest(unittest.TestCase):
     def test_search_skips_the_banner_and_keeps_order_and_limit(self):
         body = response(play_pass_banner(), app("com.a.one", "One"), play_pass_banner(),
                         app("com.a.two", "Two"), app("com.a.one", "One again"), app("com.a.three", "Three"))
-        with patch("goopdl.api.httpx.get", return_value=httpx.Response(200, content=body)):
+        with patch("goopdl._http.get", return_value=httpx.Response(200, content=body)):
             hits = api.search_apps("q", {"authToken": "t"}, limit=2)
         self.assertEqual([h["package"] for h in hits], ["com.a.one", "com.a.two"])
         self.assertEqual([h["title"] for h in hits], ["One", "Two"])

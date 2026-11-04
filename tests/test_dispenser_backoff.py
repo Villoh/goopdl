@@ -1,6 +1,6 @@
 """In-memory backoff after a dispenser HTTP 429 (per process, never on disk).
 
-Hermetic: sockets are blocked, httpx.post/get are fakes, the config dir and
+Hermetic: sockets are blocked, goopdl._http.post/get are fakes, the config dir and
 HOME are temporary and time.monotonic is a fake clock (no real sleep).
 """
 import json
@@ -45,8 +45,8 @@ class BackoffTest(unittest.TestCase):
         for patcher in (
             isolated_env({"GOOPDL_CONFIG_DIR": str(self.cache), "HOME": str(self.root)}),
             patch.object(socket.socket, "connect", no_sockets),
-            patch("httpx.post", side_effect=lambda *a, **k: self.fake.post(*a, **k)),
-            patch("httpx.get", side_effect=lambda *a, **k: self.fake.get(*a, **k)),
+            patch("goopdl._http.post", side_effect=lambda *a, **k: self.fake.post(*a, **k)),
+            patch("goopdl._http.get", side_effect=lambda *a, **k: self.fake.get(*a, **k)),
             patch("time.sleep"),
         ):
             patcher.start()
@@ -149,7 +149,7 @@ class BackoffTest(unittest.TestCase):
             auth._dispenser_backoff_start(key, 120)
             return real_post(*args, **kwargs)
 
-        with patch("httpx.post", side_effect=post):
+        with patch("goopdl._http.post", side_effect=post):
             self.assertTrue(auth.fetch_token())
         self.assertEqual({}, auth._dispenser_backoff)
 
@@ -231,7 +231,7 @@ class BackoffTest(unittest.TestCase):
         ok = httpx.Response(200, json={"authToken": "T"})
         for failure in (httpx.Response(503), httpx.ConnectError("down")):
             with self.subTest(failure=repr(failure)), \
-                    patch("httpx.post", side_effect=[failure, failure, ok]) as post:
+                    patch("goopdl._http.post", side_effect=[failure, failure, ok]) as post:
                 self.assertIsNone(auth.fetch_token())
                 self.assertEqual({}, auth._dispenser_backoff)
                 self.assertTrue(auth.fetch_token())  # asks again at once

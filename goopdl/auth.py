@@ -33,6 +33,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
+from goopdl import _http
 from goopdl.errors import GoopdlError
 from goopdl.profiles import (
     FALLBACK_PROFILE,
@@ -604,7 +605,7 @@ def _register_device(
     device_config = _device_configuration(profile)
     httpx_proxy = _build_httpx_proxy(proxy)
 
-    checkin = httpx.post(
+    checkin = _http.post(
         "https://android.clients.google.com/checkin",
         content=_checkin_request(profile, device_config, locale),
         headers={
@@ -633,7 +634,7 @@ def _register_device(
     upload_headers = build_headers(_session_bundle(device, profile, ""), country=country)
     upload_headers.pop("Authorization")
     upload_headers["Content-Type"] = "application/x-protobuf"
-    upload = httpx.post(
+    upload = _http.post(
         "https://android.clients.google.com/fdfe/uploadDeviceConfig",
         content=_proto_bytes(1, device_config),
         headers=upload_headers,
@@ -658,7 +659,7 @@ def _exchange(
     auth_user_agent = _google_auth_user_agent(profile)
     httpx_proxy = _build_httpx_proxy(proxy)
     gsf_id = device["gsfId"]
-    auth_response = httpx.post(
+    auth_response = _http.post(
         "https://android.clients.google.com/auth",
         data={
             "Email": email,
@@ -711,7 +712,7 @@ def _exchange(
 
     bundle = _session_bundle(device, profile, bearer)
     toc_headers = build_headers(bundle, country=country)
-    toc = httpx.get(
+    toc = _http.get(
         "https://android.clients.google.com/fdfe/toc",
         headers=toc_headers,
         timeout=30,
@@ -862,7 +863,7 @@ def _fetch_token_impl(
             ]
             proxy_url = _interpolate_region(proxy, region)
             httpx_proxy = _build_httpx_proxy(proxy_url)
-            resp = httpx.post(
+            resp = _http.post(
                 url, json=payload, headers=headers, timeout=30, proxy=httpx_proxy
             )
             last_status = resp.status_code

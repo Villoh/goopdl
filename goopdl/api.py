@@ -24,6 +24,7 @@ from urllib.parse import urlencode, urlparse
 
 import httpx
 
+from goopdl import _http
 from goopdl.auth import (
     DirectAuthError,
     DispenserRateLimitedError,
@@ -381,7 +382,7 @@ def _fetch_details_raw(
         params["gl"] = country.upper()
     try:
         resp = _send(
-            httpx.get,
+            _http.get,
             DETAILS_URL,
             params=params,
             headers=headers,
@@ -665,7 +666,7 @@ def purchase(
     body = urlencode({"doc": package, "ot": 1, "vc": version_code})
     try:
         resp = _send(
-            httpx.post,
+            _http.post,
             PURCHASE_URL,
             headers=headers,
             content=body,
@@ -914,7 +915,7 @@ def get_delivery(
     try:
         for attempt in range(_DELIVERY_RETRIES + 1):
             resp = _send(
-                httpx.get,
+                _http.get,
                 DELIVERY_URL,
                 params=params,
                 headers=headers,
@@ -994,7 +995,7 @@ def list_splits(
         params["gl"] = country.upper()
     try:
         resp = _send(
-            httpx.get,
+            _http.get,
             DETAILS_URL,
             params=params,
             headers=headers,
@@ -1082,7 +1083,7 @@ def search_apps(
         params["gl"] = country.upper()
     try:
         resp = _send(
-            httpx.get,
+            _http.get,
             SEARCH_URL,
             params=params,
             headers=headers,

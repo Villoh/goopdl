@@ -11,7 +11,7 @@ import httpx
 from typer.testing import CliRunner
 
 from _envutil import isolated_env
-from goopdl import api, auth, cli, errors
+from goopdl import _http, api, auth, cli, errors
 
 
 def capture_failure(call) -> Any:
@@ -71,7 +71,7 @@ class AuthSecretsTest(unittest.TestCase):
         self.assertIsNone(error.__context__)
 
     def direct_failure(self, response):
-        with patch.object(httpx, "post", return_value=response):
+        with patch.object(_http, "post", return_value=response):
             return capture_failure(
                 lambda: auth._direct_auth(
                     "email-sentinel@example.test",
@@ -93,7 +93,7 @@ class AuthSecretsTest(unittest.TestCase):
 
     def test_direct_unexpected_exception_is_detached(self):
         with patch.object(
-            httpx, "post", side_effect=httpx.ConnectError("aas-sentinel")
+            _http, "post", side_effect=httpx.ConnectError("aas-sentinel")
         ):
             error = capture_failure(
                 lambda: auth._direct_auth(
@@ -129,9 +129,9 @@ class AuthSecretsTest(unittest.TestCase):
             limited = httpx.Response(429, headers={"Retry-After": "120"})
             with (
                 self.subTest(stage=stage),
-                patch.object(httpx, "post", side_effect=success[:index] + [limited]),
+                patch.object(_http, "post", side_effect=success[:index] + [limited]),
                 patch.object(
-                    httpx,
+                    _http,
                     "get",
                     return_value=limited,
                 ),
@@ -164,11 +164,11 @@ class AuthSecretsTest(unittest.TestCase):
 
     def test_send_erases_request_arguments(self):
         with patch.object(
-            httpx, "get", side_effect=httpx.ConnectError("proxy-sentinel")
+            _http, "get", side_effect=httpx.ConnectError("proxy-sentinel")
         ):
             error = capture_failure(
                 lambda: api._send(
-                    httpx.get,
+                    _http.get,
                     "https://example.test/?dtok=dtok-sentinel",
                     headers={"Authorization": "Bearer bearer-sentinel"},
                     proxy="http://user:proxy-sentinel@localhost:8080",
@@ -211,9 +211,9 @@ class AuthSecretsTest(unittest.TestCase):
             ),
         )
         with (
-            patch.object(httpx, "get", side_effect=httpx.ConnectError("down")),
+            patch.object(_http, "get", side_effect=httpx.ConnectError("down")),
             patch.object(
-                httpx,
+                _http,
                 "post",
                 side_effect=httpx.ConnectError("down"),
             ),
@@ -234,8 +234,8 @@ class AuthSecretsTest(unittest.TestCase):
             original = api.NetworkError("Endpoint unavailable.")
             with (
                 self.subTest(entry=entry),
-                patch.object(httpx, "get", side_effect=original),
-                patch.object(httpx, "post", side_effect=original) as post,
+                patch.object(_http, "get", side_effect=original),
+                patch.object(_http, "post", side_effect=original) as post,
                 patch.object(api, "pick_pool_token", side_effect=original) as pick,
                 patch.object(
                     cli, "get_details", side_effect=api.AppNotSupportedError("no")
@@ -245,7 +245,7 @@ class AuthSecretsTest(unittest.TestCase):
                 if entry == "send":
                     error = capture_failure(
                         lambda: api._send(
-                            httpx.get,
+                            _http.get,
                             "https://example.test/?dtok=dtok-sentinel",
                             headers={"Authorization": "Bearer bearer-sentinel"},
                             proxy="http://user:proxy-sentinel@localhost:8080",
@@ -282,7 +282,7 @@ class AuthSecretsTest(unittest.TestCase):
 
     def test_fetch_erases_proxy_on_transport_failure(self):
         with patch.object(
-            httpx, "post", side_effect=httpx.ConnectError("proxy-sentinel")
+            _http, "post", side_effect=httpx.ConnectError("proxy-sentinel")
         ):
             error = capture_failure(
                 lambda: auth.fetch_token(
@@ -305,7 +305,7 @@ class AuthSecretsTest(unittest.TestCase):
                     },
                 ),
                 patch.object(
-                    httpx,
+                    _http,
                     "post",
                     return_value=httpx.Response(
                         status,
@@ -334,7 +334,7 @@ class AuthSecretsTest(unittest.TestCase):
                 with (
                     self.subTest(status=status),
                     patch.object(
-                        httpx,
+                        _http,
                         "post",
                         return_value=httpx.Response(
                             status, headers={"Retry-After": "120"}
@@ -373,7 +373,7 @@ class AuthSecretsTest(unittest.TestCase):
                 with (
                     self.subTest(failure=type(failure).__name__),
                     patch.object(
-                        httpx,
+                        _http,
                         "post",
                         side_effect=[failure, failure, failure],
                     ) as post,
@@ -392,7 +392,7 @@ class AuthSecretsTest(unittest.TestCase):
             with (
                 self.subTest(failure=type(failure).__name__),
                 patch.object(
-                    httpx,
+                    _http,
                     "post",
                     side_effect=failure,
                 ) as post,
@@ -403,7 +403,7 @@ class AuthSecretsTest(unittest.TestCase):
 
     def test_transport_streak_resets_after_response(self):
         with patch.object(
-            httpx,
+            _http,
             "post",
             side_effect=[
                 httpx.ConnectError("down"),
@@ -426,7 +426,7 @@ class AuthSecretsTest(unittest.TestCase):
                 Path(directory),
                 create=True,
             ),
-            patch.object(httpx, "post", side_effect=httpx.ConnectError("down")) as post,
+            patch.object(_http, "post", side_effect=httpx.ConnectError("down")) as post,
             patch.object(
                 api.time,
                 "sleep",
@@ -446,7 +446,7 @@ class AuthSecretsTest(unittest.TestCase):
         ):
             with (
                 self.subTest(code=code),
-                patch.object(httpx, "post", side_effect=[response] * 6) as post,
+                patch.object(_http, "post", side_effect=[response] * 6) as post,
                 patch.object(
                     cli,
                     "_require_auth",
@@ -470,7 +470,7 @@ class AuthSecretsTest(unittest.TestCase):
         ):
             with (
                 self.subTest(error=expected.__name__),
-                patch.object(httpx, "post", side_effect=[response] * 20) as post,
+                patch.object(_http, "post", side_effect=[response] * 20) as post,
                 patch.object(cli.time, "sleep"),
             ):
                 auth._reset_dispenser_backoff()  # each subtest starts with no 429 window
@@ -489,7 +489,7 @@ class AuthSecretsTest(unittest.TestCase):
         ):
             with (
                 self.subTest(code=code),
-                patch.object(httpx, "post", side_effect=[failure] * 5) as post,
+                patch.object(_http, "post", side_effect=[failure] * 5) as post,
                 tempfile.TemporaryDirectory() as directory,
                 patch.object(
                     auth,
@@ -510,7 +510,7 @@ class AuthSecretsTest(unittest.TestCase):
         ):
             with (
                 self.subTest(code=code),
-                patch.object(httpx, "post", side_effect=[failure] * 6) as post,
+                patch.object(_http, "post", side_effect=[failure] * 6) as post,
                 tempfile.TemporaryDirectory() as directory,
                 patch.object(
                     auth,
