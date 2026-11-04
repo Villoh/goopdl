@@ -470,5 +470,68 @@ class PackageDirTest(unittest.TestCase):
         self.assertIn("__version__", listed)
 
 
+MARKUP = "[/x] Evil [bold]App"
+
+
+@patch.dict(os.environ, {}, clear=True)
+class RemoteTextMarkupTest(unittest.TestCase):
+    def setUp(self) -> None:
+        from goopdl import api
+
+        self.details = api.AppDetails(
+            package="com.example.pkg", title=MARKUP, developer=MARKUP,
+            version_string="1.0 [/x]", version_code=7, play_url="https://p",
+        )
+        patcher = patch("goopdl.cli.pick_pool_token", return_value=dict(POOL_TOKEN))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def assert_literal(self, result, *texts: str) -> None:
+        self.assertEqual(result.exit_code, 0, result.output)
+        output = _flat(result.output)
+        for text in texts:
+            self.assertIn(text, output)
+
+    def test_info_prints_remote_text_literally(self) -> None:
+        with patch("goopdl.cli.get_details", return_value=self.details):
+            result = CliRunner().invoke(app, ["info", "com.example.pkg"])
+        self.assert_literal(result, MARKUP, "1.0 [/x] (7)")
+
+    def test_search_prints_remote_titles_literally(self) -> None:
+        hits = [{"package": "com.example.pkg", "title": MARKUP, "creator": ""}]
+        with patch("goopdl.cli.search_apps", return_value=hits):
+            result = CliRunner().invoke(app, ["search", "[bold]q"])
+        self.assert_literal(result, MARKUP, '"[bold]q"')
+
+    def test_download_panel_prints_the_title_literally(self) -> None:
+        from goopdl import api
+
+        out = Path(tempfile.mkdtemp())
+        (out / "com.example.pkg-7.apk").write_bytes(b"x")
+        delivery = api.DeliveryResult(
+            version_code=7, download_url="https://play.googleapis.com/apk"
+        )
+        with (
+            patch("goopdl.cli._acquire_delivery", return_value=(self.details, 7, delivery)),
+            patch("goopdl.cli.download_batch"),
+        ):
+            result = CliRunner().invoke(
+                app, ["download", "com.example.pkg", "-o", str(out)]
+            )
+        self.assert_literal(result, MARKUP, "1.0 [/x] (vc 7)")
+
+    def test_inspect_delivery_keeps_the_arch_and_split_names(self) -> None:
+        from goopdl import api
+
+        delivery = api.DeliveryResult(
+            version_code=7, splits=[api.SplitInfo(name="config.[bold]x")]
+        )
+        with patch("goopdl.cli._acquire_delivery", return_value=(self.details, 7, delivery)):
+            result = CliRunner().invoke(
+                app, ["inspect-delivery", "com.example.pkg", "--version", "7"]
+            )
+        self.assert_literal(result, "1.0 [/x] (7) [arm64]", "- config.[bold]x")
+
+
 if __name__ == "__main__":
     unittest.main()
