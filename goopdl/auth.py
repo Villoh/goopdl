@@ -993,6 +993,13 @@ def _pool_path(
 
 
 _POOL_LOCK_TIMEOUT = 180.0  # seconds; a cold five-token pool can take 5 x 30s
+# Busy-lock poll: exponential backoff from MIN, doubling up to MAX (seconds).
+# Each sleep is jittered to [delay/2, delay]: waiters that lost the same race
+# would otherwise wake in lockstep and leave a freed lock idle. Own RNG, so lock
+# contention never shifts the global random stream (e.g. region_start).
+_LOCK_POLL_MIN = 0.001
+_LOCK_POLL_MAX = 0.05
+_LOCK_POLL_JITTER = random.Random()
 
 
 def _pool_cache_error(exc: OSError) -> None:
@@ -1081,6 +1088,7 @@ def _acquire_file_lock(path: Path, *, blocking: bool = True):
         else:
             import fcntl
         deadline = time.monotonic() + _POOL_LOCK_TIMEOUT
+        delay = _LOCK_POLL_MIN
         while True:
             try:
                 handle.seek(0)
@@ -1100,7 +1108,8 @@ def _acquire_file_lock(path: Path, *, blocking: bool = True):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TimeoutError("Token pool lock acquisition timed out") from exc
-                time.sleep(min(0.05, remaining))
+                time.sleep(min(_LOCK_POLL_JITTER.uniform(delay / 2, delay), remaining))
+                delay = min(delay * 2, _LOCK_POLL_MAX)
         # Windows permits locking beyond EOF. Initialize only AFTER acquisition,
         # otherwise a simultaneous first opener could write another owner's byte.
         if acquired and os.fstat(handle.fileno()).st_size == 0:

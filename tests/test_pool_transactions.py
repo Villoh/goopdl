@@ -221,6 +221,30 @@ class PoolTransactionsTest(unittest.TestCase):
         self.assertEqual(1, len(lockfiles))
         self.assertEqual(1, lockfiles[0].stat().st_size)
 
+    def test_waiter_polls_with_backoff_until_holder_process_releases(self):
+        release = self.ctx.Event()
+        holder = self.start("hold", release=release)
+        self.assertTrue(holder[1].get(timeout=10))
+        real_sleep, sleeps = time.sleep, []
+
+        def counting_sleep(seconds):
+            sleeps.append(seconds)
+            real_sleep(seconds)
+
+        timer = threading.Timer(0.2, release.set)
+        self.addCleanup(timer.cancel)
+        with patch.object(auth.time, "sleep", side_effect=counting_sleep):
+            start = time.monotonic()
+            timer.start()
+            with auth._pool_lock("arm64", "US", "Pv", raise_on_error=True) as acquired:
+                self.assertTrue(acquired)
+            self.assertLess(time.monotonic() - start, 5)
+        self.assertGreaterEqual(len(sleeps), 3)
+        self.assertLessEqual(sleeps[0], auth._LOCK_POLL_MIN)
+        self.assertLessEqual(max(sleeps), auth._LOCK_POLL_MAX)
+        holder[0].join(5)
+        self.assertEqual(0, holder[0].exitcode)
+
     def test_noncontention_lock_errors_do_not_retry_or_mint(self):
         # Local native mock, so this subcase also runs on Windows.
         module, name = ("msvcrt", "locking") if os.name == "nt" else ("fcntl", "flock")
