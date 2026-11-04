@@ -328,6 +328,7 @@ class PoolTransactionsTest(unittest.TestCase):
         auth._CONFIG_DIR = self.directory / "must-not-exist"
         with (patch.object(auth, "direct_auth_enabled", return_value=True),
               patch.object(auth, "fetch_token", return_value=token("direct")),
+              patch.object(auth, "_direct_session", return_value=token("direct")),
               patch.object(auth, "_pool_path", side_effect=AssertionError("path touched"))):
             self.assertEqual(1, len(auth.ensure_pool(size=1)))
             self.assertIsNotNone(auth.pick_pool_token())

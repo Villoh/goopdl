@@ -132,11 +132,11 @@ class WarmDownloadProfileTest(unittest.TestCase):
             patch.object(auth, "_pool_path", side_effect=AssertionError("anonymous pool read")),
             patch.object(auth, "_index_path", side_effect=AssertionError("anonymous index read")),
             patch.object(auth, "_auth_path", side_effect=AssertionError("anonymous auth read")),
+            patch.object(auth, "_direct_session", return_value=self.fresh) as session,
         ):
             self.download()
-        self.fetch.assert_called_once_with(
-            arch="arm64", country="US", proxy=None, profile=self.a, raise_on_error=True
-        )
+        session.assert_called_once_with("arm64", "US", None, self.a, raise_on_error=True)
+        self.fetch.assert_not_called()
         self.assertEqual(self.fresh, self.delivery.call_args.args[1])
         self.choice.assert_called_once_with(self.candidates)
         self.assertEqual(before, {path.name: path.read_bytes() for path in auth._CONFIG_DIR.iterdir()})

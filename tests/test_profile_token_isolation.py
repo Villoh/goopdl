@@ -281,6 +281,7 @@ class ProfileTokenIsolationTest(unittest.TestCase):
                 },
             ),
             patch.object(auth, "fetch_token", return_value=direct) as fetch,
+            patch.object(auth, "_direct_session", return_value=direct) as session,
             patch.object(
                 auth, "_pool_path", side_effect=AssertionError("cache path used")
             ),
@@ -295,10 +296,12 @@ class ProfileTokenIsolationTest(unittest.TestCase):
             self.assertIs(direct, auth.pick_pool_token(profile="Pv"))
             self.assertIs(direct, auth.replace_pool_token({}, profile="Pv"))
             self.assertIs(direct, auth.ensure_auth(profile="Pv"))
-        self.assertEqual(5, fetch.call_count)
+        self.assertEqual(2, fetch.call_count)  # ensure_pool: fresh probe tokens
         self.assertTrue(
             all(call.kwargs["profile"] == "Pv" for call in fetch.call_args_list)
         )
+        self.assertEqual(3, session.call_count)  # pick/replace/ensure_auth: cached
+        self.assertTrue(all(call.args[3] == "Pv" for call in session.call_args_list))
         self.assertEqual(before, self.snapshot())
 
 

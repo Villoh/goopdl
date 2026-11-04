@@ -355,8 +355,11 @@ class MultiTenantTest(ClientTestCase):
             elif endpoint == "details":
                 tenant = who.split("-")[1][0]
                 self.assertEqual(self.tmp / tenant, directory)
-        self.assertFalse((self.tmp / "a").exists())  # account mode writes nothing
-        self.assertFalse((self.tmp / "b").exists())
+        for tenant in ("a", "b"):  # account mode: only its device record
+            names = sorted(p.name for p in (self.tmp / tenant).iterdir())
+            self.assertEqual(2, len(names), names)
+            self.assertTrue(all(n.startswith("direct-device-") for n in names), names)
+            self.assertNotIn("bearer-", (self.tmp / tenant / names[0]).read_text())
         self.assertFalse((self.tmp / "env").exists())
         for tenant in ("c", "d"):
             pool = (self.tmp / tenant / "token-pool-arm64-profile-Pv.json").read_text()

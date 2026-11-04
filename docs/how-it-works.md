@@ -34,7 +34,9 @@ directory (`~/.config/goopdl` unless `GOOPDL_CONFIG_DIR` or
   instead of hammering it.
 
 The pool keeps goopdl under Aurora's rate limit of about 20 requests per hour.
-In [Google account mode](authentication.md#google-account) there is no pool.
+In [Google account mode](authentication.md#google-account) there is no pool:
+each process signs in once and reuses the device it
+[registered and saved](authentication.md#what-account-mode-saves).
 
 ## Finding the latest version
 

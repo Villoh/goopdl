@@ -275,6 +275,10 @@ def _prepare(cfg: Config, package: str, output: Path, splits: bool, extras: bool
     )
 
 
+def _clear_cache(cfg: Config) -> None:
+    auth._clear_cached(cfg.credentials.email if cfg.credentials else None)
+
+
 def _result(specs: list, version_string: str) -> DownloadResult:
     return DownloadResult(
         path=specs[0].dest,
@@ -399,6 +403,15 @@ class Client:
                         dispenser_url=dispenser_url)
         return _run(cfg, _download, package, output, splits, extras, on_progress,
                     max_concurrent)
+
+    def clear_cache(self) -> None:
+        """Delete what this Client cached in its config_dir, like ``auth --clear``.
+
+        Removes the anonymous token files and, in account mode, only this
+        account's device record and in-memory session; without credentials,
+        every account's device records there (auth.clear_auth). Lock files stay.
+        """
+        _run(self._config, _clear_cache)
 
     async def adownload(
         self, package: str, output: Path | str, *, splits: bool = False,
