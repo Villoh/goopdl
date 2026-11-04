@@ -604,7 +604,10 @@ def _direct_auth_impl(
         proxy=httpx_proxy,
     )
     if toc.status_code == 429:
-        raise _direct_http_error("toc", toc)
+        # toc is optional (it only adds dfeCookie): keep the token, like before.
+        logger.warning(
+            "Google toc request rate limited (HTTP 429); continuing without dfeCookie."
+        )
     if toc.status_code == 200:
         try:
             bundle["dfeCookie"] = _response_string(toc.content, 1, 6, 22)
