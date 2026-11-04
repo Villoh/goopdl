@@ -32,7 +32,7 @@ REPO = SRC.parent
 OUT = REPO / "_site"
 SITE = "https://villoh.github.io/goopdl/"
 BLOB = "https://github.com/Villoh/goopdl/blob/main/"
-PAGES = ["installation", "commands", "authentication", "how-it-works"]
+PAGES = ["installation", "commands", "authentication", "how-it-works", "library"]
 LANGS = {
     "en": {"prefix": "", "docs": REPO / "docs", "locale": "en_US"},
     "es": {"prefix": "es/", "docs": REPO / "docs" / "es", "locale": "es_ES"},

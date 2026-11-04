@@ -309,6 +309,17 @@ explica cada modo paso a paso.
 | `0` | Éxito |
 | `1` | Otro error |
 | `2` | Entrada o configuración no válida, como definir solo una de las variables de la cuenta de Google |
-| `3` | Falló la autenticación |
+| `3` | Falló la autenticación: el dispensador rechazó todos los perfiles de dispositivo, está caído o no responde, o falló el inicio de sesión con la cuenta de Google. `download` también termina con `3` cuando el pool de tokens está ocupado |
 | `4` | Versión no disponible (HTTP 404 o confirmada como no disponible) |
-| `5` | Google Play siguió limitando las peticiones tras los reintentos |
+| `5` | Límite de peticiones (HTTP 429): de Google Play tras los reintentos en `download`, `fast-download`, `latest` e `inspect-delivery`, o del dispensador de tokens o del inicio de sesión con la cuenta de Google |
+
+Si el dispensador responde pero rechaza todos los perfiles, goopdl muestra
+`Authentication failed — all profiles rejected (last dispenser response: …)`
+con el último estado HTTP, o `no authToken`. Si el dispensador está caído,
+muestra en su lugar `… It may be down; retry later.`
+
+Si otro proceso de goopdl mantiene el bloqueo del pool de tokens más de 180
+segundos, goopdl muestra
+`Token pool is busy (another goopdl process holds the lock); retry later.`
+y termina con `3` en `download`, o con `1` en `latest` y `fast-download`.
+Vuelve a intentarlo cuando acabe el otro proceso.
