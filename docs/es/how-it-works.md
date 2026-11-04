@@ -20,7 +20,9 @@
 
 `download` y `latest` sacan los tokens de un pool de 5 tokens anónimos por
 arquitectura, país y perfil fijado, guardado en
-`~/.config/goopdl/token-pool-{arch}[-{country}][-profile-{key}].json`.
+`token-pool-{arch}[-{country}][-profile-{key}].json` dentro del directorio
+de configuración (`~/.config/goopdl` salvo que definas `GOOPDL_CONFIG_DIR` o
+`XDG_CONFIG_HOME`, mira [dónde se guardan los tokens](authentication.md#dónde-se-guardan-los-tokens)).
 
 - Antes de cada llamada, goopdl cuenta los tokens sin caducar y pide solo los
   que faltan. Con el pool lleno no se hace ninguna llamada al dispensador.

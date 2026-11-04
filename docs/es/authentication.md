@@ -28,13 +28,31 @@ cuando lo necesitan. Todas las opciones están en [`auth`](commands.md#auth).
 
 ### Dónde se guardan los tokens
 
-| Archivo | Contenido |
-| ------- | --------- |
-| `~/.config/goopdl/auth-{arch}[-{country}][-profile-{key}].json` | Token de la última ejecución de `auth` |
-| `~/.config/goopdl/token-pool-{arch}[-{country}][-profile-{key}].json` | Pool de hasta 5 tokens que usan `download`, `latest` y `fast-download` |
+Los tokens se guardan en el directorio de configuración de goopdl, que es el
+primero de estos que aplique:
+
+1. `$GOOPDL_CONFIG_DIR`, si es una ruta absoluta. Se expande `~`.
+2. `$XDG_CONFIG_HOME/goopdl`, si `XDG_CONFIG_HOME` es una ruta absoluta.
+3. `~/.config/goopdl`.
+
+Si alguna de las dos variables tiene una ruta relativa, se ignora, para que la
+caché nunca acabe en el directorio actual. En Linux y macOS el directorio se
+crea con permisos `0700` y los archivos de tokens se escriben con `0600`.
+
+> [!NOTE]
+> Hasta la 1.4.x goopdl usaba siempre `~/.config/goopdl`. Si tienes
+> `XDG_CONFIG_HOME` apuntando a otro sitio, goopdl ahora usa
+> `$XDG_CONFIG_HOME/goopdl` y la primera vez pide tokens nuevos. Para seguir
+> usando la ubicación antigua, define `GOOPDL_CONFIG_DIR=~/.config/goopdl`.
+
+| Archivo dentro de ese directorio | Contenido |
+| -------------------------------- | --------- |
+| `auth-{arch}[-{country}][-profile-{key}].json` | Token de la última ejecución de `auth` |
+| `token-pool-{arch}[-{country}][-profile-{key}].json` | Pool de hasta 5 tokens que usan `download`, `latest` y `fast-download` |
 
 La parte `-profile-{key}` aparece cuando fijas un dispositivo con `--profile`,
 así cada perfil tiene sus propios tokens. `goopdl auth --clear` los borra todos.
+`goopdl auth` muestra la ruta donde ha guardado el token.
 
 Los tokens caducan a los 50 minutos. En [cómo funciona](how-it-works.md#pool-de-tokens)
 se explica el pool.

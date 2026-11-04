@@ -19,7 +19,9 @@
 
 `download` and `latest` draw tokens from a pool of 5 anonymous tokens per
 architecture, country, and pinned profile, stored in
-`~/.config/goopdl/token-pool-{arch}[-{country}][-profile-{key}].json`.
+`token-pool-{arch}[-{country}][-profile-{key}].json` inside the config
+directory (`~/.config/goopdl` unless `GOOPDL_CONFIG_DIR` or
+`XDG_CONFIG_HOME` is set, see [where tokens live](authentication.md#where-tokens-live)).
 
 - Before each call, goopdl counts the unexpired tokens and requests only the
   missing ones. A full pool means no dispenser calls at all.
