@@ -70,7 +70,17 @@ _TRANSIENT_ERRORS = (
 )
 
 
+def _malformed_redirect(label: str) -> DownloadError:
+    # Never echo the Location: it may carry a signed URL or attacker text.
+    return DownloadError(f"malformed CDN URL or redirect for {label}")
+
+
 def _download_error(label: str, exc: httpx.HTTPError) -> DownloadError:
+    if isinstance(exc, httpx.RemoteProtocolError) and isinstance(
+        exc.__cause__ or exc.__context__, httpx.InvalidURL
+    ):
+        # httpx's "Invalid URL in location header": retrying won't help.
+        return _malformed_redirect(label)
     if isinstance(exc, httpx.HTTPStatusError):
         # api imports download; resolve this helper only once both are loaded.
         from goopdl.api import _parse_retry_after
@@ -291,6 +301,12 @@ async def _download_one(
                     if not hmac.compare_digest(calculated.digest(), integrity[2]):
                         raise IntegrityError(f"digest mismatch for {label}")
                 os.replace(temporary, spec.dest)
+            except (httpx.InvalidURL, UnicodeError):
+                # httpx computes the next hop while sending: a malformed
+                # Location (e.g. 'https:host', IDNA errors) surfaces here.
+                if in_callback:
+                    raise
+                failure = _malformed_redirect(label)
             except httpx.HTTPError as exc:
                 if in_callback:
                     raise

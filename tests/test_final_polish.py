@@ -344,5 +344,78 @@ class PublicEntrySecretFramesTest(unittest.TestCase):
                     self.assert_clean(error)
 
 
+MALFORMED_LOCATIONS = (
+    b"https:evil.com/x",
+    b"data:text/plain,hi",
+    "https://а́--.рф/x".encode(),  # Cyrillic IDN that fails IDNA
+    b"https://xn--a.com/x",
+    b"https://[::1/x",
+)
+
+
+def _redirecting_client(location: bytes):
+    real_client = httpx.AsyncClient
+
+    def handler(request):
+        if request.url.path == "/apk":
+            return httpx.Response(302, headers=[(b"Location", location)])
+        return httpx.Response(200, content=b"x")
+
+    def factory(*args, **kwargs):
+        return real_client(*args, transport=httpx.MockTransport(handler), **kwargs)
+
+    return patch("goopdl.download.httpx.AsyncClient", side_effect=factory)
+
+
+@patch.dict(os.environ, {}, clear=True)
+class MalformedRedirectTest(unittest.TestCase):
+    def test_library_raises_a_detached_non_retryable_download_error(self) -> None:
+        import asyncio
+
+        from goopdl.download import DownloadError, DownloadSpec, download_files
+
+        out = Path(tempfile.mkdtemp())
+        for location in MALFORMED_LOCATIONS:
+            with self.subTest(location=location), _redirecting_client(location):
+                try:
+                    asyncio.run(download_files(
+                        [DownloadSpec("https://play.googleapis.com/apk", out / "b.apk")]
+                    ))
+                except Exception as exc:  # noqa: BLE001
+                    error = exc
+                else:
+                    self.fail("redirect was followed")
+                self.assertIsInstance(error, DownloadError)
+                assert isinstance(error, DownloadError)
+                self.assertFalse(error.retryable)
+                self.assertIsNone(error.__cause__)
+                self.assertIsNone(error.__context__)
+                self.assertNotIn(location.decode(errors="replace")[8:], str(error))
+                self.assertEqual(list(out.iterdir()), [])
+
+    def test_cli_exits_with_a_clean_message(self) -> None:
+        from goopdl import api
+
+        delivery = api.DeliveryResult(
+            version_code=1, download_url="https://play.googleapis.com/apk",
+            download_size=1, sha256="0" * 43,
+        )
+        details = api.AppDetails(package="com.example.pkg", version_code=1)
+        out = Path(tempfile.mkdtemp())
+        for location in MALFORMED_LOCATIONS:
+            with (
+                self.subTest(location=location),
+                _redirecting_client(location),
+                patch.object(api, "pick_pool_token", return_value=dict(POOL_TOKEN)),
+                patch.object(api, "_fetch_latest_delivery", return_value=(details, delivery)),
+            ):
+                result = CliRunner().invoke(
+                    app, ["fast-download", "com.example.pkg", "--profile", PIXEL, "-o", str(out)]
+                )
+                self.assertEqual(result.exit_code, 1, result.output)
+                self.assertIsInstance(result.exception, SystemExit)
+                self.assertIn("malformed CDN URL or redirect for", _flat(result.output))
+
+
 if __name__ == "__main__":
     unittest.main()
