@@ -69,3 +69,8 @@ def __getattr__(name: str) -> Any:
     if name in _errors.__all__:
         return getattr(_errors, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    # Advertise the lazily loaded exceptions too (tab completion, dir()).
+    return sorted(set(globals()) | set(__all__))

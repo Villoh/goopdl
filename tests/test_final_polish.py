@@ -458,5 +458,17 @@ class PrettyExceptionLocalsTest(unittest.TestCase):
         self.assertFalse(namespace["app"].pretty_exceptions_show_locals)
 
 
+class PackageDirTest(unittest.TestCase):
+    def test_dir_lists_lazy_exceptions(self) -> None:
+        import goopdl
+        from goopdl import errors
+
+        listed = dir(goopdl)
+        for name in errors._LAZY:
+            self.assertIn(name, listed)
+        self.assertIn("GoopdlError", listed)
+        self.assertIn("__version__", listed)
+
+
 if __name__ == "__main__":
     unittest.main()
