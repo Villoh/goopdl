@@ -12,11 +12,13 @@ import random
 import re
 import struct
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 import httpx
 
@@ -29,6 +31,7 @@ from goopdl.auth import (
     replace_pool_token,
 )
 from goopdl.download import DownloadSpec, download_batch
+from goopdl.errors import GoopdlError
 from goopdl.profiles import get_latest_probe_profiles
 from goopdl.protobuf import ProtoDecoder, extract_strings, proto_to_dict
 
@@ -112,8 +115,12 @@ class DeliveryResult:
     dex_metadata: DexMetadata | None = None
 
 
-class PlayAPIError(Exception):
+class PlayAPIError(GoopdlError):
     pass
+
+
+class NetworkError(PlayAPIError):
+    """Raised when a Google Play request fails at the transport level."""
 
 
 class AuthExpiredError(PlayAPIError):
@@ -145,6 +152,42 @@ class AppNotAvailableError(PlayAPIError):
 
 class AppNotPurchasedError(PlayAPIError):
     """Raised when account has not acquired requested app."""
+
+
+def _send(method: Any, *args: Any, **kwargs: Any) -> Any:
+    """Call an httpx request function, wrapping transport failures."""
+    # Messages name only the error type: request URLs may carry tokens.
+    try:
+        return method(*args, **kwargs)
+    except httpx.TimeoutException as exc:
+        raise NetworkError("Google Play request timed out.") from exc
+    except httpx.HTTPError as exc:
+        raise NetworkError(
+            f"Google Play request failed ({type(exc).__name__})."
+        ) from exc
+
+
+@contextmanager
+def _malformed_proto() -> Iterator[None]:
+    """Turn ProtoDecoder failures into PlayAPIError (usable as decorator)."""
+    try:
+        yield
+    except (ValueError, EOFError) as exc:
+        raise PlayAPIError("Malformed protobuf response from Google Play.") from exc
+
+
+class InvalidPackageError(GoopdlError, ValueError):
+    """Raised when a package name is not a valid Android application ID."""
+
+
+_PACKAGE_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+")
+
+
+def validate_package(package: str) -> str:
+    """Return *package* unchanged, or raise InvalidPackageError if malformed."""
+    if not isinstance(package, str) or not _PACKAGE_RE.fullmatch(package):
+        raise InvalidPackageError(f"Invalid package name: {package!r}")
+    return package
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +236,7 @@ def _all_bytes(fields: list[tuple[int, int, Any]], num: int) -> list[bytes]:
     ]
 
 
+@_malformed_proto()
 def _navigate(raw: bytes, *path: int) -> list[tuple[int, int, Any]]:
     """Walk a nested protobuf path, e.g. _navigate(raw, 1, 2, 4)."""
     data = raw
@@ -243,6 +287,7 @@ class _ParsedDetails:
     downloads: str | None = None
 
 
+@_malformed_proto()
 def _parse_details_proto(raw: bytes) -> _ParsedDetails:
     """Parse details protobuf response into structured fields."""
     result = _ParsedDetails()
@@ -286,11 +331,19 @@ def _fetch_details_raw(
     proxy: str | None = None,
 ) -> bytes:
     """Fetch raw protobuf details response."""
+    validate_package(package)
     headers = _proto_headers(auth, country=country)
-    url = f"{DETAILS_URL}?doc={package}"
+    params = {"doc": package}
     if country:
-        url += f"&gl={country.upper()}"
-    resp = httpx.get(url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy))
+        params["gl"] = country.upper()
+    resp = _send(
+        httpx.get,
+        DETAILS_URL,
+        params=params,
+        headers=headers,
+        timeout=30,
+        proxy=_build_httpx_proxy(proxy),
+    )
     if resp.status_code == 404:
         raise AppNotAvailableError(f"App not found: {package}")
     if resp.status_code == 401:
@@ -347,6 +400,7 @@ def fetch_app_item(
         from goopdl.api import fetch_app_item
         item = fetch_app_item("com.whatsapp", country="US", proxy="http://user:pass@host:port/")
     """
+    validate_package(package)
     auth = pick_pool_token(
         arch=arch,
         country=country,
@@ -535,10 +589,12 @@ def purchase(
     proxy: str | None = None,
 ) -> str:
     """Acquire a free app and return Play's delivery token when present."""
+    validate_package(package)
     headers = build_headers(auth, country=country)
     headers["Content-Type"] = "application/x-www-form-urlencoded"
-    body = f"doc={package}&ot=1&vc={version_code}"
-    resp = httpx.post(
+    body = urlencode({"doc": package, "ot": 1, "vc": version_code})
+    resp = _send(
+        httpx.post,
         PURCHASE_URL,
         headers=headers,
         content=body,
@@ -600,6 +656,7 @@ def _safe_cdn_url(url: str) -> str:
     return ""
 
 
+@_malformed_proto()
 def _parse_delivery(raw: bytes) -> DeliveryResult:
     """Parse a delivery response using ProtoDecoder."""
     for payload_fn in (21, 5, 4, 6):
@@ -731,18 +788,24 @@ def get_delivery(
     locales: list[str] | None = None,
 ) -> DeliveryResult:
     """Fetch download URLs for base APK, splits, and OBB files."""
+    validate_package(package)
     headers = _proto_headers(auth, country=country)
     if locales:
         headers["X-DFE-UserLanguages"] = ",".join(locales)
-    url = f"{DELIVERY_URL}?doc={package}&ot=1&vc={version_code}"
+    params: dict[str, Any] = {"doc": package, "ot": 1, "vc": version_code}
     if delivery_token:
-        url += f"&dtok={delivery_token}"
+        params["dtok"] = delivery_token
     if country:
-        url += f"&gl={country.upper()}"
+        params["gl"] = country.upper()
     resp: Any = None
     for attempt in range(_DELIVERY_RETRIES + 1):
-        resp = httpx.get(
-            url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy)
+        resp = _send(
+            httpx.get,
+            DELIVERY_URL,
+            params=params,
+            headers=headers,
+            timeout=30,
+            proxy=_build_httpx_proxy(proxy),
         )
         if resp.status_code == 401:
             raise AuthExpiredError("Auth token expired.")
@@ -799,11 +862,19 @@ def list_splits(
     proxy: str | None = None,
 ) -> list[str]:
     """Return split names from app details metadata."""
+    validate_package(package)
     headers = _proto_headers(auth, country=country)
-    url = f"{DETAILS_URL}?doc={package}"
+    params = {"doc": package}
     if country:
-        url += f"&gl={country.upper()}"
-    resp = httpx.get(url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy))
+        params["gl"] = country.upper()
+    resp = _send(
+        httpx.get,
+        DETAILS_URL,
+        params=params,
+        headers=headers,
+        timeout=30,
+        proxy=_build_httpx_proxy(proxy),
+    )
     if resp.status_code == 401:
         raise AuthExpiredError("Auth token expired.")
     if resp.status_code != 200:
@@ -819,16 +890,16 @@ def list_splits(
     if not doc_details_b:
         return []
 
-    dd = ProtoDecoder(doc_details_b).read_all_ordered()
+    dd = _navigate(doc_details_b)
     app_details_b = _first_bytes(dd, 1)
     if not app_details_b:
         return []
 
-    ad = ProtoDecoder(app_details_b).read_all_ordered()
+    ad = _navigate(app_details_b)
 
     # file entries (field 17 in AppDetails, each with splitId at field 9)
     for file_b in _all_bytes(ad, 17):
-        ff = ProtoDecoder(file_b).read_all_ordered()
+        ff = _navigate(file_b)
         sid = _first_string(ff, 9)
         if sid:
             splits.add(sid)
@@ -879,10 +950,17 @@ def search_apps(
 ) -> list[dict]:
     """Search Google Play via FDFE protobuf API. Returns list of {package, title, creator}."""
     headers = _proto_headers(auth, country=country)
-    url = f"{SEARCH_URL}?q={query}&c=3"
+    params: dict[str, Any] = {"q": query, "c": 3}
     if country:
-        url += f"&gl={country.upper()}"
-    resp = httpx.get(url, headers=headers, timeout=30, proxy=_build_httpx_proxy(proxy))
+        params["gl"] = country.upper()
+    resp = _send(
+        httpx.get,
+        SEARCH_URL,
+        params=params,
+        headers=headers,
+        timeout=30,
+        proxy=_build_httpx_proxy(proxy),
+    )
     if resp.status_code == 401:
         raise AuthExpiredError("Auth token expired.")
     if resp.status_code != 200:
@@ -954,6 +1032,27 @@ def _fetch_latest_delivery(
     return details, delivery
 
 
+def _safe_dest(output: Path, name: str) -> Path:
+    """Join a server-influenced file name to *output*, refusing to escape it."""
+    dest = output / re.sub(r"[^A-Za-z0-9._-]+", "_", name)
+    # Names are flat, so the file must sit directly in output (no '..', '.', or
+    # symlink pointing elsewhere).
+    if dest.resolve().parent != output.resolve():
+        raise PlayAPIError(f"Refusing to write outside {output}: {name!r}")
+    return dest
+
+
+def _check_unique_dests(specs: list[DownloadSpec]) -> None:
+    """Refuse specs whose (sanitised) file names would overwrite each other."""
+    seen: set[str] = set()
+    for spec in specs:
+        # Casefold: macOS and Windows file systems are case-insensitive.
+        key = str(spec.dest).casefold()
+        if key in seen:
+            raise PlayAPIError(f"Two files would be written to {spec.dest.name!r}.")
+        seen.add(key)
+
+
 def _build_specs(
     package: str,
     vc: int,
@@ -980,12 +1079,12 @@ def _build_specs(
     ]
     if delivery.splits and not no_splits:
         for split in delivery.splits:
-            name = f"{package}-{vc}-{split.name}.apk"
+            dest = _safe_dest(output, f"{package}-{vc}-{split.name}.apk")
             specs.append(
                 DownloadSpec(
                     url=split.gzipped_url or split.url,
-                    dest=output / name,
-                    label=name,
+                    dest=dest,
+                    label=dest.name,
                     gzipped=bool(split.gzipped_url),
                     integrity_required=True,
                     expected_size=split.size,
@@ -1021,6 +1120,7 @@ def _build_specs(
                     gzipped=af.gzipped,
                 )
             )
+    _check_unique_dests(specs)
     return specs
 
 
@@ -1044,6 +1144,7 @@ def download_app(
     *proxy* itself is passed through unpatched to the Google FDFE calls.
     Returns (apk_path, dotted version string) — not the numeric version code.
     """
+    validate_package(package)
     if profile:
         chosen_profile = profile
     else:

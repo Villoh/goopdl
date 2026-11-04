@@ -9,13 +9,15 @@ from base64 import b64decode, urlsafe_b64encode
 
 import httpx
 
+from goopdl.errors import GoopdlError
+
 AUTH_URL = "https://android.clients.google.com/auth"
 GOOGLE_PUBKEY = (
     "AAAAgMom/1a/v0lblO2Ubrt60J2gcuXSljGFQXgcyZWveWLEwo6prwgi3iJIZdodyhKZQrNWp5nKJ3srRXcUW+F1BD3baEVGcmEgqaLZUNBjm057pKRI16kB0YppeGx5qIQ5QjKzsR8ETQbKLNWgRY0QRNVz34kMJR3P/LgHax/6rmf5AAAAAwEAAQ=="
 )
 
 
-class AASTokenError(ValueError):
+class AASTokenError(GoopdlError, ValueError):
     """Google rejected account authentication."""
 
 

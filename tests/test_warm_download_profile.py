@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from _envutil import isolated_env
 from goopdl import api, auth
 from goopdl.profiles import get_latest_probe_profiles
 
@@ -22,7 +23,7 @@ class WarmDownloadProfileTest(unittest.TestCase):
         self.details = api.AppDetails("example.app", version_code=42, version_string="1.2.3")
         self.fresh = self.token("fresh")
         for patcher in (
-            patch.dict(os.environ, {}, clear=True),
+            isolated_env(),
             patch.object(auth, "_CONFIG_DIR", self.directory / "cache"),
             patch.object(auth.console, "print"),
         ):

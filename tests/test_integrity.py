@@ -309,7 +309,7 @@ class MultiArchManifestTest(unittest.TestCase):
                 result = CliRunner().invoke(
                     cli.app,
                     [
-                        "download", "pkg", "-a", "arm64,armv7", "--splits", "--extras",
+                        "download", "com.example.pkg", "-a", "arm64,armv7", "--splits", "--extras",
                         "-o", str(root), "--integrity-manifest", str(manifest),
                     ],
                 )
@@ -322,9 +322,9 @@ class MultiArchManifestTest(unittest.TestCase):
             self.assertEqual(
                 paths,
                 [
-                    "pkg-7.apk",
-                    "pkg-7-config.arm64_v8a.apk",
-                    "pkg-7-config.armeabi_v7a.apk",
+                    "com.example.pkg-7.apk",
+                    "com.example.pkg-7-config.arm64_v8a.apk",
+                    "com.example.pkg-7-config.armeabi_v7a.apk",
                 ],
             )
 

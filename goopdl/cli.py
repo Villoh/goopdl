@@ -22,15 +22,19 @@ from goopdl.api import (
     AppNotAvailableError,
     AppNotSupportedError,
     AuthExpiredError,
+    InvalidPackageError,
     PlayAPIError,
     RateLimitedError,
     VersionUnavailableError,
+    _check_unique_dests,
+    _safe_dest,
     download_app,
     fetch_app_item,
     get_delivery,
     get_details,
     purchase,
     search_apps,
+    validate_package,
 )
 from goopdl.api import (
     list_splits as api_list_splits,
@@ -80,6 +84,21 @@ app = typer.Typer(
 )
 
 
+def _package_callback(value: str) -> str:
+    try:
+        return validate_package(value)
+    except InvalidPackageError as exc:
+        raise typer.BadParameter(str(exc)) from None
+
+
+def _arch_callback(value: str) -> str:
+    if value not in VALID_ARCHS:
+        raise typer.BadParameter(
+            f"Unknown architecture: {value}. Choose from {', '.join(VALID_ARCHS)}."
+        )
+    return value
+
+
 def _version_callback(value: bool) -> None:
     if value:
         rprint(f"goopdl [bold]{__version__}[/bold]")
@@ -122,7 +141,9 @@ def main(
 @app.command()
 def auth(
     arch: str = typer.Option(
-        "arm64", help="Device type: arm64, armv7, x86, x86_64 or tv."
+        "arm64",
+        help="Device type: arm64, armv7, x86, x86_64 or tv.",
+        callback=_arch_callback,
     ),
     dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
@@ -306,8 +327,12 @@ def profiles(
 
 @app.command()
 def latest(
-    package: str = typer.Argument(..., help="Package name (e.g. com.whatsapp)."),
-    arch: str = typer.Option("arm64", help="Architecture for token."),
+    package: str = typer.Argument(
+        ..., help="Package name (e.g. com.whatsapp).", callback=_package_callback
+    ),
+    arch: str = typer.Option(
+        "arm64", help="Architecture for token.", callback=_arch_callback
+    ),
     country: str | None = typer.Option(
         None, "--country", "-c", help="2-letter country code."
     ),
@@ -447,8 +472,12 @@ def latest(
 
 @app.command()
 def info(
-    package: str = typer.Argument(..., help="Package name (e.g. com.whatsapp)."),
-    arch: str = typer.Option("arm64", help="Architecture for token."),
+    package: str = typer.Argument(
+        ..., help="Package name (e.g. com.whatsapp).", callback=_package_callback
+    ),
+    arch: str = typer.Option(
+        "arm64", help="Architecture for token.", callback=_arch_callback
+    ),
     dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
     ),
@@ -550,7 +579,9 @@ def info(
 def search(
     query: str = typer.Argument(..., help="Search query."),
     limit: int = typer.Option(10, "--limit", "-l", help="Max results."),
-    arch: str = typer.Option("arm64", help="Architecture for token."),
+    arch: str = typer.Option(
+        "arm64", help="Architecture for token.", callback=_arch_callback
+    ),
     dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
     ),
@@ -612,8 +643,12 @@ def search(
 
 @app.command("list-splits")
 def list_splits_cmd(
-    package: str = typer.Argument(..., help="Package name."),
-    arch: str = typer.Option("arm64", help="Architecture for token."),
+    package: str = typer.Argument(
+        ..., help="Package name.", callback=_package_callback
+    ),
+    arch: str = typer.Option(
+        "arm64", help="Architecture for token.", callback=_arch_callback
+    ),
     dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
     ),
@@ -764,9 +799,13 @@ def _acquire_delivery(
 
 @app.command("inspect-delivery")
 def inspect_delivery_cmd(
-    package: str = typer.Argument(..., help="Package name."),
+    package: str = typer.Argument(
+        ..., help="Package name.", callback=_package_callback
+    ),
     version: int = typer.Option(..., "--version", "-v", help="Version code."),
-    arch: str = typer.Option("arm64", "--arch", help="Device architecture."),
+    arch: str = typer.Option(
+        "arm64", "--arch", help="Device architecture.", callback=_arch_callback
+    ),
     dispenser: str | None = typer.Option(None, "--dispenser", "-d"),
     country: str | None = typer.Option(None, "--country", "-c"),
     proxy: str | None = typer.Option(None, "--proxy", "-p"),
@@ -832,7 +871,9 @@ def inspect_delivery_cmd(
 
 @app.command()
 def download(
-    package: str = typer.Argument(..., help="Package name (e.g. com.whatsapp)."),
+    package: str = typer.Argument(
+        ..., help="Package name (e.g. com.whatsapp).", callback=_package_callback
+    ),
     output: Path = typer.Option(".", "--output", "-o", help="Output directory."),
     arch: str = typer.Option(
         "arm64",
@@ -887,21 +928,25 @@ def download(
     """Download an APK (with splits + additional files) from Google Play."""
     specs: list[DownloadSpec] = []
     for arch_item in _parse_archs(arch):
-        specs += _download_arch(
-            package,
-            output,
-            arch_item,
-            version,
-            locale,
-            dm,
-            dispenser,
-            no_splits,
-            no_extras,
-            country,
-            proxy,
-            profile,
-            require_integrity=integrity_manifest is not None,
-        )
+        try:
+            specs += _download_arch(
+                package,
+                output,
+                arch_item,
+                version,
+                locale,
+                dm,
+                dispenser,
+                no_splits,
+                no_extras,
+                country,
+                proxy,
+                profile,
+                require_integrity=integrity_manifest is not None,
+            )
+        except PlayAPIError as exc:  # unsafe or colliding output file names
+            err.print(str(exc), style="red", markup=False)
+            raise typer.Exit(code=1) from None
     if integrity_manifest:
         # Only digest-verified files (no OBB/asset packs); one entry per path,
         # since archs can share files such as the base APK.
@@ -1016,12 +1061,12 @@ def _download_arch(
     extras: list[DownloadSpec] = []
     if delivery.splits and not no_splits:
         for split in delivery.splits:
-            name = f"{package}-{vc}-{split.name}.apk"
+            split_dest = _safe_dest(output, f"{package}-{vc}-{split.name}.apk")
             extras.append(
                 DownloadSpec(
                     url=split.gzipped_url or split.url,
-                    dest=output / name,
-                    label=name,
+                    dest=split_dest,
+                    label=split_dest.name,
                     gzipped=bool(split.gzipped_url),
                     integrity_required=True,
                     expected_size=split.size,
@@ -1058,6 +1103,7 @@ def _download_arch(
             )
 
     all_specs = [base_spec] + extras
+    _check_unique_dests(all_specs)
     total_files = len(all_specs)
     total_size = delivery.download_size + sum(
         s.size for s in delivery.splits if not no_splits
@@ -1083,7 +1129,7 @@ def _download_arch(
 
     if delivery.splits and not no_splits:
         for split in delivery.splits:
-            sp = output / f"{package}-{vc}-{split.name}.apk"
+            sp = _safe_dest(output, f"{package}-{vc}-{split.name}.apk")
             if sp.exists():
                 files_table.add_row(sp.name, _fmt(sp.stat().st_size))
 
@@ -1121,13 +1167,16 @@ def _download_arch(
 
 @app.command("fast-download")
 def fast_download(
-    package: str = typer.Argument(..., help="Package name (e.g. com.whatsapp)."),
+    package: str = typer.Argument(
+        ..., help="Package name (e.g. com.whatsapp).", callback=_package_callback
+    ),
     output: Path = typer.Option(".", "--output", "-o", help="Output directory."),
     arch: str = typer.Option(
         "arm64",
         "--arch",
         "-a",
         help="Device type: arm64, armv7, x86, x86_64 or tv.",
+        callback=_arch_callback,
     ),
     dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."

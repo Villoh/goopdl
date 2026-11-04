@@ -1,4 +1,3 @@
-import os
 import struct
 import tempfile
 import unittest
@@ -7,6 +6,7 @@ from unittest.mock import Mock, patch
 
 from typer.testing import CliRunner
 
+from _envutil import isolated_env
 from goopdl.api import PlayAPIError, VersionUnavailableError, get_delivery
 from goopdl.auth import (
     DirectAuthConfigurationError,
@@ -124,7 +124,7 @@ class DirectAuthTest(unittest.TestCase):
         for environment, enabled, missing in cases:
             with (
                 self.subTest(environment=environment),
-                patch.dict(os.environ, environment, clear=True),
+                isolated_env(environment),
             ):
                 if missing:
                     with self.assertRaisesRegex(DirectAuthConfigurationError, missing):
@@ -151,13 +151,11 @@ class DirectAuthTest(unittest.TestCase):
         ]
         get.return_value = Mock(status_code=200, content=toc_response)
 
-        with patch.dict(
-            os.environ,
+        with isolated_env(
             {
                 "GOOPDL_ACCOUNT_EMAIL": "account@example.test",
                 "GOOPDL_AAS_TOKEN": "aas_et/persistent-secret",
             },
-            clear=True,
         ):
             bundle = fetch_token()
 
@@ -330,13 +328,11 @@ class DirectAuthTest(unittest.TestCase):
             Mock(status_code=200, text="Auth=temporary-bearer\n"),
         ]
         get.return_value = Mock(status_code=503, content=b"")
-        with patch.dict(
-            os.environ,
+        with isolated_env(
             {
                 "GOOPDL_ACCOUNT_EMAIL": "account@example.test",
                 "GOOPDL_AAS_TOKEN": "aas_et/persistent-secret",
             },
-            clear=True,
         ):
             bundle_without_toc = fetch_token()
         assert bundle_without_toc is not None
@@ -351,13 +347,11 @@ class DirectAuthTest(unittest.TestCase):
             ),
         ]
         with (
-            patch.dict(
-                os.environ,
+            isolated_env(
                 {
                     "GOOPDL_ACCOUNT_EMAIL": "account@example.test",
                     "GOOPDL_AAS_TOKEN": "aas_et/persistent-secret",
                 },
-                clear=True,
             ),
             patch("goopdl.auth.console.print") as console_print,
         ):
@@ -374,13 +368,11 @@ class DirectAuthTest(unittest.TestCase):
     def test_direct_failure_reports_safe_stage(
         self, console_print: Mock, _auth: Mock
     ) -> None:
-        with patch.dict(
-            os.environ,
+        with isolated_env(
             {
                 "GOOPDL_ACCOUNT_EMAIL": "account@example.test",
                 "GOOPDL_AAS_TOKEN": "aas_et/persistent-secret",
             },
-            clear=True,
         ):
             self.assertIsNone(fetch_token())
 
@@ -396,7 +388,7 @@ class DirectAuthTest(unittest.TestCase):
             "GOOPDL_AAS_TOKEN": "aas_et/persistent-secret",
         }
         with (
-            patch.dict(os.environ, environment, clear=True),
+            isolated_env(environment),
             patch("goopdl.auth.fetch_token", return_value=token) as fetch,
             patch("goopdl.auth._load_pool") as load_pool,
             patch("goopdl.auth._save_pool") as save_pool,
@@ -423,10 +415,8 @@ class DirectAuthTest(unittest.TestCase):
     def test_cli_rejects_partial_env_before_creating_output(self) -> None:
         with (
             tempfile.TemporaryDirectory() as directory,
-            patch.dict(
-                os.environ,
+            isolated_env(
                 {"GOOPDL_ACCOUNT_EMAIL": "account@example.test"},
-                clear=True,
             ),
             patch("goopdl.cli.pick_pool_token") as pick,
         ):
@@ -448,7 +438,7 @@ class DirectAuthTest(unittest.TestCase):
         }
         bundle = {"authToken": "temporary", "gsfId": "secret-gsf"}
         with (
-            patch.dict(os.environ, environment, clear=True),
+            isolated_env(environment),
             patch("goopdl.cli.fetch_token", return_value=bundle),
             patch("goopdl.cli.save_auth") as save_auth,
         ):

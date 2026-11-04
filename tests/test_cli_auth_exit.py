@@ -65,7 +65,7 @@ class AuthExitCodeTest(unittest.TestCase):
             ) as download_batch,
         ):
             result = CliRunner().invoke(
-                app, ["download", "pkg", "--output", directory]
+                app, ["download", "com.example.pkg", "--output", directory]
             )
 
         download_batch.assert_called_once()
@@ -87,7 +87,7 @@ class AuthExitCodeTest(unittest.TestCase):
             ) as download_app,
         ):
             result = CliRunner().invoke(
-                app, ["fast-download", "pkg", "--output", directory]
+                app, ["fast-download", "com.example.pkg", "--output", directory]
             )
 
         download_app.assert_called_once()
