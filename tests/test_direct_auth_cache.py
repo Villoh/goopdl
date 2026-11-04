@@ -582,6 +582,32 @@ class DiskTest(DirectCacheCase):
         self.assertEqual(3, len({o[3] for o in outcomes} - {os.getpid()}))
 
 
+class ClearCacheTest(DirectCacheCase):
+    def test_clear_cache_is_scoped_to_the_client(self):
+        mine, other = self.client(), self.client(email="other@x.test", token="aas_et/o")
+        anonymous = Client(config_dir=self.tmp / "c", profile="Pv")
+        mine.details(PKG)
+        other.details(PKG)
+        anonymous.details(PKG)
+        self.client("elsewhere").details(PKG)
+        directory = self.tmp / "c"
+        mine.clear_cache()
+        names = sorted(p.name for p in directory.glob("*.json"))
+        acct = auth._account_hash("other@x.test")
+        self.assertEqual([f"direct-device-{acct}-arm64-profile-Pv.json"], names)
+        self.assertTrue(list(directory.glob("*.lock")))  # locks stay
+        self.assertEqual(1, len(list((self.tmp / "elsewhere").glob("*.json"))))
+        mine.details(PKG)  # new device and sign-in
+        other.details(PKG)  # untouched: still cached
+        self.client("elsewhere").details(PKG)
+        self.assertEqual((4, 4), (self.fake.n("checkin"), self.fake.n("auth")))
+        anonymous.clear_cache()  # no credentials: auth.clear_auth for its dir
+        self.assertEqual([], list(directory.glob("*.json")))
+        other.details(PKG)
+        self.assertEqual((5, 5), (self.fake.n("checkin"), self.fake.n("auth")))
+        self.assertIsNone(auth._scope.get())
+
+
 class SecretsTest(DirectCacheCase):
     def assert_clean(self, error):
         seen, pending = set(), [error]
