@@ -97,5 +97,30 @@ class DispenserRejectionMessageTest(unittest.TestCase):
                 self.assertNotIn("all profiles rejected", result.output)
 
 
+@patch.dict(os.environ, {}, clear=True)
+@patch("goopdl.auth.time.sleep")
+class DispenserLogDeviceTest(unittest.TestCase):
+    def _messages(self, **post) -> list[str]:
+        with (
+            self.assertLogs("goopdl.auth", level="WARNING") as logs,
+            patch("goopdl.auth.httpx.post", **post),
+        ):
+            auth.fetch_token(profile=PIXEL, proxy="http://user:pass@proxy:1")
+        return [record.getMessage() for record in logs.records]
+
+    def test_server_and_transport_failures_name_the_device(self, _sleep) -> None:
+        for post, expected in (
+            ({"return_value": httpx.Response(503)}, f"Dispenser returned HTTP 503 for {PIXEL}"),
+            (
+                {"side_effect": httpx.ConnectError("user:pass")},
+                f"Dispenser transport failed for {PIXEL}: ConnectError",
+            ),
+        ):
+            with self.subTest(expected=expected):
+                messages = self._messages(**post)
+                self.assertIn(expected, messages)
+                self.assertNotIn("pass", " ".join(messages))
+
+
 if __name__ == "__main__":
     unittest.main()
