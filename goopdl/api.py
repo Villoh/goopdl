@@ -27,6 +27,7 @@ from goopdl.auth import (
     DirectAuthError,
     DispenserRateLimitedError,
     DispenserUnavailableError,
+    PoolBusyError,
     _build_httpx_proxy,
     _load_pool,
     build_headers,
@@ -176,11 +177,17 @@ def _send(method: Any, *args: Any, **kwargs: Any) -> Any:
     # its .request (Authorization header, dtok URL) via __cause__/__context__.
     try:
         return method(*args, **kwargs)
+    except NetworkError as exc:
+        error = exc.with_traceback(None)
     except httpx.TimeoutException:
-        message = "Google Play request timed out."
+        error = NetworkError("Google Play request timed out.")
     except httpx.HTTPError as exc:
-        message = f"Google Play request failed ({type(exc).__name__})."
-    raise NetworkError(message)
+        error = NetworkError(f"Google Play request failed ({type(exc).__name__}).")
+    finally:
+        # Drop bound methods and request containers as well as the httpx exception.
+        del method, args, kwargs
+    error.__cause__ = error.__context__ = None
+    raise error
 
 
 @contextmanager
@@ -352,14 +359,17 @@ def _fetch_details_raw(
     params = {"doc": package}
     if country:
         params["gl"] = country.upper()
-    resp = _send(
-        httpx.get,
-        DETAILS_URL,
-        params=params,
-        headers=headers,
-        timeout=30,
-        proxy=_build_httpx_proxy(proxy),
-    )
+    try:
+        resp = _send(
+            httpx.get,
+            DETAILS_URL,
+            params=params,
+            headers=headers,
+            timeout=30,
+            proxy=_build_httpx_proxy(proxy),
+        )
+    finally:
+        del headers, params, proxy
     if resp.status_code == 404:
         raise AppNotAvailableError(f"App not found: {package}")
     _check_status(resp, "Failed to fetch details")
@@ -373,7 +383,10 @@ def get_details_raw(
     proxy: str | None = None,
 ) -> dict:
     """Return the full protobuf response decoded as a nested dict."""
-    raw = _fetch_details_raw(package, auth, country=country, proxy=proxy)
+    try:
+        raw = _fetch_details_raw(package, auth, country=country, proxy=proxy)
+    finally:
+        proxy = None
     decoded = proto_to_dict(raw)
     try:
         doc = decoded["1"]["2"]["4"]
@@ -564,9 +577,12 @@ def get_details(
     proxy: str | None = None,
 ) -> AppDetails:
     """Return structured app details."""
-    parsed = _parse_details_proto(
-        _fetch_details_raw(package, auth, country=country, proxy=proxy)
-    )
+    try:
+        parsed = _parse_details_proto(
+            _fetch_details_raw(package, auth, country=country, proxy=proxy)
+        )
+    finally:
+        proxy = None
     if not parsed.docid:
         raise AppNotAvailableError(
             "App not found or unavailable for this device profile."
@@ -600,14 +616,17 @@ def purchase(
     headers = build_headers(auth, country=country)
     headers["Content-Type"] = "application/x-www-form-urlencoded"
     body = urlencode({"doc": package, "ot": 1, "vc": version_code})
-    resp = _send(
-        httpx.post,
-        PURCHASE_URL,
-        headers=headers,
-        content=body,
-        timeout=30,
-        proxy=_build_httpx_proxy(proxy),
-    )
+    try:
+        resp = _send(
+            httpx.post,
+            PURCHASE_URL,
+            headers=headers,
+            content=body,
+            timeout=30,
+            proxy=_build_httpx_proxy(proxy),
+        )
+    finally:
+        del headers, body, proxy
     if resp.status_code in (401, 429):
         _check_status(resp, "Purchase failed")
     if resp.status_code != 200:
@@ -631,6 +650,8 @@ _GOOGLE_CDN_SUFFIXES = (
     ".googleapis.com",
     ".ggpht.com",
     ".googleusercontent.com",
+    # play.googleapis.com/download/by-token 302s here (e.g. rr4---sn-xxxx.gvt1.com)
+    ".gvt1.com",
 )
 _DELIVERY_RETRIES = 2
 _DELIVERY_BACKOFF = (1.0, 3.0)
@@ -683,10 +704,16 @@ def _check_status(resp: Any, what: str) -> None:
 
 
 def _safe_cdn_url(url: str) -> str:
-    """Return url only if it is HTTPS and hosted on a known Google domain, else ''."""
+    """Return url only if it is HTTPS on port 443 on a known Google domain, else ''."""
     if not url.startswith("https://"):
         return ""
-    host = urlparse(url).hostname or ""
+    try:
+        parsed = urlparse(url)
+        if parsed.port not in (None, 443):
+            return ""
+        host = parsed.hostname or ""
+    except ValueError:
+        return ""
     if host == "android.clients.google.com" or any(
         host.endswith(s) for s in _GOOGLE_CDN_SUFFIXES
     ):
@@ -836,38 +863,41 @@ def get_delivery(
     if country:
         params["gl"] = country.upper()
     resp: Any = None
-    for attempt in range(_DELIVERY_RETRIES + 1):
-        resp = _send(
-            httpx.get,
-            DELIVERY_URL,
-            params=params,
-            headers=headers,
-            timeout=30,
-            proxy=_build_httpx_proxy(proxy),
-        )
-        if resp.status_code == 401:
-            raise AuthExpiredError("Auth token expired.")
-        if resp.status_code == 404:
-            raise VersionUnavailableError("Requested version code is unavailable.")
-        if resp.status_code == 429:
-            retry_after = _parse_retry_after(getattr(resp, "headers", {}))
-            # A wait longer than we are willing to sleep: retrying inside the
-            # server's window only burns quota, so give up straight away.
-            too_long = retry_after is not None and retry_after > _RETRY_AFTER_MAX
-            if attempt == _DELIVERY_RETRIES or too_long:
-                raise RateLimitedError(
-                    "Google Play rate limited delivery requests (HTTP 429).",
-                    retry_after=retry_after,
-                )
-            # Never retry sooner than our own backoff, even on "Retry-After: 0".
-            time.sleep(max(retry_after or 0.0, _DELIVERY_BACKOFF[attempt]))
-            continue
-        if resp.status_code != 200:
-            raise PlayAPIError(
-                f"Delivery failed (HTTP {resp.status_code}).",
-                status_code=resp.status_code,
+    try:
+        for attempt in range(_DELIVERY_RETRIES + 1):
+            resp = _send(
+                httpx.get,
+                DELIVERY_URL,
+                params=params,
+                headers=headers,
+                timeout=30,
+                proxy=_build_httpx_proxy(proxy),
             )
-        break
+            if resp.status_code == 401:
+                raise AuthExpiredError("Auth token expired.")
+            if resp.status_code == 404:
+                raise VersionUnavailableError("Requested version code is unavailable.")
+            if resp.status_code == 429:
+                retry_after = _parse_retry_after(getattr(resp, "headers", {}))
+                # A wait longer than we are willing to sleep: retrying inside the
+                # server's window only burns quota, so give up straight away.
+                too_long = retry_after is not None and retry_after > _RETRY_AFTER_MAX
+                if attempt == _DELIVERY_RETRIES or too_long:
+                    raise RateLimitedError(
+                        "Google Play rate limited delivery requests (HTTP 429).",
+                        retry_after=retry_after,
+                    )
+                # Never retry sooner than our own backoff, even on "Retry-After: 0".
+                time.sleep(max(retry_after or 0.0, _DELIVERY_BACKOFF[attempt]))
+                continue
+            if resp.status_code != 200:
+                raise PlayAPIError(
+                    f"Delivery failed (HTTP {resp.status_code}).",
+                    status_code=resp.status_code,
+                )
+            break
+    finally:
+        del headers, params, proxy, delivery_token
 
     if resp is None:
         raise PlayAPIError("Delivery request did not return a response.")
@@ -910,14 +940,17 @@ def list_splits(
     params = {"doc": package}
     if country:
         params["gl"] = country.upper()
-    resp = _send(
-        httpx.get,
-        DETAILS_URL,
-        params=params,
-        headers=headers,
-        timeout=30,
-        proxy=_build_httpx_proxy(proxy),
-    )
+    try:
+        resp = _send(
+            httpx.get,
+            DETAILS_URL,
+            params=params,
+            headers=headers,
+            timeout=30,
+            proxy=_build_httpx_proxy(proxy),
+        )
+    finally:
+        del headers, params, proxy
     _check_status(resp, "Failed to fetch details")
 
     # Navigate to AppDetails: 1 -> 2 -> 4 -> 13 -> 1
@@ -993,14 +1026,17 @@ def search_apps(
     params: dict[str, Any] = {"q": query, "c": 3}
     if country:
         params["gl"] = country.upper()
-    resp = _send(
-        httpx.get,
-        SEARCH_URL,
-        params=params,
-        headers=headers,
-        timeout=30,
-        proxy=_build_httpx_proxy(proxy),
-    )
+    try:
+        resp = _send(
+            httpx.get,
+            SEARCH_URL,
+            params=params,
+            headers=headers,
+            timeout=30,
+            proxy=_build_httpx_proxy(proxy),
+        )
+    finally:
+        del headers, params, proxy
     _check_status(resp, "Search failed")
 
     docs = _find_docv2(resp.content)
@@ -1020,7 +1056,7 @@ def search_apps(
 # ---------------------------------------------------------------------------
 
 _TOKEN_FETCH_ATTEMPTS = 3
-_TOKEN_FETCH_COOLDOWN = 5  # seconds — dispenser 5xx are usually transient
+_TOKEN_FETCH_COOLDOWN = 5  # seconds — transient direct Google auth failures
 
 
 def _acquire_single_token(
@@ -1030,10 +1066,10 @@ def _acquire_single_token(
     dispenser_url: str | None,
     profile: str,
 ) -> dict | None:
-    """pick_pool_token(size=1), retrying a few times if the dispenser hiccups.
+    """pick_pool_token(size=1), retrying transient direct Google auth failures.
 
-    Raises the last typed token error (see fetch_token) once attempts run out;
-    a dispenser rate limit is raised at once, as retrying only extends it.
+    Dispenser failures propagate immediately: a fixed profile cannot rotate,
+    and repeated requests cannot repair a throttled or unavailable endpoint.
     """
     last_error: DirectAuthError | None = None
     for attempt in range(_TOKEN_FETCH_ATTEMPTS):
@@ -1047,9 +1083,11 @@ def _acquire_single_token(
                 size=1,
                 raise_on_error=True,
             )
-        except DispenserRateLimitedError:
+        except (PoolBusyError, DispenserUnavailableError):
             raise
         except DirectAuthError as exc:
+            if exc.status in (400, 401, 403, 429):
+                raise
             auth, last_error = None, exc
         if auth:
             return auth
@@ -1168,6 +1206,7 @@ def _build_specs(
                     cookies=af.cookies,
                     label=name,
                     gzipped=af.gzipped,
+                    expected_size=max(af.size, 0),
                 )
             )
     _check_unique_dests(specs)
@@ -1221,7 +1260,14 @@ def download_app(
         raise PlayAPIError(str(exc), status_code=exc.status) from exc
     except DirectAuthError as exc:
         # DirectAuthError messages name only a non-secret protocol stage.
-        raise PlayAPIError(f"Direct Google authentication failed at {exc}.") from None
+        if exc.status == 429:
+            raise RateLimitedError(
+                f"Direct Google authentication failed at {exc}.",
+                retry_after=exc.retry_after,
+            ) from None
+        raise PlayAPIError(
+            f"Direct Google authentication failed at {exc}.", status_code=exc.status
+        ) from None
     if not auth:
         message = (
             "Direct Google authentication failed."

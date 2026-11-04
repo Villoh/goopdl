@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shlex
+import sys
 import time
 from pathlib import Path
 from typing import NoReturn
@@ -19,7 +20,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from goopdl import __version__
-from goopdl.aastoken import AASTokenError, fetch_aas_token
+from goopdl.aastoken import AASTokenError, _AUTH_ERROR_CODES, fetch_aas_token
 from goopdl.api import (
     AppNotAvailableError,
     AppNotSupportedError,
@@ -101,6 +102,17 @@ def _setup_logging() -> None:
     if not any(isinstance(h, _StderrLogHandler) for h in log.handlers):
         log.addHandler(_StderrLogHandler())
 
+
+def _tolerate_unencodable_output() -> None:
+    # Remote text (app titles, server messages) may not fit a legacy console
+    # encoding such as cp1252; print "?" instead of crashing the command.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(errors="replace")
+            except (ValueError, OSError):
+                pass
+
 # Distinct exit code so callers can tell "Google Play is unreachable right now"
 # from "this artifact cannot be trusted" without parsing human-readable output.
 AUTH_UNAVAILABLE_EXIT_CODE = 3
@@ -150,6 +162,7 @@ def main(
     ),
 ) -> None:
     """GPlay APK Downloader — download APKs from Google Play Store."""
+    _tolerate_unencodable_output()
     _setup_logging()
     if ctx.invoked_subcommand in {
         "auth",
@@ -278,6 +291,19 @@ def aastoken(
     ),
 ) -> None:
     """Print a Google account AAS token without saving credentials or token files."""
+    failure = None
+    try:
+        return _run_aastoken(email, password, oauth, browser)
+    except BaseException as exc:
+        failure = exc.with_traceback(None)
+        failure.__cause__ = failure.__context__ = None
+    finally:
+        email = password = None
+    # Click must not retain the original authentication exception or its frames.
+    raise failure from None
+
+
+def _run_aastoken(email: str | None, password: str | None, oauth: bool, browser: bool) -> None:
     if oauth and browser:
         err.print("[red]Use either --oauth or --browser, not both.[/red]")
         raise typer.Exit(code=2) from None
@@ -290,8 +316,8 @@ def aastoken(
         )
         try:
             captured_email, password = capture_oauth_credentials()
-        except BrowserOAuthError as exc:
-            err.print(f"[red]Browser OAuth capture failed:[/red] {exc}")
+        except BrowserOAuthError:
+            err.print("[red]Browser OAuth capture failed.[/red]")
             raise typer.Exit(code=1) from None
         if email is not None and email.casefold() != captured_email.casefold():
             err.print(f"[red]Browser signed in as {captured_email}, not {email}.[/red]")
@@ -313,7 +339,8 @@ def aastoken(
     try:
         token = fetch_aas_token(email, password)
     except AASTokenError as exc:
-        err.print(f"[red]Google account authentication failed:[/red] {exc}")
+        reason = str(exc) if str(exc) in _AUTH_ERROR_CODES else "unknown error"
+        err.print(f"[red]Google account authentication failed:[/red] {reason}")
         if str(exc) == "BadAuthentication":
             err.print(
                 "[yellow]Google rejected password authentication. Use "
@@ -321,9 +348,12 @@ def aastoken(
                 "oauth_token.[/yellow]"
             )
         raise typer.Exit(code=1) from None
-    except httpx.HTTPError as exc:
+    except httpx.HTTPError:
         err.print("[red]Google authentication request failed.[/red]")
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=1) from None
+    except ValueError:
+        err.print("[red]Invalid Google account credentials.[/red]")
+        raise typer.Exit(code=1) from None
 
     console.print("AASToken:", token)
 
@@ -414,16 +444,24 @@ def latest(
     )
 
     # Ensure regional pool has DEFAULT_PROBES tokens — only hits dispenser for deficit
-    tokens = ensure_pool(
-        arch=arch,
-        country=country,
-        proxy=proxy,
-        dispenser_url=dispenser,
-        profile=profile_key,
-    )
+    try:
+        tokens = ensure_pool(
+            arch=arch,
+            country=country,
+            proxy=proxy,
+            dispenser_url=dispenser,
+            profile=profile_key,
+            raise_on_error=True,
+        )
+    except DispenserUnavailableError as exc:
+        if exc.reason != "profile_rejected":
+            _exit_token_error(exc)
+        tokens = []
+    except DirectAuthError as exc:
+        _exit_token_error(exc)
     if not tokens:
         err.print(
-            "[red]Could not obtain any tokens — dispenser may be rate-limiting.[/red]"
+            "[red]Could not obtain any tokens for this profile.[/red]"
         )
         raise typer.Exit(code=1) from None
 
@@ -439,14 +477,22 @@ def latest(
             err.print(
                 f"[dim]  probe {i + 1}: {gsf_prefix}... token expired — replacing[/dim]"
             )
-            new_token = replace_pool_token(
-                token,
-                arch=arch,
-                country=country,
-                proxy=proxy,
-                dispenser_url=dispenser,
-                profile=profile_key,
-            )
+            try:
+                new_token = replace_pool_token(
+                    token,
+                    arch=arch,
+                    country=country,
+                    proxy=proxy,
+                    dispenser_url=dispenser,
+                    profile=profile_key,
+                    raise_on_error=True,
+                )
+            except DispenserUnavailableError as exc:
+                if exc.reason != "profile_rejected":
+                    _exit_token_error(exc)
+                new_token = None
+            except DirectAuthError as exc:
+                _exit_token_error(exc)
             if new_token is None:
                 err.print(
                     f"[dim]  probe {i + 1}: replacement unavailable, skipping[/dim]"
@@ -474,7 +520,7 @@ def latest(
             best_vc = vc
             consecutive_stable = 0
             rprint(
-                f"  probe {i + 1}/{len(tokens)}: gsf={gsf_prefix}... {vs} ({vc}) [bold green]↑ new max[/bold green]"
+                f"  probe {i + 1}/{len(tokens)}: gsf={gsf_prefix}... {vs} ({vc}) [bold green]^ new max[/bold green]"
             )
         else:
             consecutive_stable += 1
@@ -794,7 +840,7 @@ def _acquire_delivery(
 
     def retry_with(profiles):
         for key, _profile_data in profiles:
-            retry_auth = fetch_token(
+            retry_auth = _fetch_probe_token(
                 dispenser_url=dispenser,
                 arch=arch,
                 proxy=proxy,
@@ -1076,7 +1122,7 @@ def _download_arch(
             "retry later.[/red]"
         )
         raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
-    except VersionUnavailableError as exc:
+    except (VersionUnavailableError, AppNotAvailableError) as exc:
         err.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=VERSION_UNAVAILABLE_EXIT_CODE) from None
     except PlayAPIError as exc:
@@ -1146,6 +1192,7 @@ def _download_arch(
                     cookies=af.cookies,
                     label=name,
                     gzipped=af.gzipped,
+                    expected_size=max(af.size, 0),
                 )
             )
 
@@ -1307,9 +1354,13 @@ def _exit_transient_play_error(exc: PlayAPIError) -> NoReturn:
 
 def _exit_token_error(exc: DirectAuthError) -> NoReturn:
     """Exit telling dispenser throttling (code 5) apart from an outage (code 3)."""
-    if isinstance(exc, DispenserRateLimitedError):
+    if exc.status == 429:
+        source = (
+            "Token dispenser" if isinstance(exc, DispenserRateLimitedError)
+            else "Direct Google authentication"
+        )
         err.print(
-            "[red]Token dispenser rate limited token requests (HTTP 429); "
+            f"[red]{source} rate limited token requests (HTTP 429); "
             "retry later.[/red]"
         )
         raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
@@ -1354,6 +1405,20 @@ def _require_auth(
     return data
 
 
+def _fetch_probe_token(**kwargs) -> dict | None:
+    """Stop profile/cohort probes on token endpoint throttling or outages."""
+    try:
+        return fetch_token(**kwargs, raise_on_error=True)
+    except DirectAuthError as exc:
+        if exc.status == 429:
+            raise RateLimitedError(str(exc), retry_after=exc.retry_after) from None
+        if isinstance(exc, DispenserUnavailableError):
+            if exc.reason == "profile_rejected":
+                return None  # another device profile/cohort may still get a token
+            raise NetworkError(str(exc)) from None
+        raise PlayAPIError(str(exc), status_code=exc.status) from None
+
+
 def _resolve_version_string(
     package: str,
     version_str: str,
@@ -1372,7 +1437,7 @@ def _resolve_version_string(
     """
     rprint(f"[dim]Resolving [bold]{version_str}[/bold] — probing fresh tokens...[/dim]")
     for attempt in range(1, 21):
-        token = fetch_token(
+        token = _fetch_probe_token(
             arch=arch,
             country=country,
             profile=profile,
@@ -1381,7 +1446,7 @@ def _resolve_version_string(
         )
         if token is None:
             err.print(
-                f"[yellow]  attempt {attempt}: rate-limited, sleeping 5s...[/yellow]"
+                f"[yellow]  attempt {attempt}: no token for this profile, sleeping 5s...[/yellow]"
             )
             time.sleep(5)
             continue
@@ -1395,7 +1460,7 @@ def _resolve_version_string(
             continue
         if details.version_string == version_str:
             rprint(
-                f"[green]  Found {version_str} → vc={details.version_code} (attempt {attempt})[/green]"
+                f"[green]  Found {version_str} -> vc={details.version_code} (attempt {attempt})[/green]"
             )
             return details.version_code, token
         err.print(

@@ -218,6 +218,19 @@ class DirectAuthConfigurationError(GoopdlError, ValueError):
 class DirectAuthError(GoopdlError, RuntimeError):
     """Direct Google authentication failed at a non-secret protocol stage."""
 
+    def __init__(
+        self, message: str, *, stage: Optional[str] = None,
+        status: Optional[int] = None, retry_after: Optional[float] = None,
+    ) -> None:
+        super().__init__(message)
+        self.stage = stage
+        self.status = status
+        self.retry_after = retry_after
+
+
+class PoolBusyError(GoopdlError, TimeoutError):
+    """The token pool transaction lock could not be acquired in time."""
+
 
 # Dispenser errors subclass DirectAuthError, the token-acquisition failure
 # base: one ``except DirectAuthError`` covers fetch_token(raise_on_error=True).
@@ -229,20 +242,26 @@ class DispenserRateLimitedError(DirectAuthError):
     status = 429
 
     def __init__(self, retry_after: Optional[float] = None):
-        super().__init__("Token dispenser rate limited token requests (HTTP 429).")
+        super().__init__(
+            "Token dispenser rate limited token requests (HTTP 429).", status=429
+        )
         self.retry_after = retry_after
 
 
 class DispenserUnavailableError(DirectAuthError):
-    """No dispenser attempt yielded a token; *status* is the last HTTP error."""
+    """No token was issued; *reason* distinguishes profile and endpoint failures."""
 
-    def __init__(self, status: Optional[int] = None):
+    def __init__(self, status: Optional[int] = None, *, reason: Optional[str] = None):
         super().__init__(
             f"Token dispenser unavailable (HTTP {status})."
             if status
             else "Token dispenser unavailable."
         )
         self.status = status
+        self.reason = reason or (
+            "transport" if status is None else
+            "server" if status >= 500 else "profile_rejected"
+        )
 
 
 def _direct_credentials() -> Optional[tuple[str, str]]:
@@ -420,6 +439,43 @@ def _direct_auth(
     proxy: Optional[str],
     profile_name: Optional[str],
 ) -> Optional[dict]:
+    """Credential boundary for embedders as well as fetch_token callers."""
+    try:
+        return _direct_auth_impl(email, aas_token, arch, country, proxy, profile_name)
+    except DirectAuthError as exc:
+        error = DirectAuthError(
+            str(exc), stage=exc.stage, status=exc.status, retry_after=exc.retry_after
+        )
+    except httpx.HTTPError as exc:
+        error = DirectAuthError(f"transport ({type(exc).__name__})", stage="transport")
+    except Exception:
+        error = DirectAuthError("an unexpected stage")
+    finally:
+        # Only this thin frame survives; all protocol tokens/cookies live inside.
+        del email, aas_token, proxy
+    raise error
+
+
+def _direct_http_error(
+    stage: str, response: httpx.Response, detail: str = "",
+) -> DirectAuthError:
+    from goopdl.api import _parse_retry_after  # api imports auth
+
+    status = response.status_code
+    return DirectAuthError(
+        f"{stage} (HTTP {status}{detail})", stage=stage, status=status,
+        retry_after=_parse_retry_after(response.headers) if status == 429 else None,
+    )
+
+
+def _direct_auth_impl(
+    email: str,
+    aas_token: str,
+    arch: str,
+    country: Optional[str],
+    proxy: Optional[str],
+    profile_name: Optional[str],
+) -> Optional[dict]:
     if profile_name:
         selected = find_profile(profile_name, arch)
         if not selected:
@@ -451,7 +507,7 @@ def _direct_auth(
         proxy=httpx_proxy,
     )
     if checkin.status_code != 200:
-        raise DirectAuthError(f"checkin (HTTP {checkin.status_code})")
+        raise _direct_http_error("checkin", checkin)
     try:
         android_id = _field(checkin.content, 7)
         consistency_token = _response_string(checkin.content, 12)
@@ -483,7 +539,7 @@ def _direct_auth(
         proxy=httpx_proxy,
     )
     if upload.status_code != 200:
-        raise DirectAuthError(f"device config upload (HTTP {upload.status_code})")
+        raise _direct_http_error("device config upload", upload)
     try:
         config_token = _response_string(upload.content, 1, 28, 1)
     except (EOFError, UnicodeDecodeError, ValueError) as exc:
@@ -523,11 +579,11 @@ def _direct_auth(
     )
     if auth_response.status_code != 200:
         reason = auth_values.get("Error", "")
-        safe_reason = reason if reason.isidentifier() else ""
+        safe_reason = reason if reason in {
+            "BadAuthentication", "NeedsBrowser", "TokenExpired", "ServiceUnavailable"
+        } else ""
         detail = f", {safe_reason}" if safe_reason else ""
-        raise DirectAuthError(
-            f"token exchange (HTTP {auth_response.status_code}{detail})"
-        )
+        raise _direct_http_error("token exchange", auth_response, detail)
     bearer = auth_values.get("Auth")
     if not bearer:
         raise DirectAuthError("token exchange response")
@@ -544,6 +600,8 @@ def _direct_auth(
         timeout=30,
         proxy=httpx_proxy,
     )
+    if toc.status_code == 429:
+        raise _direct_http_error("toc", toc)
     if toc.status_code == 200:
         try:
             bundle["dfeCookie"] = _response_string(toc.content, 1, 6, 22)
@@ -562,14 +620,49 @@ def fetch_token(
 ) -> Optional[dict]:
     """Obtain direct Google auth when configured, otherwise use the dispenser.
 
-    Anonymous mode rotates through device profiles until one yields an authToken.
-    When *country* is set, patches each profile's CellOperator/SimOperator
-    with the matching MCC/MNC so the GSF registration is tied to that region.
-    Returns the full auth dict on success, None on failure. With
-    *raise_on_error*, failures raise instead: DispenserRateLimitedError (429),
-    DispenserUnavailableError (every attempt failed) or DirectAuthError (direct
-    mode). An unknown *profile* still returns None.
+    Anonymous mode rotates profiles until one yields an authToken, stopping on
+    throttling, server errors or repeated transport failures. With *country*,
+    patches device operators to register in that region. Returns the auth dict on success,
+    None on failure or an unknown profile. With *raise_on_error*, raises
+    DispenserRateLimitedError (429), DispenserUnavailableError (failed attempts)
+    or DirectAuthError (direct mode), without retaining credential frames.
     """
+    try:
+        return _fetch_token_impl(
+            dispenser_url, arch, proxy, country, profile, raise_on_error
+        )
+    except DirectAuthConfigurationError as exc:
+        error = DirectAuthConfigurationError(str(exc))
+    except DispenserRateLimitedError as exc:
+        error = DispenserRateLimitedError(exc.retry_after)
+    except DispenserUnavailableError as exc:
+        error = DispenserUnavailableError(exc.status, reason=exc.reason)
+    except DirectAuthError as exc:
+        error = DirectAuthError(
+            str(exc), stage=exc.stage, status=exc.status, retry_after=exc.retry_after
+        )
+    except GoopdlError as exc:
+        # A pre-sanitized NetworkError is also an httpx.TransportError. Keep its
+        # identity, but detach protocol frames just like newly minted errors.
+        error = exc.with_traceback(None)
+        error.__cause__ = error.__context__ = None
+    finally:
+        proxy = dispenser_url = None
+    raise error
+
+
+_MAX_DISPENSER_TRANSPORT_FAILURES = 2
+
+
+def _fetch_token_impl(
+    dispenser_url: Optional[str] = None,
+    arch: str = "arm64",
+    proxy: Optional[str] = None,
+    country: Optional[str] = None,
+    profile: Optional[str] = None,
+    raise_on_error: bool = False,
+) -> Optional[dict]:
+    """Protocol implementation; only fetch_token's sanitized frame may escape."""
     credentials = _direct_credentials()
     if credentials:
         try:
@@ -582,7 +675,11 @@ def fetch_token(
             )
         except DirectAuthError as exc:
             logger.error("Direct Google authentication failed at %s.", exc)
-            error = DirectAuthError(str(exc))  # stage only; messages are safe
+            error = DirectAuthError(
+                str(exc), stage=exc.stage, status=exc.status, retry_after=exc.retry_after
+            )
+        except GoopdlError:
+            raise
         except Exception:
             # No exc_info: tracebacks can carry credentials from request locals.
             logger.error("Direct Google authentication failed unexpectedly.")
@@ -613,6 +710,8 @@ def fetch_token(
     # the same region (index 0) and pile all their requests on one exit IP
     region_start = random.randrange(len(DISPENSER_PROXY_REGIONS))
     last_status: Optional[int] = None
+    last_reason = "transport"
+    transport_failures = 0
     for idx, (profile_name, profile_data) in enumerate(profiles):
         device = profile_data.get("UserReadableName", profile_name)
         payload = (
@@ -627,6 +726,12 @@ def fetch_token(
             resp = httpx.post(
                 url, json=payload, headers=headers, timeout=30, proxy=httpx_proxy
             )
+            transport_failures = 0
+            last_status = resp.status_code
+            last_reason = "server" if resp.status_code >= 500 else "profile_rejected"
+            if resp.status_code >= 500:
+                logger.warning("Dispenser returned HTTP %s", resp.status_code)
+                break  # changing device profiles cannot repair the endpoint
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("authToken"):
@@ -638,7 +743,6 @@ def fetch_token(
                 logger.warning(
                     "Dispenser returned HTTP %s for %s", resp.status_code, device
                 )
-                last_status = resp.status_code
                 if resp.status_code == 429:
                     if raise_on_error:
                         from goopdl.api import _parse_retry_after  # api imports auth
@@ -647,8 +751,15 @@ def fetch_token(
                             _parse_retry_after(resp.headers)
                         )
                     return None
-        except DispenserRateLimitedError:
+        except GoopdlError:
             raise
+        except httpx.TransportError as exc:
+            logger.warning("Dispenser transport failed: %s", type(exc).__name__)
+            last_status = None
+            last_reason = "transport"
+            transport_failures += 1
+            if transport_failures >= _MAX_DISPENSER_TRANSPORT_FAILURES:
+                break
         except Exception as exc:
             logger.warning(
                 "Dispenser request failed for %s: %s", device, type(exc).__name__
@@ -656,7 +767,7 @@ def fetch_token(
             continue
 
     if raise_on_error:
-        raise DispenserUnavailableError(last_status)
+        raise DispenserUnavailableError(last_status, reason=last_reason)
     return None
 
 
@@ -709,7 +820,7 @@ def _ensure_config_dir(directory: Path) -> None:
 @contextmanager
 def _pool_lock(
     arch: str, country: Optional[str], profile: Optional[str] = None,
-    *, blocking: bool = True,
+    *, blocking: bool = True, raise_on_error: bool = False,
 ) -> Iterator[bool]:
     """Local, per-pool transaction lock. Never unlink/replace the stable sidecar.
 
@@ -721,7 +832,24 @@ def _pool_lock(
     acquired = False
     try:
         _ensure_config_dir(path.parent)
-        handle = path.open("a+b", buffering=0)
+        if path.is_symlink():
+            raise OSError(errno.ELOOP, "Token pool lock must not be a symlink")
+        fd = os.open(
+            path,
+            os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0),
+            0o600,
+        )
+        try:
+            # Also check platforms without O_NOFOLLOW before writing or locking.
+            if path.is_symlink() or not os.path.samestat(path.lstat(), os.fstat(fd)):
+                raise OSError(errno.ELOOP, "Token pool lock changed during open")
+            if os.name != "nt":
+                os.fchmod(fd, 0o600)
+            handle = os.fdopen(fd, "r+b", buffering=0)
+        except BaseException:
+            os.close(fd)
+            raise
         if os.name == "nt":
             import msvcrt
         else:
@@ -755,6 +883,8 @@ def _pool_lock(
         if handle is not None:
             handle.close()
         _pool_cache_error(exc)
+        if raise_on_error and isinstance(exc, TimeoutError):
+            raise PoolBusyError("Token pool lock acquisition timed out") from None
         yield False
         return
     except BaseException:
@@ -831,30 +961,33 @@ def ensure_pool(
     dispenser_url: Optional[str] = None,
     profile: Optional[str] = None,
     size: int = DEFAULT_PROBES,
+    raise_on_error: bool = False,
 ) -> list[dict]:
     """Ensure the arch+country+profile pool has exactly *size* valid tokens.
 
     Only hits the Aurora dispenser for the deficit — if the pool already has
     *size* unexpired tokens, no network call is made at all.
     Returns the full list of valid tokens (may be fewer than *size* if the
-    dispenser is rate-limiting).
+    dispenser is rate-limiting). With *raise_on_error*, propagate typed token
+    failures when no usable token remains and PoolBusyError on lock timeout.
     """
     if direct_auth_enabled():
         tokens = []
         for _ in range(size):
             token = fetch_token(
-                arch=arch, country=country, proxy=proxy, profile=profile
+                arch=arch, country=country, proxy=proxy, profile=profile,
+                raise_on_error=raise_on_error,
             )
             if token is None:
                 break
             tokens.append(token)
         return tokens
 
-    with _pool_lock(arch, country, profile) as acquired:
+    with _pool_lock(arch, country, profile, raise_on_error=raise_on_error) as acquired:
         if acquired:
             try:
                 return _ensure_pool_unlocked(
-                    arch, country, proxy, dispenser_url, profile, size
+                    arch, country, proxy, dispenser_url, profile, size, raise_on_error
                 )
             except OSError as exc:
                 _pool_cache_error(exc)
@@ -934,7 +1067,8 @@ def pick_pool_token(
 
     Expired tokens are pruned and refetched by ensure_pool before picking.
     The round-robin index is persisted to disk so it survives across invocations.
-    *raise_on_error* raises fetch_token's typed errors when no token is left.
+    *raise_on_error* raises fetch_token's typed errors when no token is left,
+    or PoolBusyError if the patchable _POOL_LOCK_TIMEOUT expires.
     """
     if direct_auth_enabled():
         return fetch_token(
@@ -942,7 +1076,7 @@ def pick_pool_token(
             raise_on_error=raise_on_error,
         )
 
-    with _pool_lock(arch, country, profile) as acquired:
+    with _pool_lock(arch, country, profile, raise_on_error=raise_on_error) as acquired:
         if acquired:
             try:
                 pool = _ensure_pool_unlocked(
@@ -967,17 +1101,22 @@ def replace_pool_token(
     proxy: Optional[str] = None,
     dispenser_url: Optional[str] = None,
     profile: Optional[str] = None,
+    raise_on_error: bool = False,
 ) -> Optional[dict]:
     """Remove *failed_token* from the pool and replace it with a fresh one.
 
     Called when a mid-request AuthExpiredError reveals a token died early.
     Reuses a current member if another caller already removed that credential.
-    Returns None if replacement or cache access fails.
+    Returns None if replacement or cache access fails. With *raise_on_error*,
+    propagate typed token failures and PoolBusyError on lock timeout.
     """
     if direct_auth_enabled():
-        return fetch_token(arch=arch, country=country, proxy=proxy, profile=profile)
+        return fetch_token(
+            arch=arch, country=country, proxy=proxy, profile=profile,
+            raise_on_error=raise_on_error,
+        )
 
-    with _pool_lock(arch, country, profile) as acquired:
+    with _pool_lock(arch, country, profile, raise_on_error=raise_on_error) as acquired:
         if acquired:
             try:
                 pool = _load_pool_unlocked(arch, country, profile)
@@ -992,7 +1131,7 @@ def replace_pool_token(
                 _save_pool(survivors, arch, country, profile)
                 new_token = fetch_token(
                     dispenser_url=dispenser_url, arch=arch, proxy=proxy,
-                    profile=profile, country=country,
+                    profile=profile, country=country, raise_on_error=raise_on_error,
                 )
                 if new_token:
                     new_token["_cached_at"] = time.time()
