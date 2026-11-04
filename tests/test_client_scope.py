@@ -82,8 +82,8 @@ class ScopeTestCase(unittest.TestCase):
         for patcher in (
             isolated_env({"GOOPDL_CONFIG_DIR": str(self.tmp / "env"), **self.env}),
             patch.object(socket.socket, "connect", no_sockets),
-            patch("httpx.post", side_effect=lambda *a, **k: self.fake.post(*a, **k)),
-            patch("httpx.get", side_effect=lambda *a, **k: self.fake.get(*a, **k)),
+            patch("goopdl._http.post", side_effect=lambda *a, **k: self.fake.post(*a, **k)),
+            patch("goopdl._http.get", side_effect=lambda *a, **k: self.fake.get(*a, **k)),
             patch("goopdl.auth.time.sleep"),
         ):
             patcher.start()

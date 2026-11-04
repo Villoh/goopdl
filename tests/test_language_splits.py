@@ -31,7 +31,7 @@ class LanguageSplitTest(unittest.TestCase):
         )
         self.assertIsNone(_parse_locales(None))
 
-    @patch("goopdl.api.httpx.get")
+    @patch("goopdl._http.get")
     def test_sends_requested_languages_to_delivery(self, get):
         app_data = encoded_field(3, 2, b"https://play.googleapis.com/base")
         response = encoded_field(2, 2, app_data)

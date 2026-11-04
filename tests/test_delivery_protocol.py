@@ -157,7 +157,7 @@ class DeliveryProtocolTest(unittest.TestCase):
             (delivery.splits[0].gzipped_url, True, 50),
         )
 
-    @patch("goopdl.api.httpx.post")
+    @patch("goopdl._http.post")
     def test_purchase_returns_delivery_token(self, post):
         token = encoded_field(1, 2, encoded_field(4, 2, encoded_field(55, 2, b"dtok")))
         post.return_value = httpx.Response(200, content=token)
@@ -165,7 +165,7 @@ class DeliveryProtocolTest(unittest.TestCase):
         self.assertEqual(purchase("com.example.pkg", 1, {"authToken": "token"}), "dtok")
 
     @patch("goopdl.api.time.sleep")
-    @patch("goopdl.api.httpx.get")
+    @patch("goopdl._http.get")
     def test_429_retries_and_recovers(self, get, sleep):
         get.side_effect = [
             httpx.Response(429, headers={"Retry-After": "2.5"}),
@@ -179,7 +179,7 @@ class DeliveryProtocolTest(unittest.TestCase):
         self.assertEqual(get.call_count, 2)
 
     @patch("goopdl.api.time.sleep")
-    @patch("goopdl.api.httpx.get")
+    @patch("goopdl._http.get")
     def test_repeated_429_stops_after_two_retries(self, get, sleep):
         get.side_effect = [httpx.Response(429) for _ in range(3)]
 
@@ -194,7 +194,7 @@ class DeliveryProtocolTest(unittest.TestCase):
         self.assertEqual(sleep.call_args_list[1].args, (3.0,))
 
     @patch("goopdl.api.time.sleep")
-    @patch("goopdl.api.httpx.get")
+    @patch("goopdl._http.get")
     def test_invalid_retry_after_is_ignored(self, get, sleep):
         get.side_effect = [
             httpx.Response(429, headers={"Retry-After": "nan"}),
@@ -209,7 +209,7 @@ class DeliveryProtocolTest(unittest.TestCase):
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.0, 3.0])
 
     @patch("goopdl.api.time.sleep")
-    @patch("goopdl.api.httpx.get")
+    @patch("goopdl._http.get")
     def test_long_retry_after_raises_without_sleeping_or_retrying(self, get, sleep):
         get.side_effect = [httpx.Response(429, headers={"Retry-After": "120"})] * 3
 
@@ -221,7 +221,7 @@ class DeliveryProtocolTest(unittest.TestCase):
         self.assertEqual(get.call_count, 1)
 
     @patch("goopdl.api.time.sleep")
-    @patch("goopdl.api.httpx.get")
+    @patch("goopdl._http.get")
     def test_retry_after_never_shortens_the_backoff(self, get, sleep):
         past = format_datetime(
             datetime.now(timezone.utc) - timedelta(days=1), usegmt=True
@@ -239,7 +239,7 @@ class DeliveryProtocolTest(unittest.TestCase):
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.0, 3.0])
 
     @patch("goopdl.api.time.sleep")
-    @patch("goopdl.api.httpx.get")
+    @patch("goopdl._http.get")
     def test_retry_after_longer_than_backoff_is_honoured(self, get, sleep):
         get.side_effect = [
             httpx.Response(429, headers={"Retry-After": "5"}),
@@ -259,7 +259,7 @@ class DeliveryProtocolTest(unittest.TestCase):
         past = format_datetime(when - timedelta(days=1), usegmt=True)
         self.assertEqual(_parse_retry_after({"Retry-After": past}), 0.0)
 
-    @patch("goopdl.api.httpx.post")
+    @patch("goopdl._http.post")
     def test_purchase_raises_only_on_auth_and_throttling(self, post):
         post.return_value = httpx.Response(429, headers={"Retry-After": "7"})
         with self.assertRaises(RateLimitedError) as raised:
@@ -270,7 +270,7 @@ class DeliveryProtocolTest(unittest.TestCase):
         with self.assertRaises(AuthExpiredError):
             purchase("com.example.pkg", 1, {"authToken": "token"})
 
-    @patch("goopdl.api.httpx.post")
+    @patch("goopdl._http.post")
     def test_other_purchase_failures_leave_classification_to_delivery(self, post):
         for status in (204, 400, 402, 403, 404, 409, 410, 412, 500, 502, 503):
             with self.subTest(status=status):
@@ -279,7 +279,7 @@ class DeliveryProtocolTest(unittest.TestCase):
                     purchase("com.example.pkg", 1, {"authToken": "token"}), ""
                 )
 
-    @patch("goopdl.api.httpx.get")
+    @patch("goopdl._http.get")
     def test_details_and_search_raise_typed_errors(self, get):
         calls = {
             "details": lambda: get_details("com.example.pkg", {"authToken": "token"}),
@@ -303,7 +303,7 @@ class DeliveryProtocolTest(unittest.TestCase):
         self.assertIsNone(PlayAPIError("boom").status_code)
         self.assertEqual(RateLimitedError("slow").status_code, 429)
 
-    @patch("goopdl.api.httpx.get")
+    @patch("goopdl._http.get")
     def test_401_404_and_other_statuses_keep_their_error_types(self, get):
         get.return_value = httpx.Response(401)
         with self.assertRaises(AuthExpiredError):
@@ -318,7 +318,7 @@ class DeliveryProtocolTest(unittest.TestCase):
             get_delivery("com.example.pkg", 1, {"authToken": "token"})
         self.assertNotIsInstance(raised.exception, RateLimitedError)
 
-    @patch("goopdl.api.httpx.get")
+    @patch("goopdl._http.get")
     def test_delivery_token_is_sent_and_status_is_distinguished(self, get):
         unsupported = encoded_field(1, 2, encoded_field(21, 2, encoded_field(1, 0, 2)))
         get.return_value = httpx.Response(200, content=unsupported)

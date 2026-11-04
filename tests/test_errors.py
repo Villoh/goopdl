@@ -118,7 +118,7 @@ class TransportWrappingTest(unittest.TestCase):
             for failure in failures:
                 with self.subTest(method=method, failure=type(failure).__name__):
                     with (
-                        patch(f"goopdl.api.httpx.{method}", side_effect=failure),
+                        patch(f"goopdl._http.{method}", side_effect=failure),
                         self.assertRaises(NetworkError) as raised,
                     ):
                         call()
@@ -148,7 +148,7 @@ class MalformedProtoTest(unittest.TestCase):
             with self.subTest(content=content, method=method):
                 response = httpx.Response(200, content=content)
                 with (
-                    patch(f"goopdl.api.httpx.{method}", return_value=response),
+                    patch(f"goopdl._http.{method}", return_value=response),
                     self.assertRaises(PlayAPIError) as raised,
                 ):
                     call()

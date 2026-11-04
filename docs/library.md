@@ -441,7 +441,7 @@ pass your own client: `client=httpx.AsyncClient(proxy=..., timeout=...)`.
 
 All functions in `goopdl.api` and `goopdl.auth` are synchronous and blocking,
 and so are the `Client` methods except `adownload`. They use synchronous
-`httpx` with a 30-second timeout, open a new connection per request, and may
+`httpx` with a 30-second timeout, reuse keep-alive connections, and may
 `time.sleep` (rate-limit backoff, dispenser cooldowns, lock waits).
 `goopdl.download.download_files` and `Client.adownload` are the only
 coroutines.
@@ -909,6 +909,9 @@ async def download(package: str):
 - `max_concurrent` applies per `download_files` call. Across requests, limit
   downloads with your own `asyncio.Semaphore`, and share one `AsyncClient`
   through `client=` to reuse connections.
+- Synchronous calls to Google Play and the dispenser reuse keep-alive
+  connections, shared by every thread of the process. A forked child starts
+  with its own fresh connections.
 - The thread pool behind `asyncio.to_thread` is small. Size it for calls that
   sleep through rate-limit backoff.
 
@@ -1185,5 +1188,6 @@ and `fetch_app_item` where 1.4.x raised a plain `PlayAPIError`.
   call.
 - `Client.download` and `Client.adownload` only fetch the latest version. For
   a specific version code, use `Client.delivery` and `download_files`.
-- Each Google Play request opens a new connection. Only `download_files` and
-  `Client.adownload` accept a shared client, for the CDN downloads.
+- The synchronous calls use goopdl's own per-process connection pool; you
+  can't pass them a client. Only `download_files` and `Client.adownload`
+  accept a shared client, for the CDN downloads.

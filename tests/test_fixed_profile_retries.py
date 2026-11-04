@@ -10,7 +10,7 @@ import httpx
 from typer.testing import CliRunner
 
 from _envutil import isolated_env
-from goopdl import api, auth, cli
+from goopdl import _http, api, auth, cli
 
 PACKAGE = "com.example.pkg"
 DIRECT_ENV = {"GOOPDL_ACCOUNT_EMAIL": "a@b.c", "GOOPDL_AAS_TOKEN": "aas_et/xxx"}
@@ -68,8 +68,8 @@ class HttpCase(unittest.TestCase):
         for patcher in (
             isolated_env(),
             patch.object(auth, "_CONFIG_DIR", Path(directory.name) / "cache", create=True),
-            patch.object(httpx, "post", side_effect=lambda *a, **k: self.request("POST", *a, **k)),
-            patch.object(httpx, "get", side_effect=lambda *a, **k: self.request("GET", *a, **k)),
+            patch.object(_http, "post", side_effect=lambda *a, **k: self.request("POST", *a, **k)),
+            patch.object(_http, "get", side_effect=lambda *a, **k: self.request("GET", *a, **k)),
             patch.object(api, "download_batch", side_effect=self.download),
             patch.object(cli, "download_batch", side_effect=self.download),
         ):

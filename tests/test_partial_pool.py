@@ -1,6 +1,6 @@
 """A partial anonymous pool serves callers while the dispenser rate limits.
 
-Hermetic: sockets are blocked, httpx.get/post are fakes, and the config dir
+Hermetic: sockets are blocked, goopdl._http.get/post are fakes, and the config dir
 and HOME are temporary.
 """
 import socket
@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 
 from _envutil import isolated_env
 from _nonet import no_sockets
-from goopdl import Client, api, auth, cli
+from goopdl import Client, _http, api, auth, cli
 from goopdl import client as client_module
 from goopdl.profiles import get_latest_probe_profiles
 from test_transient_recovery import DELIVERY, DETAILS, PACKAGE
@@ -42,8 +42,8 @@ class PartialPoolTest(unittest.TestCase):
             isolated_env({"GOOPDL_CONFIG_DIR": str(cache), "HOME": str(root)}),
             patch.object(socket.socket, "connect", no_sockets),
             patch.object(auth, "_CONFIG_DIR", cache, create=True),
-            patch.object(httpx, "post", side_effect=self.request),
-            patch.object(httpx, "get", side_effect=self.request),
+            patch.object(_http, "post", side_effect=self.request),
+            patch.object(_http, "get", side_effect=self.request),
             patch.object(api, "download_batch", side_effect=self.download),
             patch.object(cli, "download_batch", side_effect=self.download),
         ):

@@ -45,7 +45,7 @@ AUTH = {"authToken": "t"}
 
 
 def _recording_get(sent: list[httpx.URL], status: int = 200):
-    """Fake httpx.get that builds the real request URL, as httpx would send it."""
+    """Fake _http.get that builds the real request URL, as httpx would send it."""
 
     def fake_get(url, *, params=None, **_kwargs):
         sent.append(httpx.Request("GET", url, params=params).url)
@@ -57,7 +57,7 @@ def _recording_get(sent: list[httpx.URL], status: int = 200):
 class QueryEncodingTest(unittest.TestCase):
     def test_search_query_special_chars_are_encoded(self):
         sent: list[httpx.URL] = []
-        with patch("goopdl.api.httpx.get", side_effect=_recording_get(sent)):
+        with patch("goopdl._http.get", side_effect=_recording_get(sent)):
             search_apps("a&dtok=x#frag", {"authToken": "t"}, country="us")
 
         query = sent[0].query.decode()
@@ -70,7 +70,7 @@ class QueryEncodingTest(unittest.TestCase):
     def test_delivery_token_is_encoded(self):
         sent: list[httpx.URL] = []
         with (
-            patch("goopdl.api.httpx.get", side_effect=_recording_get(sent, 404)),
+            patch("goopdl._http.get", side_effect=_recording_get(sent, 404)),
             self.assertRaises(VersionUnavailableError),
         ):
             get_delivery(
@@ -81,7 +81,7 @@ class QueryEncodingTest(unittest.TestCase):
         self.assertEqual(params["dtok"], ["a&gl=XX"])
         self.assertNotIn("gl", params)
 
-    @patch("goopdl.api.httpx.post")
+    @patch("goopdl._http.post")
     def test_purchase_body_is_form_encoded(self, post):
         post.return_value = httpx.Response(204)
         purchase("com.example.app", 7, {"authToken": "t"})
@@ -101,8 +101,8 @@ class PackageValidationTest(unittest.TestCase):
         self.assertTrue(issubclass(InvalidPackageError, ValueError))
 
     @patch("goopdl.api.pick_pool_token")
-    @patch("goopdl.api.httpx.post")
-    @patch("goopdl.api.httpx.get")
+    @patch("goopdl._http.post")
+    @patch("goopdl._http.get")
     def test_public_api_rejects_bad_packages_before_any_request(
         self, get, post, pick
     ):
