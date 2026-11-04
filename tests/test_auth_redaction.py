@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from _envutil import isolated_env
+from goopdl import auth
 from goopdl.auth import fetch_token
 
 
@@ -11,6 +12,7 @@ class FetchTokenRedactionTest(unittest.TestCase):
         patcher = isolated_env()
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.addCleanup(auth._reset_dispenser_backoff)  # in-memory 429 window
 
     @patch("goopdl.auth.get_priority_profiles")
     @patch("goopdl.auth.httpx.post")
@@ -43,6 +45,7 @@ class FetchTokenRedactionTest(unittest.TestCase):
         for status, requests in ((429, 1), (403, 2)):
             with self.subTest(status=status):
                 httpx_post.reset_mock()
+                auth._reset_dispenser_backoff()  # each subtest starts with no 429 window
                 httpx_post.side_effect = [
                     Mock(status_code=status),
                     Mock(status_code=200, json=Mock(return_value={"authToken": "valid"})),

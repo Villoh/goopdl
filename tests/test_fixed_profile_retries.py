@@ -78,6 +78,7 @@ class HttpCase(unittest.TestCase):
         sleeper = patch("time.sleep")
         self.sleep = sleeper.start()
         self.addCleanup(sleeper.stop)
+        self.addCleanup(auth._reset_dispenser_backoff)  # in-memory 429 window
 
     def request(self, method, url, **kwargs):
         endpoint = str(url).split("?")[0].rsplit("/", 1)[-1]

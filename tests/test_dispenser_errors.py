@@ -26,6 +26,7 @@ class DispenserFetchTokenTest(unittest.TestCase):
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
+        self.addCleanup(auth._reset_dispenser_backoff)  # in-memory 429 window
 
     @patch("goopdl.auth.httpx.post")
     def test_429_returns_none_by_default_and_raises_when_asked(self, post) -> None:
@@ -36,7 +37,8 @@ class DispenserFetchTokenTest(unittest.TestCase):
             fetch_token(raise_on_error=True)
         self.assertEqual(raised.exception.retry_after, 120.0)
         self.assertIsInstance(raised.exception, DirectAuthError)
-        self.assertEqual(post.call_count, 2)  # 429 stops profile rotation
+        # 429 stops profile rotation; the second call is inside its window.
+        self.assertEqual(post.call_count, 1)
 
     @patch("goopdl.auth.httpx.post")
     def test_outage_raises_unavailable_with_last_status(self, post) -> None:
