@@ -741,7 +741,9 @@ def _fetch_token_impl(
             last_status = resp.status_code
             last_reason = "server" if resp.status_code >= 500 else "profile_rejected"
             if resp.status_code >= 500:
-                logger.warning("Dispenser returned HTTP %s", resp.status_code)
+                logger.warning(
+                    "Dispenser returned HTTP %s for %s", resp.status_code, device
+                )
                 transport_failures += 1
                 if transport_failures >= _MAX_DISPENSER_TRANSPORT_FAILURES:
                     break
@@ -771,7 +773,9 @@ def _fetch_token_impl(
         except GoopdlError:
             raise
         except httpx.TransportError as exc:
-            logger.warning("Dispenser transport failed: %s", type(exc).__name__)
+            logger.warning(
+                "Dispenser transport failed for %s: %s", device, type(exc).__name__
+            )
             last_status = None
             last_reason = "transport"
             transport_failures += 1
