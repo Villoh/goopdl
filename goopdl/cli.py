@@ -643,6 +643,8 @@ def info(
         except DirectAuthError as exc:
             _exit_token_error(exc)
         except PlayAPIError as exc:
+            if isinstance(exc.__cause__, DispenserRateLimitedError):
+                _exit_token_error(exc.__cause__)  # fetch_app_item (--raw)
             err.print(f"[red]{exc}[/red]")
             raise typer.Exit(code=1) from None
 

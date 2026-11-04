@@ -440,6 +440,10 @@ def fetch_app_item(
 
     Handles token pool management and expired-token retry internally.
     Returns ``{}`` when Play answers without a document for *package*.
+    Raises GoopdlError subclasses: mostly PlayAPIError; a dispenser HTTP 429
+    while replacing an expired token raises RateLimitedError whose
+    ``__cause__`` is the DispenserRateLimitedError; InvalidPackageError and
+    DirectAuthConfigurationError for bad input or environment.
 
     Example::
 
@@ -479,14 +483,17 @@ def _fetch_app_item(
     try:
         raw = get_details_raw(package, auth, country=country, proxy=proxy)
     except AuthExpiredError:
-        auth = replace_pool_token(
-            auth,
-            arch=arch,
-            country=country,
-            proxy=proxy,
-            dispenser_url=dispenser_url,
-            profile=profile,
-        )
+        try:
+            auth = replace_pool_token(
+                auth,
+                arch=arch,
+                country=country,
+                proxy=proxy,
+                dispenser_url=dispenser_url,
+                profile=profile,
+            )
+        except DispenserRateLimitedError as exc:
+            raise RateLimitedError(str(exc), retry_after=exc.retry_after) from exc
         if not auth:
             raise PlayAPIError("Token expired and replacement failed.") from None
         raw = get_details_raw(package, auth, country=country, proxy=proxy)
@@ -1284,6 +1291,10 @@ def download_app(
     Returns (apk_path, dotted version string) — not the numeric version code.
     A dispenser HTTP 429 raises RateLimitedError whose ``__cause__`` is the
     DispenserRateLimitedError; a dispenser outage raises PlayAPIError.
+    Other failures raise GoopdlError subclasses, not only PlayAPIError:
+    PoolBusyError when another process holds the token pool lock (older
+    releases raised PlayAPIError), DownloadError/IntegrityError from the CDN,
+    InvalidPackageError and DirectAuthConfigurationError.
     """
     try:
         return _download_app(

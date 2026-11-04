@@ -234,7 +234,7 @@ class TransientRecoveryTest(unittest.TestCase):
         self.sleep.assert_not_called()
 
     def test_replacement_429_stops_download_and_info_paths(self):
-        for path in ("download", "fast-download", "info", "api", "item"):
+        for path in ("download", "fast-download", "info", "raw", "api", "item"):
             with self.subTest(path=path):
                 auth.clear_auth()
                 self.calls.clear()
@@ -243,13 +243,19 @@ class TransientRecoveryTest(unittest.TestCase):
                 self.expire_first = True
                 self.failures = [httpx.Response(429, headers={"Retry-After": "120"})]
                 if path in ("api", "item"):
-                    expected = api.RateLimitedError if path == "api" else auth.DispenserRateLimitedError
-                    with self.assertRaises(expected) as raised:
+                    # fetch_app_item now matches download_app (RateLimitedError).
+                    with self.assertRaises(api.RateLimitedError) as raised:
                         if path == "api":
                             api.download_app(PACKAGE, self.output, profile="Pv")
                         else:
                             api.fetch_app_item(PACKAGE, profile="Pv")
                     self.assertEqual(raised.exception.retry_after, 120)
+                    self.assertIsInstance(
+                        raised.exception.__cause__, auth.DispenserRateLimitedError
+                    )
+                elif path == "raw":
+                    result = self.invoke("info", "--raw", "--profile", "Pv")
+                    self.assertEqual(result.exit_code, 5, result.output)
                 else:
                     result = self.invoke(path, "--profile", "Pv")
                     self.assertEqual(result.exit_code, 5, result.output)
