@@ -105,6 +105,21 @@ from goopdl import api
 apk, version = api.download_app("com.whatsapp", Path("apks"))
 ```
 
+For a backend, `Client` takes its cache directory and account from a `Config`
+instead of the environment, so several can share one process (`adownload` is
+the async variant):
+
+```python
+from goopdl import Client, Config, Credentials
+
+client = Client(Config(
+    config_dir=Path("goopdl-cache").resolve(),
+    credentials=None,  # or Credentials("me@example.com", "aas_et/...")
+))
+result = client.download("com.whatsapp", Path("apks"))
+print(result.path, result.version_string)
+```
+
 For services and async code, the step-by-step API, errors, and retries, see
 the [library guide](https://github.com/Villoh/goopdl/blob/main/docs/library.md).
 
