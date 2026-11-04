@@ -880,7 +880,10 @@ metadatos están mal: no lo reintentes a ciegas.
   reducen a letras y dígitos en los nombres de los archivos de caché.
 - **Solo hosts de Google.** Las URLs de entrega solo se conservan si son HTTPS
   en el puerto 443 bajo `android.clients.google.com`, `*.google.com`,
-  `*.googleapis.com`, `*.ggpht.com` o `*.googleusercontent.com`.
+  `*.googleapis.com`, `*.ggpht.com`, `*.googleusercontent.com` o
+  `*.gvt1.com`. Este último es donde acaba una entrega real:
+  `play.googleapis.com/download/by-token` responde 302 y el archivo sale de
+  `rr<N>---sn-<id>.gvt1.com`.
   `download_files` sigue como mucho cinco redirecciones, solo a esos hosts, y
   quita las cabeceras `Authorization`, `Proxy-Authorization` y `Cookie` en las
   redirecciones a otro host. No comprueba la `spec.url` inicial, así que pásale

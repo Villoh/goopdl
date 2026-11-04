@@ -854,7 +854,10 @@ wrong: don't retry it blindly.
   Country codes are reduced to letters and digits in cache file names.
 - **Google hosts only.** Delivery URLs are kept only if they are HTTPS on
   port 443 under `android.clients.google.com`, `*.google.com`,
-  `*.googleapis.com`, `*.ggpht.com`, or `*.googleusercontent.com`.
+  `*.googleapis.com`, `*.ggpht.com`, `*.googleusercontent.com`, or
+  `*.gvt1.com`. The last one is where a real delivery ends up:
+  `play.googleapis.com/download/by-token` answers 302 and the file is served
+  from `rr<N>---sn-<id>.gvt1.com`.
   `download_files` follows at most five redirects, only to those hosts, and
   drops `Authorization`, `Proxy-Authorization`, and `Cookie` headers on
   cross-host redirects. It does not check the initial `spec.url`, so only pass
