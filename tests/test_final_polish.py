@@ -417,5 +417,23 @@ class MalformedRedirectTest(unittest.TestCase):
                 self.assertIn("malformed CDN URL or redirect for", _flat(result.output))
 
 
+@patch.dict(os.environ, {}, clear=True)
+class FetchAppItemRateLimitTest(unittest.TestCase):
+    def test_replacement_429_becomes_rate_limited_like_download_app(self) -> None:
+        from goopdl import api
+
+        with (
+            patch.object(api, "pick_pool_token", return_value=dict(POOL_TOKEN)),
+            patch.object(
+                api, "replace_pool_token", side_effect=auth.DispenserRateLimitedError(30)
+            ),
+            patch("httpx.get", return_value=httpx.Response(401)),
+            self.assertRaises(api.RateLimitedError) as raised,
+        ):
+            api.fetch_app_item("com.example.pkg", profile=PIXEL)
+        self.assertEqual(raised.exception.retry_after, 30)
+        self.assertIsInstance(raised.exception.__cause__, auth.DispenserRateLimitedError)
+
+
 if __name__ == "__main__":
     unittest.main()
