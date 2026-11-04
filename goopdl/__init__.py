@@ -13,8 +13,14 @@ __version__ = "1.4.1"
 # Library default: stay silent unless the host application configures logging.
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
+_CLIENT_NAMES = ("Client", "Config", "Credentials", "DownloadResult")
+
 __all__ = [
     "__version__",
+    "Client",
+    "Config",
+    "Credentials",
+    "DownloadResult",
     "GoopdlError",
     "PlayAPIError",
     "NetworkError",
@@ -39,6 +45,7 @@ __all__ = [
 ]
 
 if TYPE_CHECKING:
+    from goopdl.client import Client, Config, Credentials, DownloadResult
     from goopdl.errors import (
         AASTokenError,
         AppNotAvailableError,
@@ -68,6 +75,10 @@ def __getattr__(name: str) -> Any:
     # ``import goopdl`` stays free of httpx/rich/websocket imports.
     if name in _errors.__all__:
         return getattr(_errors, name)
+    if name in _CLIENT_NAMES:
+        from goopdl import client
+
+        return getattr(client, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

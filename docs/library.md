@@ -3,9 +3,11 @@
 **English** · [Español](es/library.md)
 
 goopdl is also a Python package you can import from a script, a web service,
-or a worker. This guide covers the public API in `goopdl.api`, `goopdl.auth`,
-`goopdl.download`, and `goopdl.errors`. Everything else (`goopdl.cli`,
-underscore names) is internal and can change without notice.
+or a worker. This guide covers the public API: the [`Client`](#client) facade
+(`goopdl.client`, also importable from `goopdl`), the functions in
+`goopdl.api`, `goopdl.auth`, and `goopdl.download`, and `goopdl.errors`.
+Everything else (`goopdl.cli`, underscore names) is internal and can change
+without notice.
 
 ## Requirements
 
@@ -15,8 +17,8 @@ underscore names) is internal and can change without notice.
   The `typer` minimum went up from 0.9: if you pin `typer` yourself, pin 0.16
   or newer. See [installation](installation.md#as-a-library) for pinning.
 
-Importing `goopdl`, `goopdl.api`, `goopdl.auth`, `goopdl.download`, or
-`goopdl.errors` does not import `rich`, `typer`, or `websocket-client`, prints
+Importing `goopdl`, `goopdl.client`, `goopdl.api`, `goopdl.auth`,
+`goopdl.download`, or `goopdl.errors` does not import `rich`, `typer`, or `websocket-client`, prints
 nothing, and touches no files. Only these load them:
 
 | Module or call | Loads |
@@ -25,14 +27,197 @@ nothing, and touches no files. Only these load them:
 | `download.download_batch()` and `api.download_app()` (progress bars) | `rich` |
 | `goopdl.browser_oauth` | `websocket-client` |
 
-## API status
+## Client
 
-Today the library is a set of functions in `goopdl.api`, `goopdl.auth`, and
-`goopdl.download` that you combine yourself, the same ones the CLI uses. Only
-`download_app` and `fetch_app_item` bundle several steps into one call.
+`Client` is the entry point for backends. It takes its settings from a
+`Config` object instead of environment variables, so one process can serve
+several accounts and cache directories at once, from threads or asyncio. It
+wraps the same functions the CLI uses, which stay available for step-by-step
+control (see [quick start](#quick-start) onwards).
 
-A higher-level facade is planned, but it doesn't exist yet. Everything in this
-guide uses the functions described here.
+### Quick start
+
+```python
+from pathlib import Path
+
+from goopdl import Client, Config
+
+client = Client(Config(config_dir=Path("goopdl-cache").resolve(), country="US"))
+
+details = client.details("com.whatsapp")
+print(details.title, details.version_string, details.version_code)
+
+result = client.download("com.whatsapp", Path("apks"), splits=True)
+print(result.path, result.version_string, len(result.files))
+```
+
+`Client(config=None, **overrides)`
+
+`Client(config, **overrides)` is short for `Client(config.replace(**overrides))`,
+and `Client(country="US")` builds the `Config` for you. `download` returns a
+`DownloadResult`: `path` is the base APK, `files` every file written (base APK
+first), `version_string` the dotted version. Unlike `api.download_app`, it
+draws no progress bars.
+
+### Config
+
+`Config(config_dir=None, credentials=None, arch="arm64", country=None, proxy=None, profile=None, dispenser_url=None)`
+
+`Config.replace(**changes) -> Config`
+
+A frozen dataclass. `replace` returns a validated copy.
+
+| Field | Meaning |
+| ----- | ------- |
+| `config_dir` | Token cache directory. Must be absolute after `~` expansion (`ValueError` otherwise). `None` resolves it on each call like the CLI, see [token pool and cache](#token-pool-and-cache) |
+| `credentials` | A `Credentials` for account mode, or `None` for the anonymous dispenser |
+| `arch` | One of `profiles.VALID_ARCHS`, checked at once (`InvalidArchError`) |
+| `country`, `proxy`, `profile`, `dispenser_url` | As in [concepts](#concepts) |
+
+`repr(config)` hides the proxy (it may hold a password) and masks the
+credentials.
+
+### Credentials
+
+`Credentials(email, aas_token)`
+
+A Google account for [account mode](authentication.md#google-account). It is
+checked like the environment variables: both values non-empty (they are
+stripped), the token starting with `aas_et/`. Otherwise it raises
+`DirectAuthConfigurationError`, whose message names the environment variable
+it would be. `repr` and `str` show neither the token nor the full email.
+
+```python
+from goopdl import Credentials
+
+account = Client(
+    config_dir=Path("goopdl-cache/me").resolve(),
+    credentials=Credentials("me@example.com", "aas_et/AKppINa..."),  # load it from your secret store
+)
+print(account.config.credentials)  # Credentials(email=m***@example.com, aas_token=<hidden>)
+print(account.details("com.whatsapp").version_code)
+```
+
+**A Client never reads `GOOPDL_ACCOUNT_EMAIL` or `GOOPDL_AAS_TOKEN`.**
+`credentials=None` means anonymous mode even when those variables are set, so
+a server can't switch accounts because of its environment. For the CLI's
+behaviour, ask for it:
+
+`Credentials.from_env() -> Credentials | None`
+
+```python
+cli_like = Client(credentials=Credentials.from_env())  # None (anonymous) when neither is set
+```
+
+It raises `DirectAuthConfigurationError` if only one of the two is set.
+`GOOPDL_CONFIG_DIR` and `XDG_CONFIG_HOME` still apply when `config_dir` is
+`None`.
+
+### Methods
+
+| Method | Returns | Does |
+| ------ | ------- | ---- |
+| `details` | `AppDetails` | Pool token + [`get_details`](#get_details) |
+| `search` | `list[dict]` | Pool token + [`search_apps`](#search_apps) |
+| `list_splits` | `list[str]` | Pool token + [`list_splits`](#list_splits) |
+| `item` | `dict` | [`fetch_app_item`](#fetch_app_item) |
+| `delivery` | `DeliveryResult` | Pool token, then [`purchase`](#purchase) and [`get_delivery`](#get_delivery) with that same token |
+| `download` | `DownloadResult` | Like [`download_app`](#download_app), without progress bars |
+| `adownload` | `DownloadResult` | `download` for asyncio |
+
+- `Client.details(package, *, country=None, proxy=None, arch=None, profile=None, dispenser_url=None) -> AppDetails`
+- `Client.search(query, *, limit=10, country=None, proxy=None, arch=None, profile=None, dispenser_url=None) -> list[dict]`
+- `Client.list_splits(package, *, country=None, proxy=None, arch=None, profile=None, dispenser_url=None) -> list[str]`
+- `Client.item(package, *, country=None, proxy=None, arch=None, profile=None, dispenser_url=None) -> dict`
+- `Client.delivery(package, version_code=None, *, country=None, proxy=None, arch=None, profile=None, dispenser_url=None) -> DeliveryResult`
+- `Client.download(package, output, *, splits=False, extras=False, on_progress=None, max_concurrent=4, country=None, proxy=None, arch=None, profile=None, dispenser_url=None) -> DownloadResult`
+- `Client.adownload(package, output, *, splits=False, extras=False, on_progress=None, max_concurrent=4, http_client=None, country=None, proxy=None, arch=None, profile=None, dispenser_url=None) -> DownloadResult`
+- `DownloadResult(path, version_string, files)`
+
+Details:
+
+- The keyword overrides replace the `Config` value for one call when they are
+  not `None`. To clear a value (say, `country`), use a client built from
+  `config.replace(country=None)`.
+- `details`, `search`, `list_splits`, and `delivery` take a token from the
+  pool (in account mode, sign in) and retry once with a fresh token on HTTP
+  401, like the CLI.
+- `delivery` without `version_code` asks `details` for the current version
+  first. With one, it skips that request.
+- `download` and `adownload` fetch the latest version only, like
+  `download_app` (there is no `version_code` argument). `splits=True` adds the
+  split APKs, `extras=True` the OBB files and asset packs. `on_progress` and
+  `max_concurrent` work as in [`download_files`](#download_files).
+- `download` raises `RuntimeError` inside a running event loop: await
+  `adownload` there.
+- Failures raise the same `GoopdlError` subclasses as the functions; no method
+  returns `None` on failure. Token errors are translated like in
+  `download_app`: a dispenser 429 is a `RateLimitedError` with its
+  `retry_after` (the `DispenserRateLimitedError` is the `__cause__`), a
+  dispenser outage or failed sign-in a `PlayAPIError`. A busy pool raises
+  `PoolBusyError`, except in `item`, which follows `fetch_app_item`.
+
+### Async
+
+`adownload` runs the blocking part (token, details, purchase, delivery) in a
+worker thread with `asyncio.to_thread`, then downloads natively with
+`download_files`. `http_client` is used for the CDN downloads and never
+closed. The other methods are blocking: offload them yourself.
+
+```python
+import asyncio
+
+
+async def latest(package):
+    client = Client(config_dir=Path("goopdl-cache").resolve())
+    details = await asyncio.to_thread(client.details, package)
+    result = await client.adownload(
+        package, Path("apks"),
+        on_progress=lambda label, done, total: None,  # runs on the event loop
+    )
+    return details.version_code, result.path
+
+
+print(asyncio.run(latest("com.whatsapp")))
+```
+
+Cancelling `adownload` during the download removes its `.part` files. During
+the worker-thread part, the thread finishes its current step first, as with
+any `asyncio.to_thread` call.
+
+### Several tenants
+
+One `Client` per tenant, each with its own cache directory and, if needed,
+its own account. They can run at the same time:
+
+```python
+tenants = {
+    "acme": Client(config_dir=Path("cache/acme").resolve(), country="US"),
+    "globex": Client(config_dir=Path("cache/globex").resolve(), country="DE"),
+}
+
+
+async def download_for_all(package):
+    return await asyncio.gather(
+        *(client.adownload(package, Path("apks") / name) for name, client in tenants.items())
+    )
+
+
+for result in asyncio.run(download_for_all("com.whatsapp")):
+    print(result.path)
+```
+
+### Threads and context
+
+A `Client` holds no mutable state: share one between threads and tasks. Each
+call applies its `Config` through a `contextvars` variable that it sets inside
+the thread doing the work, so concurrent calls never see each other's cache
+directory or account. The file locks of the [token pool](#token-pool-and-cache)
+still serialize callers that share a cache directory.
+
+The module functions in `goopdl.api` and `goopdl.auth` don't change: called
+directly, they read the cache directory and the account from the environment
+on each call, as before.
 
 ## Quick start
 
@@ -51,7 +236,8 @@ print(apk, version)  # apks/com.whatsapp-<version code>.apk and the version stri
 ```
 
 It is synchronous and draws Rich progress bars on stdout. For a service, use
-the step-by-step pipeline below and see [async backends](#async-backends).
+the [`Client`](#client), or the step-by-step pipeline below, and see
+[async backends](#async-backends).
 
 ### Step by step
 
@@ -114,11 +300,12 @@ Tokens come from one of two places, picked automatically on every call:
 | Mode | Source | Cached on disk |
 | ---- | ------ | -------------- |
 | Anonymous (default) | Aurora's token dispenser, or `dispenser_url` | Yes, see [token pool](#token-pool-and-cache) |
-| Google account | `GOOPDL_ACCOUNT_EMAIL` and `GOOPDL_AAS_TOKEN` in the environment | No, every call signs in again |
+| Google account | `GOOPDL_ACCOUNT_EMAIL` and `GOOPDL_AAS_TOKEN` in the environment, or a `Client`'s [`Credentials`](#credentials) | No, every call signs in again |
 
 Account mode is described in [authentication](authentication.md#google-account).
-The variables are read from `os.environ` on each call, so they apply to the
-whole process. If only one is set, or the token doesn't start with `aas_et/`,
+The module functions read the variables from `os.environ` on each call, so for
+them they apply to the whole process; a `Client` uses only its own
+`credentials`. If only one is set, or the token doesn't start with `aas_et/`,
 every token function raises `DirectAuthConfigurationError`. In account mode
 `pick_pool_token` signs in on every call, so reuse the dict until it expires.
 
@@ -149,9 +336,10 @@ after 50 minutes. The pool is explained in
 
 The cache directory is resolved on every call by `auth.get_config_dir()`:
 
-1. `$GOOPDL_CONFIG_DIR` (`~` is expanded)
-2. `$XDG_CONFIG_HOME/goopdl`
-3. `~/.config/goopdl`
+1. Inside a `Client` call, its `config_dir` if set
+2. `$GOOPDL_CONFIG_DIR` (`~` is expanded)
+3. `$XDG_CONFIG_HOME/goopdl`
+4. `~/.config/goopdl`
 
 A relative value in either variable is ignored (`GOOPDL_CONFIG_DIR` logs a
 warning), so the cache never lands in the working directory.
@@ -212,10 +400,12 @@ pass your own client: `client=httpx.AsyncClient(proxy=..., timeout=...)`.
 
 ## API reference
 
-All functions in `goopdl.api` and `goopdl.auth` are synchronous and blocking.
-They use synchronous `httpx` with a 30-second timeout, open a new connection
-per request, and may `time.sleep` (rate-limit backoff, dispenser cooldowns,
-lock waits). `goopdl.download.download_files` is the only coroutine.
+All functions in `goopdl.api` and `goopdl.auth` are synchronous and blocking,
+and so are the `Client` methods except `adownload`. They use synchronous
+`httpx` with a 30-second timeout, open a new connection per request, and may
+`time.sleep` (rate-limit backoff, dispenser cooldowns, lock waits).
+`goopdl.download.download_files` and `Client.adownload` are the only
+coroutines.
 
 ### `goopdl.api`
 
@@ -579,7 +769,8 @@ write_manifest(output / "manifest.json", [s for s in specs if s.integrity_requir
 
 ### Offload the blocking calls
 
-No `api` or `auth` function is async, and they can block for seconds or
+[`Client.adownload`](#async) does this for you. To control each step, note
+that no `api` or `auth` function is async, and they can block for seconds or
 minutes (a cold pool mints up to five tokens, each a dispenser request with a
 30-second timeout). Run
 them in a worker thread with `asyncio.to_thread`, and await `download_files`
@@ -676,10 +867,13 @@ async def download(package: str):
 
 ### Tenants
 
-The cache directory and account credentials come from environment variables
-that apply to the whole process. Don't change them per request: other threads
-would read the new values mid-call. To isolate tenants, run one worker process
-per tenant with its own environment:
+Use one [`Client` per tenant](#several-tenants), each with its own
+`config_dir` and `credentials`: they share the process safely.
+
+The module functions take the cache directory and account credentials from
+environment variables that apply to the whole process. Don't change them per
+request: other threads would read the new values mid-call. With the functions
+alone, isolate tenants with one worker process each:
 
 ```bash
 GOOPDL_CONFIG_DIR=/var/lib/goopdl/tenant-a python worker.py
@@ -731,8 +925,8 @@ below.
 | Error | Raised by | When | Retry? |
 | ----- | --------- | ---- | ------ |
 | `InvalidPackageError` | `api` functions that take a package | Malformed application ID, before any request | No |
-| `InvalidArchError` | Pool and cache functions, `download_app`, `fetch_app_item` | `arch` not in `VALID_ARCHS` | No |
-| `DirectAuthConfigurationError` | Every token function | Account mode half-configured | No, fix the environment |
+| `InvalidArchError` | Pool and cache functions, `download_app`, `fetch_app_item`, `Config` | `arch` not in `VALID_ARCHS` | No |
+| `DirectAuthConfigurationError` | Every token function, `Credentials`, `Credentials.from_env` | Account mode half-configured | No, fix the environment or the values |
 | `NetworkError` | Google Play calls in `api` | Timeout, DNS, refused or dropped connection | Yes, with backoff |
 | `AuthExpiredError` | `get_details*`, `search_apps`, `list_splits`, `purchase`, `get_delivery` | HTTP 401 | Once, after `replace_pool_token` |
 | `RateLimitedError` | Same, plus `fetch_app_item` and `download_app` | HTTP 429 from Play (`get_delivery` already retried twice). In `download_app`, also a dispenser or account-mode 429; in `fetch_app_item`, a dispenser 429 while replacing an expired token. For the dispenser's, `__cause__` is the `DispenserRateLimitedError` | Only after `retry_after`; stop if it is `None` |
@@ -843,7 +1037,10 @@ wrong: don't retry it blindly.
   `DispenserRateLimitedError`. `get_delivery` drops the delivery token, the
   proxy, and the response before raising, and a half-configured account mode
   raises `DirectAuthConfigurationError` without the email or AAS token in
-  any frame. What you pass in yourself stays, by design: the `auth` dict is
+  any frame. `Client` methods behave like `download_app`: the email and AAS
+  token are in no frame they leave behind, except inside the `Client`,
+  `Config`, and `Credentials` objects you created. What you pass in yourself
+  stays, by design: the `auth` dict is
   still in the frame of the function you gave it to (`get_details`,
   `get_delivery`, …), and the `auth` dict and the proxy URL are still in your
   own frames. If your error reporter captures local variables (Sentry's
@@ -914,11 +1111,12 @@ and `fetch_app_item` where 1.4.x raised a plain `PlayAPIError`.
 | Symptom | Cause and fix |
 | ------- | ------------- |
 | `RuntimeError: download_batch() cannot run inside a running event loop` | Await `download_files` instead, see [async backends](#async-backends) |
-| Progress bars in your server logs | `download_app` / `download_batch` draw them. Use `download_files` |
+| Progress bars in your server logs | `download_app` / `download_batch` draw them. Use `Client.download`, `Client.adownload`, or `download_files` |
 | `pick_pool_token` returns `None` | Pass `raise_on_error=True` to get the typed reason. Still `None`: unknown profile or unusable cache directory (see the logs) |
 | `PoolBusyError` | Another thread or process is filling the same pool. Retry later |
 | Tokens are minted again after upgrading | The cache moved, see [migration](#migrating-from-14x) |
-| `DirectAuthConfigurationError` | Set both `GOOPDL_ACCOUNT_EMAIL` and `GOOPDL_AAS_TOKEN`, or neither |
+| `DirectAuthConfigurationError` | Set both `GOOPDL_ACCOUNT_EMAIL` and `GOOPDL_AAS_TOKEN`, or neither. From `Credentials`: pass both values, the token starting with `aas_et/` |
+| A `Client` ignores `GOOPDL_ACCOUNT_EMAIL` | By design, see [credentials](#credentials). Use `Credentials.from_env()` |
 | `DownloadError` with `status_code == 403` | The delivery URLs expired. Call `get_delivery` again |
 | `AppNotAvailableError` for an app that exists | It is hidden from this device profile or country. Try another `profile`, `arch`, or `country` with a matching `proxy` |
 
@@ -930,8 +1128,13 @@ and `fetch_app_item` where 1.4.x raised a plain `PlayAPIError`.
 - Delivery URLs on hosts outside the allowlist are dropped. If Google moves
   its CDN, `get_delivery` raises `VersionUnavailableError` until goopdl is
   updated.
-- There is no async API for tokens and metadata. Use `asyncio.to_thread`.
-- The cache directory and account credentials are per process (environment
-  variables), not per call.
-- Each Google Play request opens a new connection. Only `download_files`
-  accepts a shared client.
+- There is no async API for tokens and metadata: `Client.adownload` and
+  `download_files` are the only coroutines. Use `asyncio.to_thread` for the
+  rest.
+- For the module functions, the cache directory and account credentials are
+  per process (environment variables), not per call. A `Client` sets them per
+  call.
+- `Client.download` and `Client.adownload` only fetch the latest version. For
+  a specific version code, use `Client.delivery` and `download_files`.
+- Each Google Play request opens a new connection. Only `download_files` and
+  `Client.adownload` accept a shared client, for the CDN downloads.
