@@ -1,6 +1,5 @@
 """Profile rejection is not a dispenser transport/server outage."""
 
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +8,7 @@ from unittest.mock import patch
 import httpx
 from typer.testing import CliRunner
 
+from _envutil import isolated_env
 from goopdl import api, auth, cli
 
 
@@ -17,7 +17,7 @@ class ProfileRotationTest(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         for patcher in (
-            patch.dict(os.environ, {}, clear=True),
+            isolated_env(),
             patch.object(auth, "_CONFIG_DIR", Path(self.directory.name), create=True),
             patch.object(
                 httpx, "get", side_effect=AssertionError("unexpected network")

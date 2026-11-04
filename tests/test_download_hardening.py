@@ -5,7 +5,6 @@ import base64
 import contextlib
 import gzip
 import hashlib
-import os
 import tempfile
 import unittest
 import zlib
@@ -16,6 +15,7 @@ from unittest.mock import patch
 
 import httpx
 
+from _envutil import isolated_env
 from goopdl.api import NetworkError
 from goopdl.download import (
     DownloadError,
@@ -34,7 +34,7 @@ def digest(data):
 class IsolatedEnvironment(unittest.TestCase):
     def setUp(self):
         super().setUp()
-        self.env = patch.dict(os.environ, {}, clear=True)
+        self.env = isolated_env()
         self.env.start()
         self.addCleanup(self.env.stop)
         self.directory = tempfile.TemporaryDirectory()
