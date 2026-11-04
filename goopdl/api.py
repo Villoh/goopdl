@@ -1322,6 +1322,29 @@ def _download_app(
     no_splits: bool,
     no_extras: bool,
 ) -> tuple[Path, str]:
+    specs, version_string = _prepare_download(
+        package, output, arch, country, proxy, dispenser_url, profile,
+        no_splits, no_extras,
+    )
+    download_batch(specs)
+    return specs[0].dest, version_string
+
+
+def _prepare_download(
+    package: str,
+    output: Path,
+    arch: str,
+    country: str | None,
+    proxy: str | None,
+    dispenser_url: str | None,
+    profile: str | None,
+    no_splits: bool,
+    no_extras: bool,
+) -> tuple[list[DownloadSpec], str]:
+    """Blocking half of download_app: token, details, delivery and specs.
+
+    Returns (specs, version string); specs[0] is the base APK. Creates *output*.
+    """
     validate_package(package)
     if profile:
         chosen_profile = profile
@@ -1385,5 +1408,4 @@ def _download_app(
     specs = _build_specs(
         package, details.version_code, output, delivery, no_splits, no_extras
     )
-    download_batch(specs)
-    return specs[0].dest, details.version_string
+    return specs, details.version_string
