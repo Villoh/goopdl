@@ -35,9 +35,17 @@ de configuración (`~/.config/goopdl` salvo que definas `GOOPDL_CONFIG_DIR` o
 - Varios procesos de goopdl pueden compartir un pool: las actualizaciones se
   hacen con bloqueo y se escriben de forma atómica.
 - Si el dispensador responde HTTP 429, goopdl deja de probar otros perfiles en
-  lugar de insistir. Mientras queden tokens válidos en el pool, goopdl los usa
-  y vuelve a intentar completarlo en la siguiente llamada. Solo falla, con el
-  código de salida `5`, cuando no queda ninguno.
+  lugar de insistir. Mientras queden tokens válidos en el pool, goopdl los usa.
+  Solo falla, con el código de salida `5`, cuando no queda ninguno.
+- Tras ese 429, el proceso deja de pedir a ese dispensador, a través de ese
+  proxy, durante lo que indique su cabecera `Retry-After`, hasta 15 minutos.
+  Sin una cabecera válida espera 60 segundos, una estimación: el dispensador
+  no dice cuánto dura su límite. Mientras tanto el pool no se completa y, sin
+  tokens válidos, una llamada falla al momento, con el tiempo que falta y sin
+  hacer ninguna petición. La espera solo vive en memoria, así que cada nuevo
+  comando `goopdl` empieza sin ella; importa en los comandos que necesitan
+  varios tokens y en programas de larga duración que usan goopdl como
+  [biblioteca](library.md#pool-de-tokens-y-caché).
 
 El pool mantiene a goopdl por debajo del límite de Aurora, de unas 20
 peticiones por hora. En el [modo cuenta de Google](authentication.md#cuenta-de-google)

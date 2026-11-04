@@ -363,6 +363,20 @@ siguen sirviendo la llamada. Los tokens se descartan a los 50 minutos. El pool
 se explica en
 [cómo funciona](how-it-works.md#pool-de-tokens).
 
+Tras un HTTP 429 del dispensador, el proceso deja de pedirle tokens (al mismo
+`dispenser_url` y `proxy`) hasta que pasa el `Retry-After` del servidor, con
+un máximo de 15 minutos, o durante 60 segundos si no llega una cabecera
+válida. Los 60 segundos son una estimación: el dispensador no dice cuánto dura
+su límite. Dentro de esa ventana las funciones de tokens no envían nada y
+actúan como si el dispensador hubiera vuelto a responder 429: los tokens
+válidos del pool siguen sirviendo las llamadas sin completarlo y, si no queda
+ninguno, recibes `DispenserRateLimitedError` (`RateLimitedError` desde
+`Client`, `fetch_app_item` y `download_app`) con `retry_after` igual a los
+segundos que faltan, redondeados hacia arriba. La ventana solo vive en la
+memoria de este proceso: no se guarda y otros procesos no la ven.
+`auth.clear_auth()` y `clear_cache()` de un `Client` sin credenciales la
+olvidan. El modo cuenta no usa el dispensador, así que no tiene ventana.
+
 `auth.get_config_dir()` resuelve el directorio de caché en cada llamada:
 
 1. Dentro de una llamada de un `Client`, su `config_dir` si lo tiene
@@ -659,7 +673,9 @@ caída.
 `fetch_token(dispenser_url=None, arch="arm64", proxy=None, country=None, profile=None, raise_on_error=False, *, cooldown_retry=True) -> dict | None`
 
 Un token nuevo, sin caché. Cada llamada es una petición al dispensador (Aurora
-permite unas 20 por hora), así que mejor usa `pick_pool_token`.
+permite unas 20 por hora), así que mejor usa `pick_pool_token`. Dentro de una
+[ventana de 429](#pool-de-tokens-y-caché) no envía nada: devuelve `None`, o
+lanza `DispenserRateLimitedError` con `raise_on_error=True`.
 
 ```python
 fresh = auth.fetch_token(arch="arm64", country="US", raise_on_error=True)
@@ -993,7 +1009,7 @@ traducen algunos, mira abajo.
 | `AppNotPurchasedError` | `get_delivery` | App de pago, o no disponible en la región | No |
 | `MalformedResponseError` | Parsers de `api` | Protobuf que no se puede decodificar | No con otro token |
 | `PlayAPIError` | Todo `api` | Cualquier otro estado HTTP (`.status_code`); sin token en `fetch_app_item` / `download_app` | 5xx más tarde; el resto no |
-| `DispenserRateLimitedError` | Funciones de tokens con `raise_on_error=True`; `replace_pool_token` incluso sin él. Las funciones del pool solo lo lanzan si no queda ningún token válido. `fetch_app_item` y `download_app` lo envuelven en `RateLimitedError` | HTTP 429 del dispensador | Solo tras `retry_after` |
+| `DispenserRateLimitedError` | Funciones de tokens con `raise_on_error=True`; `replace_pool_token` incluso sin él. Las funciones del pool solo lo lanzan si no queda ningún token válido. `fetch_app_item` y `download_app` lo envuelven en `RateLimitedError` | HTTP 429 del dispensador, o una llamada dentro de la [ventana](#pool-de-tokens-y-caché) que abrió un 429, sin petición; entonces `retry_after` es el tiempo que falta | Solo tras `retry_after` |
 | `DispenserUnavailableError` | Funciones de tokens con `raise_on_error=True` | `.reason`: `transport`, `server` (5xx) o `profile_rejected` | `transport`/`server` más tarde; `profile_rejected` con otro perfil |
 | `DirectAuthError` | Funciones de tokens en modo cuenta con `raise_on_error=True` | El inicio de sesión falló en `.stage` (`checkin`, `device config upload`, `token exchange`) con `.status`. Un 429 en la llamada opcional `toc` no es un error: el token llega sin `dfeCookie` y se registra un aviso | 429 tras `.retry_after`; transporte/5xx más tarde; 400/401/403 no |
 | `PoolBusyError` | Funciones del pool con `raise_on_error=True`; `download_app` siempre | No se obtuvo el bloqueo del pool en 180 s | Más tarde |
@@ -1047,7 +1063,9 @@ details = call_with_backoff(api.get_details, package, token)
 ```
 
 También sirve para `fetch_app_item` y `download_app`: informan de todos los
-429, incluidos los del dispensador, como `RateLimitedError`.
+429, incluidos los del dispensador, como `RateLimitedError`. Dentro de la
+[ventana de 429](#pool-de-tokens-y-caché) del dispensador, `retry_after` es el
+tiempo que falta, así que basta con esperar eso.
 `DispenserRateLimitedError` solo te llega de las funciones de tokens de
 `goopdl.auth`.
 

@@ -33,8 +33,15 @@ directory (`~/.config/goopdl` unless `GOOPDL_CONFIG_DIR` or
   atomically.
 - If the dispenser answers HTTP 429, goopdl stops trying other profiles
   instead of hammering it. While valid tokens are left in the pool, goopdl
-  uses them and tries to top it up again on the next call. It only fails,
-  with exit code `5`, when no valid token is left.
+  uses them. It only fails, with exit code `5`, when no valid token is left.
+- After that 429, the process stops asking that dispenser, through that
+  proxy, for as long as its `Retry-After` header says, up to 15 minutes. With
+  no usable header it waits 60 seconds, a guess: the dispenser doesn't say how
+  long its limit lasts. Meanwhile the pool isn't topped up, and with no valid
+  token left a call fails at once, with the time left and without a request.
+  The wait lives in memory only, so each new `goopdl` command starts without
+  it; it matters in commands that need several tokens and in long-running
+  programs that use goopdl as a [library](library.md#token-pool-and-cache).
 
 The pool keeps goopdl under Aurora's rate limit of about 20 requests per hour.
 In [Google account mode](authentication.md#google-account) there is no pool:
