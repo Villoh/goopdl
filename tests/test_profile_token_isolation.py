@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
+from _envutil import isolated_env
 from goopdl import auth
 from goopdl.api import (
     AppDetails,
@@ -28,7 +29,7 @@ class ProfileTokenIsolationTest(unittest.TestCase):
         self.directory = Path(directory.name)
         for patcher in (
             patch.object(auth, "_CONFIG_DIR", self.directory),
-            patch.dict(os.environ, {}, clear=True),
+            isolated_env(),
             patch.object(auth.console, "print"),
         ):
             patcher.start()

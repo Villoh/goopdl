@@ -1,4 +1,3 @@
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,6 +5,7 @@ from unittest.mock import patch
 from urllib.parse import parse_qs
 
 import httpx
+from _envutil import isolated_env
 from goopdl import auth, cli
 from goopdl.api import (
     AppDetails,
@@ -163,7 +163,10 @@ class SplitFileNameTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "out"
             output.mkdir()
-            (output / "link").symlink_to(Path(directory))
+            try:
+                (output / "link").symlink_to(Path(directory))
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks unavailable")
             for name in ("..", ".", "link"):
                 with self.subTest(name=name), self.assertRaises(PlayAPIError):
                     _safe_dest(output, name)
@@ -179,7 +182,7 @@ class SplitFileNameTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "out"
             with (
-                patch.dict(os.environ, {}, clear=True),
+                isolated_env(),
                 patch("goopdl.cli.pick_pool_token", return_value={"authToken": "t"}),
                 patch(
                     "goopdl.cli._acquire_delivery",
@@ -238,7 +241,7 @@ class SplitCollisionTest(unittest.TestCase):
     def test_cli_download_refuses_colliding_splits(self):
         with tempfile.TemporaryDirectory() as directory:
             with (
-                patch.dict(os.environ, {}, clear=True),
+                isolated_env(),
                 patch("goopdl.cli.pick_pool_token", return_value={"authToken": "t"}),
                 patch(
                     "goopdl.cli._acquire_delivery",
@@ -297,7 +300,7 @@ class ArchValidationTest(unittest.TestCase):
 
     def test_cli_rejects_bad_arch(self):
         with (
-            patch.dict(os.environ, {}, clear=True),
+            isolated_env(),
             patch("goopdl.cli.fetch_token") as fetch,
         ):
             result = CliRunner().invoke(cli.app, ["auth", "--arch", "../x"])

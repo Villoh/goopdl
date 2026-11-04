@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import unittest
@@ -69,7 +70,8 @@ class HierarchyTest(unittest.TestCase):
             "if m in sys.modules])"
         )
         out = subprocess.run(
-            [sys.executable, "-c", code], capture_output=True, text=True, check=True
+            [sys.executable, "-c", code], capture_output=True, text=True, check=True,
+            env={**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p)},
         )
         self.assertEqual(out.stdout.strip(), "[]")
 
