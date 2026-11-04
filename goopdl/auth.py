@@ -1,9 +1,19 @@
-"""Token dispenser authentication and Google Play header construction."""
+"""Token dispenser authentication and Google Play header construction.
+
+Tokens are cached as 0600 JSON files (auth-*, token-pool-*, pool-index-*)
+in a 0700 directory resolved by :func:`get_config_dir`: ``$GOOPDL_CONFIG_DIR``,
+else ``$XDG_CONFIG_HOME/goopdl``, else ``~/.config/goopdl``.
+
+Note: older releases always used ``~/.config/goopdl``. If XDG_CONFIG_HOME
+points elsewhere, existing cached tokens are not found there and are minted
+again; move the files or set GOOPDL_CONFIG_DIR=~/.config/goopdl to keep them.
+"""
 
 from __future__ import annotations
 
 import errno
 import json
+import logging
 import os
 import random
 import re
@@ -15,7 +25,6 @@ from typing import Iterator, Optional
 from urllib.parse import urlparse, urlunparse
 
 import httpx
-from rich.console import Console
 
 from goopdl.errors import GoopdlError
 from goopdl.profiles import (
@@ -66,9 +75,37 @@ DISPENSER_PROXY_REGIONS = [
     "KE",
 ]
 
-_CONFIG_DIR = Path.home() / ".config" / "goopdl"
+def get_config_dir() -> Path:
+    """Resolve the credential cache directory on use, never at import time.
 
-console = Console(stderr=True)
+    Order: GOOPDL_CONFIG_DIR, $XDG_CONFIG_HOME/goopdl, ~/.config/goopdl.
+    GOOPDL_CONFIG_DIR is ``~``-expanded; like XDG_CONFIG_HOME, a relative
+    value is ignored (with a warning) so it never lands in the CWD.
+    """
+    # Tests and embedders may still set or patch auth._CONFIG_DIR directly.
+    override = globals().get("_CONFIG_DIR")
+    if override is not None:
+        return Path(override)
+    env = os.path.expanduser(os.environ.get("GOOPDL_CONFIG_DIR", ""))
+    if os.path.isabs(env):
+        return Path(env)
+    if env:
+        logger.warning("Ignoring relative GOOPDL_CONFIG_DIR=%r", env)
+    xdg = os.environ.get("XDG_CONFIG_HOME", "")
+    if os.path.isabs(xdg):  # The XDG spec says to ignore relative paths.
+        return Path(xdg) / "goopdl"
+    return Path.home() / ".config" / "goopdl"
+
+
+def __getattr__(name: str):
+    # _CONFIG_DIR used to be an import-time constant; keep it readable.
+    if name == "_CONFIG_DIR":
+        return get_config_dir()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# Library code only logs; the CLI attaches a handler. Never log secrets here.
+logger = logging.getLogger(__name__)
 
 
 def _sanitize_country(country: str) -> str:
@@ -104,7 +141,7 @@ def _auth_path(
 ) -> Path:
     suffix = f"-{_sanitize_country(country)}" if country else ""
     suffix += _profile_suffix(arch, profile)
-    return _CONFIG_DIR / f"auth-{_arch_key(arch)}{suffix}.json"
+    return get_config_dir() / f"auth-{_arch_key(arch)}{suffix}.json"
 
 
 def save_auth(
@@ -113,11 +150,10 @@ def save_auth(
     country: Optional[str] = None,
     profile: Optional[str] = None,
 ) -> Path:
-    """Persist auth data to disk and return the file path."""
-    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    """Persist auth data to disk (0600, atomically) and return the file path."""
     data["_cached_at"] = time.time()
     path = _auth_path(arch, country, profile)
-    path.write_text(json.dumps(data, indent=2))
+    _atomic_pool_json(path, data)
     return path
 
 
@@ -139,7 +175,7 @@ def load_cached_auth(
 def clear_auth() -> None:
     """Remove cached credentials and indexes, preserving stable lock sidecars."""
     for pattern in ("auth-*.json", "token-pool-*.json", "pool-index-*.json"):
-        for f in _CONFIG_DIR.glob(pattern):
+        for f in get_config_dir().glob(pattern):
             f.unlink(missing_ok=True)
 
 
@@ -522,10 +558,11 @@ def fetch_token(
                 profile_name=profile,
             )
         except DirectAuthError as exc:
-            console.print(f"  [red]Direct Google authentication failed at {exc}.[/red]")
+            logger.error("Direct Google authentication failed at %s.", exc)
             return None
         except Exception:
-            console.print("  [red]Direct Google authentication failed unexpectedly.[/red]")
+            # No exc_info: tracebacks can carry credentials from request locals.
+            logger.error("Direct Google authentication failed unexpectedly.")
             return None
 
     url = dispenser_url or DEFAULT_DISPENSER_URL
@@ -537,7 +574,7 @@ def fetch_token(
     if profile:
         match = find_profile(profile, arch)
         if not match:
-            console.print(f"[red]Profile not found: {profile}[/red]")
+            logger.error("Profile not found: %s", profile)
             return None
         profiles = [match]
     else:
@@ -563,24 +600,19 @@ def fetch_token(
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("authToken"):
-                    console.print(
-                        f"  Authenticated with profile: [bold]{device}[/bold]"
-                    )
+                    logger.info("Authenticated with profile: %s", device)
                     data["_device_profile"] = device
                     return data
-                console.print(
-                    f"  [yellow]No authToken in dispenser response for {device}[/yellow]"
-                )
+                logger.warning("No authToken in dispenser response for %s", device)
             else:
-                console.print(
-                    f"  [yellow]Dispenser returned HTTP {resp.status_code} for {device}[/yellow]"
+                logger.warning(
+                    "Dispenser returned HTTP %s for %s", resp.status_code, device
                 )
                 if resp.status_code == 429:
                     return None
         except Exception as exc:
-            console.print(
-                f"  [red]Dispenser request failed for {device}: "
-                f"{type(exc).__name__}[/red]"
+            logger.warning(
+                "Dispenser request failed for %s: %s", device, type(exc).__name__
             )
             continue
 
@@ -602,7 +634,7 @@ def _pool_path(
 ) -> Path:
     suffix = f"-{_sanitize_country(country)}" if country else ""
     suffix += _profile_suffix(arch, profile)
-    return _CONFIG_DIR / f"token-pool-{_arch_key(arch)}{suffix}.json"
+    return get_config_dir() / f"token-pool-{_arch_key(arch)}{suffix}.json"
 
 
 _POOL_LOCK_TIMEOUT = 180.0  # seconds; a cold five-token pool can take 5 x 30s
@@ -611,10 +643,26 @@ _POOL_LOCK_TIMEOUT = 180.0  # seconds; a cold five-token pool can take 5 x 30s
 def _pool_cache_error(exc: OSError) -> None:
     detail = ("lock acquisition timed out: TimeoutError"
               if isinstance(exc, TimeoutError) else type(exc).__name__)
-    console.print(
-        f"[red]Token pool cache unavailable ({detail}); "
-        "anonymous token acquisition stopped.[/red]"
+    logger.error(
+        "Token pool cache unavailable (%s); anonymous token acquisition stopped.",
+        detail,
     )
+
+
+def _ensure_config_dir(directory: Path) -> None:
+    """Create the token directory 0700 and tighten an existing one we own.
+
+    Older releases created it 0755; it holds tokens. Best-effort, POSIX only.
+    """
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if os.name == "nt":
+        return
+    try:
+        info = directory.stat()
+        if info.st_uid == os.getuid() and info.st_mode & 0o077:
+            directory.chmod(0o700)
+    except OSError:
+        pass
 
 
 @contextmanager
@@ -631,7 +679,7 @@ def _pool_lock(
     handle = None
     acquired = False
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_config_dir(path.parent)
         handle = path.open("a+b", buffering=0)
         if os.name == "nt":
             import msvcrt
@@ -710,8 +758,11 @@ def _load_pool_unlocked(
 
 
 def _atomic_pool_json(path: Path, data: object) -> None:
-    """Publish a whole pool/index document; caller owns the pool lock."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Atomically publish a whole JSON document as 0600 (mkstemp's mode).
+
+    Pool/index callers own the pool lock.
+    """
+    _ensure_config_dir(path.parent)
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -777,8 +828,9 @@ def _ensure_pool_unlocked(
     deficit = size - len(pool)
     if deficit > 0:
         label = country or "default"
-        console.print(
-            f"[dim]  Pool [{label}]: {len(pool)}/{size} valid — fetching {deficit} more...[/dim]"
+        logger.info(
+            "Pool [%s]: %d/%d valid — fetching %d more...",
+            label, len(pool), size, deficit,
         )
         _save_pool(pool, arch, country, profile)
         for _ in range(deficit):
@@ -803,7 +855,7 @@ def _index_path(
 ) -> Path:
     suffix = f"-{_sanitize_country(country)}" if country else ""
     suffix += _profile_suffix(arch, profile)
-    return _CONFIG_DIR / f"pool-index-{_arch_key(arch)}{suffix}.json"
+    return get_config_dir() / f"pool-index-{_arch_key(arch)}{suffix}.json"
 
 
 def _read_index(
@@ -921,9 +973,9 @@ def ensure_auth(
             age = time.time() - cached.get("_cached_at", 0)
             if age < _MAX_TOKEN_AGE:
                 return cached
-            console.print("[dim]Token expired — refreshing...[/dim]")
+            logger.info("Token expired — refreshing...")
     else:
-        console.print("[dim]Refreshing token...[/dim]")
+        logger.info("Refreshing token...")
 
     data = fetch_token(
         dispenser_url=dispenser_url,

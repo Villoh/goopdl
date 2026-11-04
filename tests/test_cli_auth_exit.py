@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,6 +23,14 @@ class AuthExitCodeTest(unittest.TestCase):
         with patch("goopdl.cli.fetch_token", return_value=None):
             result = CliRunner().invoke(app, ["auth", "--arch", "arm64"])
         self.assertEqual(AUTH_UNAVAILABLE_EXIT_CODE, result.exit_code)
+
+    def test_library_log_messages_are_shown_by_the_cli(self) -> None:
+        with patch.dict(os.environ, {"GOOPDL_ACCOUNT_EMAIL": "", "GOOPDL_AAS_TOKEN": ""}):
+            result = CliRunner().invoke(
+                app, ["auth", "--profile", "no-such-profile-xyz"]
+            )
+        self.assertEqual(AUTH_UNAVAILABLE_EXIT_CODE, result.exit_code)
+        self.assertIn("Profile not found: no-such-profile-xyz", result.output)
 
     def test_rate_limited_delivery_has_dedicated_exit_code(self) -> None:
         with (

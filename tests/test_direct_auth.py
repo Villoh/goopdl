@@ -353,10 +353,10 @@ class DirectAuthTest(unittest.TestCase):
                     "GOOPDL_AAS_TOKEN": "aas_et/persistent-secret",
                 },
             ),
-            patch("goopdl.auth.console.print") as console_print,
+            patch("goopdl.auth.logger") as console_print,
         ):
             self.assertIsNone(fetch_token())
-        output = " ".join(str(call) for call in console_print.call_args_list)
+        output = " ".join(str(call) for call in console_print.mock_calls)
         self.assertIn("HTTP 403, BadAuthentication", output)
         self.assertNotIn("must-not-be-logged", output)
 
@@ -364,7 +364,7 @@ class DirectAuthTest(unittest.TestCase):
         "goopdl.auth._direct_auth",
         side_effect=DirectAuthError("checkin (HTTP 403)"),
     )
-    @patch("goopdl.auth.console.print")
+    @patch("goopdl.auth.logger")
     def test_direct_failure_reports_safe_stage(
         self, console_print: Mock, _auth: Mock
     ) -> None:
@@ -376,7 +376,7 @@ class DirectAuthTest(unittest.TestCase):
         ):
             self.assertIsNone(fetch_token())
 
-        output = " ".join(str(call) for call in console_print.call_args_list)
+        output = " ".join(str(call) for call in console_print.mock_calls)
         self.assertIn("checkin (HTTP 403)", output)
         self.assertNotIn("account@example.test", output)
         self.assertNotIn("persistent-secret", output)

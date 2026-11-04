@@ -46,7 +46,7 @@ def pool_worker(directory, operation, profile, output, started, minted, release,
     try:
         with (patch.object(auth, "fetch_token", side_effect=mint),
               patch.object(auth, "_read_index", side_effect=read),
-              patch.object(auth.console, "print")):
+              patch.object(auth, "logger")):
             started.set()
             if begin is not None and not begin.wait(10):
                 raise RuntimeError("test start gate timed out")
@@ -79,7 +79,7 @@ class PoolTransactionsTest(unittest.TestCase):
                                                 "GOOPDL_AAS_TOKEN": ""})):
             patcher.start()
             self.addCleanup(patcher.stop)
-        messages = patch.object(auth.console, "print")
+        messages = patch.object(auth, "logger")
         self.messages = messages.start()
         self.addCleanup(messages.stop)
         self.ctx = mp.get_context("spawn")
@@ -212,7 +212,7 @@ class PoolTransactionsTest(unittest.TestCase):
             self.assertEqual([], auth._load_pool("arm64", "US", "Pv"))
             self.assertLess(time.monotonic() - start, 3)
             fetch.assert_not_called()
-        self.assertIn("TimeoutError", str(self.messages.call_args_list))
+        self.assertIn("TimeoutError", str(self.messages.mock_calls))
         holder[0].terminate()
         holder[0].join(5)
         with patch.object(auth, "fetch_token", return_value=token("after-crash")):
@@ -318,7 +318,7 @@ class PoolTransactionsTest(unittest.TestCase):
                 self.assertEqual(warm, auth._load_pool("arm64", "US", "D2"))
                 self.assertLess(time.monotonic() - start, 1)
                 fetch.assert_not_called()
-            self.messages.assert_not_called()
+            self.assertEqual([], self.messages.mock_calls)
         finally:
             release.set()
         self.result(worker)

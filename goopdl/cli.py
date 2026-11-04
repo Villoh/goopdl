@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shlex
@@ -69,6 +70,31 @@ from goopdl.profiles import (
 console = Console()
 err = Console(stderr=True)
 
+
+class _StderrLogHandler(logging.Handler):
+    """Show goopdl library log records on stderr, styled by level."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.levelno >= logging.ERROR:
+            style = "red"
+        elif record.levelno >= logging.WARNING:
+            style = "yellow"
+        else:
+            style = "dim"
+        try:
+            err.print(
+                f"  {self.format(record)}", style=style, markup=False, highlight=False
+            )
+        except Exception:
+            self.handleError(record)
+
+
+def _setup_logging() -> None:
+    log = logging.getLogger("goopdl")
+    log.setLevel(logging.INFO)
+    if not any(isinstance(h, _StderrLogHandler) for h in log.handlers):
+        log.addHandler(_StderrLogHandler())
+
 # Distinct exit code so callers can tell "Google Play is unreachable right now"
 # from "this artifact cannot be trusted" without parsing human-readable output.
 AUTH_UNAVAILABLE_EXIT_CODE = 3
@@ -118,6 +144,7 @@ def main(
     ),
 ) -> None:
     """GPlay APK Downloader — download APKs from Google Play Store."""
+    _setup_logging()
     if ctx.invoked_subcommand in {
         "auth",
         "latest",
