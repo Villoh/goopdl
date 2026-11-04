@@ -84,6 +84,8 @@ goopdl download com.whatsapp
   opciones de línea de comandos.
 - Los bearer tokens temporales de Google Play se quedan en memoria y nunca se
   guardan en caché.
+- Desde Python, un [`Client`](library.md#credentials) recibe la cuenta como
+  `Credentials` e ignora estas variables.
 
 > [!WARNING]
 > Un token AAS es una credencial de larga duración con acceso completo a Play

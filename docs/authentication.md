@@ -82,6 +82,8 @@ goopdl download com.whatsapp
   back to anonymous mode.
 - goopdl reads no config files, secret files, or CLI flags for this mode.
 - Short-lived Google Play bearer tokens stay in memory and are never cached.
+- From Python, a [`Client`](library.md#credentials) takes the account as
+  `Credentials` instead and ignores these variables.
 
 > [!WARNING]
 > An AAS token is a long-lived credential with full Play Store access to the
