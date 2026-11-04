@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, Mock, patch
 import httpx
 import typer
 
+from _envutil import isolated_env
 from goopdl import aastoken, api, auth, browser_oauth, cli, download
 
 
@@ -35,7 +36,7 @@ def caught(call) -> Any:
 
 class BoundaryCase(unittest.TestCase):
     def setUp(self):
-        self.env = patch.dict(os.environ, {}, clear=True)
+        self.env = isolated_env()
         self.env.start()
         self.addCleanup(self.env.stop)
 

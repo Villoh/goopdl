@@ -10,6 +10,7 @@ from unittest.mock import patch
 import httpx
 from typer.testing import CliRunner
 
+from _envutil import isolated_env
 from goopdl import api, auth, cli, errors
 
 
@@ -27,7 +28,7 @@ def capture_failure(call) -> Any:
 
 class AuthSecretsTest(unittest.TestCase):
     def setUp(self):
-        environment = patch.dict(os.environ, {}, clear=True)
+        environment = isolated_env()
         environment.start()
         self.addCleanup(environment.stop)
         # No test may accidentally contact a real endpoint.
