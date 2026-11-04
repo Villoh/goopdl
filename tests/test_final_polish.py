@@ -435,5 +435,28 @@ class FetchAppItemRateLimitTest(unittest.TestCase):
         self.assertIsInstance(raised.exception.__cause__, auth.DispenserRateLimitedError)
 
 
+class PrettyExceptionLocalsTest(unittest.TestCase):
+    def test_cli_never_relies_on_typers_show_locals_default(self) -> None:
+        import runpy
+
+        import typer
+
+        from goopdl import cli
+
+        class OldDefaultTyper(typer.Typer):
+            """typer 0.16-0.19 showed locals (tokens, proxies) by default."""
+
+            def __init__(self, *args, pretty_exceptions_show_locals=True, **kwargs):
+                super().__init__(
+                    *args, pretty_exceptions_show_locals=pretty_exceptions_show_locals,
+                    **kwargs,
+                )
+
+        self.assertFalse(cli.app.pretty_exceptions_show_locals)
+        with patch("typer.Typer", OldDefaultTyper):
+            namespace = runpy.run_path(cli.__file__, run_name="goopdl_cli_probe")
+        self.assertFalse(namespace["app"].pretty_exceptions_show_locals)
+
+
 if __name__ == "__main__":
     unittest.main()

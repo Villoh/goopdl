@@ -129,6 +129,8 @@ app = typer.Typer(
     help="Download APKs from Google Play Store.",
     add_completion=False,
     no_args_is_help=True,
+    # Explicit: typer < 0.20 defaults to True and would print secret locals.
+    pretty_exceptions_show_locals=False,
 )
 
 
