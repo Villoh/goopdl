@@ -160,6 +160,7 @@ class ClientTestCase(unittest.TestCase):
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
+        self.addCleanup(auth._reset_dispenser_backoff)  # in-memory 429 window
 
     def assert_no_scope(self):
         self.assertIsNone(auth._scope.get())
@@ -435,6 +436,7 @@ class AsyncDownloadTest(unittest.IsolatedAsyncioTestCase):
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
+        self.addCleanup(auth._reset_dispenser_backoff)  # in-memory 429 window
         self.client = Client(config_dir=self.tmp / "c", profile="Pv")
 
     async def test_injected_client_progress_and_result(self):
@@ -498,6 +500,7 @@ class ErrorsTest(ClientTestCase):
         }
         for name, call in calls.items():
             with self.subTest(name):
+                auth._reset_dispenser_backoff()  # each subtest starts with no 429 window
                 client = Client(config_dir=self.tmp / name, profile="Pv")  # cold pool
                 if name == "item":  # fetch_app_item: only a replacement's 429 is typed
                     client.details(PKG)  # warm pool, then Play 401s the token
@@ -505,9 +508,10 @@ class ErrorsTest(ClientTestCase):
                     pool = next((self.tmp / name).glob("token-pool-*.json"))
                     pool.write_text(json.dumps(json.loads(pool.read_text())[:1]))
                     self.fake.faults["details"] = [httpx.Response(401)]
-                self.fake.faults["dispenser"] = [  # item: refill, then replacement
+                # item: the refill's 429 opens the window the replacement hits.
+                self.fake.faults["dispenser"] = [
                     httpx.Response(429, headers={"Retry-After": "60"})
-                ] * (2 if name == "item" else 1)
+                ]
                 with self.assertRaises(RateLimitedError) as raised:
                     call(client)
                 self.assertEqual(60.0, raised.exception.retry_after)

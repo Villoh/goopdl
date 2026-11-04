@@ -17,6 +17,7 @@ import errno
 import hashlib
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -202,7 +203,8 @@ def load_cached_auth(
 def clear_auth() -> None:
     """Remove cached credentials and indexes, preserving stable lock sidecars.
 
-    Also forgets the in-memory account-mode sessions of this config directory.
+    Also forgets the in-memory account-mode sessions of this config directory
+    and every in-memory dispenser 429 backoff window.
     """
     _clear_cached(None)
 
@@ -215,6 +217,8 @@ def _clear_cached(email: Optional[str]) -> None:
     for pattern in ("auth-*.json", "token-pool-*.json", "pool-index-*.json", devices):
         for f in directory.glob(pattern):
             f.unlink(missing_ok=True)
+    if acct is None:
+        _reset_dispenser_backoff()
     with _direct_guard:
         for store in (_direct_sessions, _direct_devices):
             for key in list(store):
@@ -814,6 +818,16 @@ def _fetch_token_impl(
         return None
 
     url = dispenser_url or DEFAULT_DISPENSER_URL
+    backoff_key = _dispenser_backoff_key(url, proxy)
+    remaining = _dispenser_backoff_remaining(backoff_key)
+    if remaining is not None:
+        # Treated as the 429 it repeats, without sending anything.
+        logger.warning(
+            "Dispenser returned HTTP 429 earlier; backing off for %ds.", remaining
+        )
+        if raise_on_error:
+            raise DispenserRateLimitedError(remaining)
+        return None
     headers = {
         "User-Agent": "com.aurora.store-4.6.1-70",
         "Content-Type": "application/json",
@@ -865,6 +879,8 @@ def _fetch_token_impl(
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("authToken"):
+                    with _dispenser_backoff_lock:
+                        _dispenser_backoff.pop(backoff_key, None)
                     logger.info("Authenticated with profile: %s", device)
                     data["_device_profile"] = device
                     return data
@@ -874,12 +890,12 @@ def _fetch_token_impl(
                     "Dispenser returned HTTP %s for %s", resp.status_code, device
                 )
                 if resp.status_code == 429:
-                    if raise_on_error:
-                        from goopdl.api import _parse_retry_after  # api imports auth
+                    from goopdl.api import _parse_retry_after  # api imports auth
 
-                        raise DispenserRateLimitedError(
-                            _parse_retry_after(resp.headers)
-                        )
+                    retry_after = _parse_retry_after(resp.headers)
+                    _dispenser_backoff_start(backoff_key, retry_after)
+                    if raise_on_error:
+                        raise DispenserRateLimitedError(retry_after)
                     return None
             if profile:
                 break  # rejection is profile-specific, not a transient outage
@@ -905,6 +921,57 @@ def _fetch_token_impl(
     if raise_on_error:
         raise DispenserUnavailableError(last_status, reason=last_reason)
     return None
+
+
+# ── dispenser 429 backoff (in memory, per process) ────────────────────────────
+# After a dispenser 429, fetch_token sends nothing to that dispenser+proxy
+# until the window ends: it answers as if the 429 repeated (retry_after = the
+# seconds left). The window is Retry-After capped at _DISPENSER_BACKOFF_MAX,
+# or _DISPENSER_BACKOFF_DEFAULT without a usable header (a heuristic: the
+# dispenser does not say how long its limit lasts).
+_DISPENSER_BACKOFF_DEFAULT = 60.0
+_DISPENSER_BACKOFF_MAX = 900.0
+# ponytail: unbounded; one entry per dispenser URL x proxy seen in a 429 window
+# (expired ones are purged on lookup). Add an LRU if proxies rotate per call.
+_dispenser_backoff: dict[str, float] = {}  # key hash -> time.monotonic() deadline
+_dispenser_backoff_lock = threading.Lock()
+
+
+def _dispenser_backoff_key(url: str, proxy: Optional[str]) -> str:
+    """A hash, so neither the proxy nor its password is kept in the dict."""
+    return hashlib.sha256(f"{url}\0{proxy or ''}".encode()).hexdigest()
+
+
+def _dispenser_backoff_start(key: str, retry_after: Optional[float]) -> None:
+    seconds = min(retry_after or _DISPENSER_BACKOFF_DEFAULT, _DISPENSER_BACKOFF_MAX)
+    with _dispenser_backoff_lock:
+        _dispenser_backoff[key] = time.monotonic() + seconds
+
+
+def _dispenser_backoff_remaining(key: str) -> Optional[float]:
+    """Whole seconds left in *key*'s window (at least 1), or None."""
+    now = time.monotonic()
+    with _dispenser_backoff_lock:
+        for stale in [k for k, end in _dispenser_backoff.items() if end <= now]:
+            del _dispenser_backoff[stale]
+        end = _dispenser_backoff.get(key)
+    return None if end is None else float(math.ceil(end - now))
+
+
+def _reset_dispenser_backoff() -> None:
+    """Forget every dispenser backoff window (clear_auth, tests)."""
+    with _dispenser_backoff_lock:
+        _dispenser_backoff.clear()
+
+
+def _reset_dispenser_backoff_after_fork() -> None:
+    global _dispenser_backoff_lock
+    _dispenser_backoff.clear()
+    _dispenser_backoff_lock = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):  # a child must not inherit a held lock
+    os.register_at_fork(after_in_child=_reset_dispenser_backoff_after_fork)
 
 
 _MAX_TOKEN_AGE = 50 * 60  # 50 minutes — refresh before the ~1h Google expiry

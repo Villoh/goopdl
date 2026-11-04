@@ -356,6 +356,19 @@ can't top it up (HTTP 429 or an outage), the valid tokens left still serve
 the call. Tokens are dropped after 50 minutes. The pool is explained in
 [how it works](how-it-works.md#token-pool).
 
+After a dispenser HTTP 429, the process stops asking that dispenser (the same
+`dispenser_url` and `proxy`) until the server's `Retry-After` has passed,
+capped at 15 minutes, or for 60 seconds without a usable header. The 60 seconds
+are a heuristic: the dispenser doesn't say how long its limit lasts. Inside
+that window the token functions send nothing and act as if the dispenser had
+answered 429 again: valid pool tokens keep serving calls without a refill,
+and with none left you get `DispenserRateLimitedError` (`RateLimitedError`
+from `Client`, `fetch_app_item`, and `download_app`) with `retry_after` set to
+the seconds left, rounded up. The window lives in this process's memory only:
+it isn't saved, and other processes don't see it. `auth.clear_auth()` and
+`clear_cache()` on a `Client` without credentials forget it. Account mode
+doesn't use the dispenser, so it has no window.
+
 The cache directory is resolved on every call by `auth.get_config_dir()`:
 
 1. Inside a `Client` call, its `config_dir` if set
@@ -640,7 +653,9 @@ errors from [errors](#errors) instead. Use `raise_on_error=True` in services:
 `fetch_token(dispenser_url=None, arch="arm64", proxy=None, country=None, profile=None, raise_on_error=False, *, cooldown_retry=True) -> dict | None`
 
 One fresh token, not cached. Each call is a dispenser request (Aurora allows
-about 20 per hour), so prefer `pick_pool_token`.
+about 20 per hour), so prefer `pick_pool_token`. Inside a
+[429 window](#token-pool-and-cache) it sends nothing: it returns `None`, or
+raises `DispenserRateLimitedError` with `raise_on_error=True`.
 
 ```python
 fresh = auth.fetch_token(arch="arm64", country="US", raise_on_error=True)
@@ -968,7 +983,7 @@ below.
 | `AppNotPurchasedError` | `get_delivery` | Paid app, or not offered in the region | No |
 | `MalformedResponseError` | `api` parsers | Undecodable protobuf | Not with another token |
 | `PlayAPIError` | All of `api` | Any other HTTP status (`.status_code`); no token in `fetch_app_item` / `download_app` | 5xx later, others no |
-| `DispenserRateLimitedError` | Token functions with `raise_on_error=True`; `replace_pool_token` even without it. Pool functions raise it only when no valid pool token is left. `fetch_app_item` and `download_app` wrap it in `RateLimitedError` | Dispenser HTTP 429 | Only after `retry_after` |
+| `DispenserRateLimitedError` | Token functions with `raise_on_error=True`; `replace_pool_token` even without it. Pool functions raise it only when no valid pool token is left. `fetch_app_item` and `download_app` wrap it in `RateLimitedError` | Dispenser HTTP 429, or a call inside the [window](#token-pool-and-cache) a 429 opened, with no request; then `retry_after` is the time left | Only after `retry_after` |
 | `DispenserUnavailableError` | Token functions with `raise_on_error=True` | `.reason`: `transport`, `server` (5xx), or `profile_rejected` | `transport`/`server` later; `profile_rejected` with another profile |
 | `DirectAuthError` | Token functions in account mode with `raise_on_error=True` | Sign-in failed at `.stage` (`checkin`, `device config upload`, `token exchange`) with `.status`. A 429 on the optional `toc` call is not an error: the token comes without `dfeCookie` and a warning is logged | 429 after `.retry_after`; transport/5xx later; not 400/401/403 |
 | `PoolBusyError` | Pool functions with `raise_on_error=True`; `download_app` always | Pool lock not acquired in 180 s | Later |
@@ -1021,7 +1036,9 @@ details = call_with_backoff(api.get_details, package, token)
 ```
 
 It works for `fetch_app_item` and `download_app` too: they report every 429,
-the dispenser's included, as `RateLimitedError`. `DispenserRateLimitedError`
+the dispenser's included, as `RateLimitedError`. Inside the dispenser's
+[429 window](#token-pool-and-cache), `retry_after` is the time left, so
+sleeping that long is enough. `DispenserRateLimitedError`
 only reaches you from the token functions in `goopdl.auth`.
 
 For downloads, `DownloadError` tells you what to do. A 403 means the signed

@@ -311,7 +311,7 @@ explica cada modo paso a paso.
 | `2` | Entrada o configuración no válida, como definir solo una de las variables de la cuenta de Google |
 | `3` | Falló la autenticación: el dispensador rechazó todos los perfiles de dispositivo, está caído o no responde, o falló el inicio de sesión con la cuenta de Google. `download` también termina con `3` cuando el pool de tokens está ocupado |
 | `4` | Versión no disponible (HTTP 404 o confirmada como no disponible) |
-| `5` | Límite de peticiones (HTTP 429): de Google Play tras los reintentos en `download`, `fast-download`, `latest` e `inspect-delivery`, o del dispensador de tokens cuando no queda ningún token válido en el pool, o del inicio de sesión con la cuenta de Google |
+| `5` | Límite de peticiones (HTTP 429): de Google Play tras los reintentos en `download`, `fast-download`, `latest` e `inspect-delivery`, o del dispensador de tokens cuando no queda ningún token válido en el pool (tras un 429 del dispensador, las siguientes peticiones de tokens del mismo comando fallan al momento, [sin volver a preguntarle](how-it-works.md#pool-de-tokens)), o del inicio de sesión con la cuenta de Google |
 
 Si el dispensador responde pero rechaza todos los perfiles, goopdl muestra
 `Authentication failed — all profiles rejected (last dispenser response: …)`

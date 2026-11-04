@@ -34,6 +34,7 @@ class AuthSecretsTest(unittest.TestCase):
         environment = isolated_env({"GOOPDL_CONFIG_DIR": directory.name})
         environment.start()
         self.addCleanup(environment.stop)
+        self.addCleanup(auth._reset_dispenser_backoff)  # in-memory 429 window
         sleeper = patch("time.sleep")
         sleeper.start()
         self.addCleanup(sleeper.stop)
@@ -455,6 +456,7 @@ class AuthSecretsTest(unittest.TestCase):
                     cli, "get_details", side_effect=api.AppNotSupportedError("no")
                 ),
             ):
+                auth._reset_dispenser_backoff()  # each subtest starts with no 429 window
                 result = CliRunner().invoke(
                     cli.app, ["inspect-delivery", "com.example.pkg", "--version", "1"]
                 )
@@ -471,6 +473,7 @@ class AuthSecretsTest(unittest.TestCase):
                 patch.object(httpx, "post", side_effect=[response] * 20) as post,
                 patch.object(cli.time, "sleep"),
             ):
+                auth._reset_dispenser_backoff()  # each subtest starts with no 429 window
                 error = capture_failure(
                     lambda: cli._resolve_version_string(
                         "com.example.pkg", "1.2", "arm64", None, None, None, "Pv"
@@ -495,6 +498,7 @@ class AuthSecretsTest(unittest.TestCase):
                     create=True,
                 ),
             ):
+                auth._reset_dispenser_backoff()  # each subtest starts with no 429 window
                 result = CliRunner().invoke(cli.app, ["latest", "com.example.pkg"])
                 self.assertEqual(result.exit_code, code, result.output)
                 self.assertEqual(post.call_count, 1 if code == 5 else 2)
@@ -523,6 +527,7 @@ class AuthSecretsTest(unittest.TestCase):
                     side_effect=api.AuthExpiredError("expired"),
                 ),
             ):
+                auth._reset_dispenser_backoff()  # each subtest starts with no 429 window
                 result = CliRunner().invoke(cli.app, ["latest", "com.example.pkg"])
                 self.assertEqual(result.exit_code, code, result.output)
                 self.assertEqual(post.call_count, 1 if code == 5 else 6)

@@ -307,7 +307,7 @@ each mode.
 | `2` | Invalid input or configuration, such as only one Google account variable set |
 | `3` | Authentication failed: the dispenser rejected every device profile, is down or unreachable, or Google account sign-in failed. `download` also exits `3` when the token pool is busy |
 | `4` | Version unavailable (HTTP 404 or confirmed unavailable) |
-| `5` | Rate limited (HTTP 429): by Google Play after retries in `download`, `fast-download`, `latest`, and `inspect-delivery`, or by the token dispenser when no valid pool token is left, or by Google account sign-in |
+| `5` | Rate limited (HTTP 429): by Google Play after retries in `download`, `fast-download`, `latest`, and `inspect-delivery`, or by the token dispenser when no valid pool token is left (after a dispenser 429, later token requests in the same command fail at once, [without asking it again](how-it-works.md#token-pool)), or by Google account sign-in |
 
 When the dispenser answers but rejects every profile, goopdl prints
 `Authentication failed — all profiles rejected (last dispenser response: …)`

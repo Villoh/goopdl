@@ -52,6 +52,7 @@ class PartialPoolTest(unittest.TestCase):
         sleeper = patch("time.sleep")
         self.sleep = sleeper.start()
         self.addCleanup(sleeper.stop)
+        self.addCleanup(auth._reset_dispenser_backoff)  # in-memory 429 window
         self.assertTrue(str(auth.get_config_dir()).startswith(tempfile.gettempdir()))
 
     def request(self, url, **kwargs):
@@ -91,6 +92,7 @@ class PartialPoolTest(unittest.TestCase):
         for valid, expired in ((3, 0), (4, 0), (3, 2)):
             with self.subTest(valid=valid, expired=expired):
                 self.calls.clear()
+                auth._reset_dispenser_backoff()  # each subtest starts with no 429 window
                 self.seed(valid, expired=expired)
                 result = self.invoke("download", PACKAGE, "-o", str(self.output))
                 self.assertEqual(result.exit_code, 0, result.output)
@@ -119,17 +121,17 @@ class PartialPoolTest(unittest.TestCase):
         with self.assertRaises(auth.DispenserRateLimitedError) as raised:
             auth.ensure_pool(raise_on_error=True)
         self.assertEqual(raised.exception.retry_after, 120)
-        self.assertEqual(self.calls["dispenser"], 2)
+        self.assertEqual(self.calls["dispenser"], 1)  # inside the 429 window
         self.sleep.assert_not_called()
 
     def test_refill_429_is_not_retried_within_a_call(self):
         self.seed(3, "Pv")
-        for attempt in (1, 2):  # each call makes one refill attempt
+        for _ in range(2):  # one refill attempt, then the 429 window skips it
             pool = auth.ensure_pool(profile="Pv", raise_on_error=True)
             self.assertEqual([t["authToken"] for t in pool], ["T0", "T1", "T2"])
-            self.assertEqual(self.calls["dispenser"], attempt)
+            self.assertEqual(self.calls["dispenser"], 1)
         self.assertIsNotNone(auth.pick_pool_token(profile="Pv", raise_on_error=True))
-        self.assertEqual(self.calls["dispenser"], 3)
+        self.assertEqual(self.calls["dispenser"], 1)
         self.sleep.assert_not_called()
 
     def test_pinned_profile_partial_pool_skips_cooldown(self):
@@ -180,6 +182,7 @@ class PartialPoolTest(unittest.TestCase):
         for raise_on_error in (False, True):
             with self.subTest(raise_on_error=raise_on_error):
                 self.calls.clear()
+                auth._reset_dispenser_backoff()  # each subtest starts with no 429 window
                 failed, *survivors = self.seed(3, "Pv", expired=1)[1:]
                 token = auth.replace_pool_token(
                     failed, profile="Pv", raise_on_error=raise_on_error
@@ -209,12 +212,14 @@ class PartialPoolTest(unittest.TestCase):
         for command in (("info",), ("info", "--raw"), ("download", "-o", str(self.output))):
             with self.subTest(command=command):
                 self.calls.clear()
+                auth._reset_dispenser_backoff()  # each subtest starts with no 429 window
                 self.seed(3)
                 self.expire_first = True
                 result = self.invoke(command[0], PACKAGE, *command[1:])
                 self.assertEqual(result.exit_code, 0, result.output)
                 self.assertEqual(self.calls["details"], 2)  # 401, then a survivor
-                self.assertEqual(self.calls["dispenser"], 2)  # refill + replacement
+                # The refill's 429 opens the window: the replacement sends nothing.
+                self.assertEqual(self.calls["dispenser"], 1)
         self.calls.clear()
         self.seed(3)
         self.assertEqual(api.fetch_app_item(PACKAGE)["package_name"], PACKAGE)

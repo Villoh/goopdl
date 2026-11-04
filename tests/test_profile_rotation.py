@@ -29,6 +29,7 @@ class ProfileRotationTest(unittest.TestCase):
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
+        self.addCleanup(auth._reset_dispenser_backoff)  # in-memory 429 window
 
     @staticmethod
     def rejected(status):
@@ -221,6 +222,7 @@ class ProfileRotationTest(unittest.TestCase):
                     side_effect=[failure] * 19,
                 ) as post,
             ):
+                auth._reset_dispenser_backoff()  # each subtest starts with no 429 window
                 with self.assertRaises(expected) as raised:
                     auth.fetch_token(raise_on_error=True)
                 self.assertEqual(post.call_count, count)
@@ -263,6 +265,7 @@ class ProfileRotationTest(unittest.TestCase):
                 ),
                 patch.object(httpx, "post", side_effect=[failure] * 19) as post,
             ):
+                auth._reset_dispenser_backoff()  # each subtest starts with no 429 window
                 result = self.download()
                 self.assertEqual(result.exit_code, code, result.output)
                 self.assertEqual(post.call_count, 1 if code == 5 else 2)
