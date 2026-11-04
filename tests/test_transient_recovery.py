@@ -1,5 +1,4 @@
 """Hermetic HTTP-level regressions against the original main (c6e5f1c)."""
-import os
 import tempfile
 import unittest
 from collections import Counter
@@ -9,6 +8,7 @@ from unittest.mock import patch
 import httpx
 from typer.testing import CliRunner
 
+from _envutil import isolated_env
 from goopdl import api, auth, cli
 
 PACKAGE = "com.example.pkg"
@@ -49,7 +49,7 @@ class TransientRecoveryTest(unittest.TestCase):
         self.expire_first = False
         self.details_status = 200
         for patcher in (
-            patch.dict(os.environ, {}, clear=True),
+            isolated_env(),
             patch.object(auth, "_CONFIG_DIR", Path(directory.name) / "cache", create=True),
             patch.object(httpx, "post", side_effect=lambda *a, **k: self.request("POST", *a, **k)),
             patch.object(httpx, "get", side_effect=lambda *a, **k: self.request("GET", *a, **k)),

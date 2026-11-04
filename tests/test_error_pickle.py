@@ -1,11 +1,10 @@
 """Public errors must survive process boundaries without losing metadata."""
 import multiprocessing
-import os
 import pickle
 import unittest
 from concurrent.futures import ProcessPoolExecutor
-from unittest.mock import patch
 
+from _envutil import isolated_env
 from goopdl import errors
 
 
@@ -13,7 +12,7 @@ def worker_error():
     return errors.DispenserUnavailableError(503, reason="server")
 
 
-@patch.dict(os.environ, {}, clear=True)
+@isolated_env()
 class PublicErrorPickleTest(unittest.TestCase):
     def test_all_public_errors_round_trip_with_attributes(self):
         special = {

@@ -1,5 +1,4 @@
 """An invisible app is not an unavailable requested version (gold: exit 1)."""
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,13 +7,14 @@ from unittest.mock import patch
 import httpx
 from typer.testing import CliRunner
 
+from _envutil import isolated_env
 from goopdl import auth, cli
 
 
 class DownloadNotFoundTest(unittest.TestCase):
     def test_persistent_details_404_preserves_gold_counts_and_exit(self):
         with (
-            patch.dict(os.environ, {}, clear=True),
+            isolated_env(),
             tempfile.TemporaryDirectory() as directory,
             patch.object(auth, "_CONFIG_DIR", Path(directory) / "cache", create=True),
             patch.object(httpx, "post", return_value=httpx.Response(
