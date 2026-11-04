@@ -11,8 +11,9 @@ underscore names) is internal and can change without notice.
 
 - Python 3.10 or newer.
 - `pip install goopdl` installs four dependencies, all required today:
-  `httpx`, `typer`, `rich`, and `websocket-client`. See
-  [installation](installation.md#as-a-library) for pinning.
+  `httpx>=0.27`, `typer>=0.16`, `rich>=13`, and `websocket-client>=1.8`.
+  The `typer` minimum went up from 0.9: if you pin `typer` yourself, pin 0.16
+  or newer. See [installation](installation.md#as-a-library) for pinning.
 
 Importing `goopdl`, `goopdl.api`, `goopdl.auth`, `goopdl.download`, or
 `goopdl.errors` does not import `rich`, `typer`, or `websocket-client`, prints
@@ -261,6 +262,21 @@ item = api.fetch_app_item("com.whatsapp", country="US")
 print(item.get("title"), item.get("version"))
 ```
 
+It doesn't let dispenser errors through. If the dispenser answers HTTP 429
+while replacing an expired token, you get `RateLimitedError` with the same
+`retry_after`, and its `__cause__` is the `DispenserRateLimitedError`. Any
+other failure to get a token, a busy pool included, is a plain `PlayAPIError`.
+
+```python
+from goopdl.errors import RateLimitedError
+
+try:
+    item = api.fetch_app_item("com.whatsapp")
+except RateLimitedError as exc:
+    # Play's 429, or the dispenser's while replacing an expired token.
+    print("rate limited, retry after", exc.retry_after)
+```
+
 #### `search_apps`
 
 `search_apps(query, auth, limit=10, country=None, proxy=None) -> list[dict]`
@@ -364,6 +380,9 @@ apk, version = api.download_app("com.whatsapp", Path("apks"), no_splits=False)
 - Returns the base APK path and the version string, not the version code.
 - Uses `download_batch`, so it prints progress bars and raises `RuntimeError`
   inside a running event loop.
+- Raises any `GoopdlError`, not only `PlayAPIError`. A busy token pool raises
+  `PoolBusyError` (1.4.x raised `PlayAPIError`), and the CDN raises
+  `DownloadError` or `IntegrityError`. See [what raises what](#what-raises-what).
 
 #### `validate_package`
 
@@ -636,7 +655,8 @@ async def download(package: str):
   updates are written atomically.
 - The lock is held while missing tokens are minted. Other callers for the same
   pool wait up to 180 seconds, then get `None` (or `PoolBusyError` with
-  `raise_on_error=True`).
+  `raise_on_error=True`). `download_app` raises `PoolBusyError`;
+  `fetch_app_item` raises `PlayAPIError`.
 - The locks are OS file locks on a local disk. Don't share the cache directory
   over NFS or between hosts.
 - `max_concurrent` applies per `download_files` call. Across requests, limit
@@ -663,7 +683,8 @@ GOOPDL_CONFIG_DIR=/var/lib/goopdl/tenant-b python worker.py
 
 Every goopdl exception derives from `GoopdlError`. Import them from
 `goopdl.errors` (or `goopdl`). Importing that module doesn't load httpx; each
-class loads its own module on first access.
+class loads its own module on first access. `dir(goopdl)` and tab completion
+list them too.
 
 ```text
 GoopdlError
@@ -701,26 +722,33 @@ below.
 | Error | Raised by | When | Retry? |
 | ----- | --------- | ---- | ------ |
 | `InvalidPackageError` | `api` functions that take a package | Malformed application ID, before any request | No |
-| `InvalidArchError` | Pool and cache functions, `download_app` | `arch` not in `VALID_ARCHS` | No |
+| `InvalidArchError` | Pool and cache functions, `download_app`, `fetch_app_item` | `arch` not in `VALID_ARCHS` | No |
 | `DirectAuthConfigurationError` | Every token function | Account mode half-configured | No, fix the environment |
 | `NetworkError` | Google Play calls in `api` | Timeout, DNS, refused or dropped connection | Yes, with backoff |
 | `AuthExpiredError` | `get_details*`, `search_apps`, `list_splits`, `purchase`, `get_delivery` | HTTP 401 | Once, after `replace_pool_token` |
-| `RateLimitedError` | Same, plus `fetch_app_item` and `download_app` | HTTP 429 from Play (`get_delivery` already retried twice). In `download_app`, also a dispenser or account-mode 429 | Only after `retry_after`; stop if it is `None` |
+| `RateLimitedError` | Same, plus `fetch_app_item` and `download_app` | HTTP 429 from Play (`get_delivery` already retried twice). In `download_app`, also a dispenser or account-mode 429; in `fetch_app_item`, a dispenser 429 while replacing an expired token. For the dispenser's, `__cause__` is the `DispenserRateLimitedError` | Only after `retry_after`; stop if it is `None` |
 | `AppNotAvailableError` | `get_details`, `get_details_raw`, `fetch_app_item` | HTTP 404, or no document for this device | Not with the same profile and country |
 | `VersionUnavailableError` | `get_delivery` | HTTP 404, or no download URL | No |
 | `AppNotSupportedError` | `get_delivery` | The profile can't receive this version | With another profile or arch |
 | `AppNotPurchasedError` | `get_delivery` | Paid app, or not offered in the region | No |
 | `MalformedResponseError` | `api` parsers | Undecodable protobuf | Not with another token |
 | `PlayAPIError` | All of `api` | Any other HTTP status (`.status_code`); no token in `fetch_app_item` / `download_app` | 5xx later, others no |
-| `DispenserRateLimitedError` | Token functions with `raise_on_error=True`; `replace_pool_token` always (so also `fetch_app_item` after a 401) | Dispenser HTTP 429 | Only after `retry_after` |
+| `DispenserRateLimitedError` | Token functions with `raise_on_error=True`; `replace_pool_token` always. `fetch_app_item` and `download_app` wrap it in `RateLimitedError` | Dispenser HTTP 429 | Only after `retry_after` |
 | `DispenserUnavailableError` | Token functions with `raise_on_error=True` | `.reason`: `transport`, `server` (5xx), or `profile_rejected` | `transport`/`server` later; `profile_rejected` with another profile |
-| `DirectAuthError` | Token functions in account mode with `raise_on_error=True` | Sign-in failed at `.stage` with `.status` | Transport/5xx later; not 400/401/403 |
-| `PoolBusyError` | Pool functions with `raise_on_error=True` | Pool lock not acquired in 180 s | Later |
+| `DirectAuthError` | Token functions in account mode with `raise_on_error=True` | Sign-in failed at `.stage` (`checkin`, `device config upload`, `token exchange`) with `.status`. A 429 on the optional `toc` call is not an error: the token comes without `dfeCookie` and a warning is logged | 429 after `.retry_after`; transport/5xx later; not 400/401/403 |
+| `PoolBusyError` | Pool functions with `raise_on_error=True`; `download_app` always | Pool lock not acquired in 180 s | Later |
 | `IntegrityError` | `download_files`, `download_batch`, `write_manifest` | Missing metadata, size or digest mismatch | No |
-| `DownloadError` | `download_files`, `download_batch` | CDN HTTP or transport failure | If `.retryable`; on 403 request a new delivery |
+| `DownloadError` | `download_files`, `download_batch` | CDN HTTP or transport failure, or a malformed redirect `Location` (never retryable) | If `.retryable`; on 403 request a new delivery |
 
-`download_app` turns dispenser failures into `PlayAPIError` (outage, with
-`status_code`) or `RateLimitedError` (429, the original as `__cause__`).
+`download_app` and `fetch_app_item` don't let dispenser errors through. A 429
+becomes `RateLimitedError` with the same `retry_after` and the original as
+`__cause__`. In `download_app` a dispenser outage becomes `PlayAPIError` with
+`status_code`; in `fetch_app_item` any other failure to get a token is a
+`PlayAPIError`. Not everything they raise is a `PlayAPIError`, though:
+`download_app` can also raise `PoolBusyError`, `DownloadError`,
+`IntegrityError`, `InvalidPackageError`, `InvalidArchError`, and
+`DirectAuthConfigurationError`, and `fetch_app_item` the last three. End with
+`except GoopdlError`.
 
 Also expect `ValueError` from `download_files` (bad `max_concurrent`),
 `RuntimeError` from `download_batch` in an event loop, `OSError` from your
@@ -756,6 +784,10 @@ def call_with_backoff(fn, *args, attempts=3, max_wait=60.0, **kwargs):
 
 details = call_with_backoff(api.get_details, package, token)
 ```
+
+It works for `fetch_app_item` and `download_app` too: they report every 429,
+the dispenser's included, as `RateLimitedError`. `DispenserRateLimitedError`
+only reaches you from the token functions in `goopdl.auth`.
 
 For downloads, `DownloadError` tells you what to do. A 403 means the signed
 URLs expired, so a new delivery is needed. Other retryable errors can reuse the
@@ -794,11 +826,20 @@ wrong: don't retry it blindly.
 
 - **Tokens are secrets.** Never log the `auth` dict, its `authToken`, or
   `DeliveryResult` URLs and cookies (the URLs are signed).
-- **Errors carry no secrets.** Public exception messages contain no tokens,
-  URLs, or cookies, and goopdl drops the tracebacks and chained exceptions
-  that held them. The limit is your own code: the `auth` dict you pass stays in
-  your stack frames. If your error reporter captures local variables (Sentry's
-  `include_local_variables`, for example), turn that off or scrub `authToken`.
+- **Errors carry no secrets, with one limit.** Public exception messages
+  contain no tokens, URLs, or cookies. When `download_app` or
+  `fetch_app_item` fail, the traceback holds only their own frame, with the
+  proxy cleared: no pool token, delivery token, or signed CDN URL. The only
+  chained exception kept is a sanitized goopdl `__cause__`, such as
+  `DispenserRateLimitedError`. `get_delivery` drops the delivery token, the
+  proxy, and the response before raising, and a half-configured account mode
+  raises `DirectAuthConfigurationError` without the email or AAS token in
+  any frame. What you pass in yourself stays, by design: the `auth` dict is
+  still in the frame of the function you gave it to (`get_details`,
+  `get_delivery`, …), and the `auth` dict and the proxy URL are still in your
+  own frames. If your error reporter captures local variables (Sentry's
+  `include_local_variables`, for example), turn that off or scrub `authToken`
+  and proxy credentials.
 - **Input validation.** Package names are checked by `validate_package` and
   architectures against `VALID_ARCHS` before they reach a URL or a file name.
   Country codes are reduced to letters and digits in cache file names.
@@ -817,8 +858,8 @@ wrong: don't retry it blindly.
 
 goopdl logs to the `goopdl` logger tree, with a `NullHandler` on `goopdl`, so
 it is silent until your application configures logging. It never logs tokens.
-Messages use INFO (pool refills, chosen profile), WARNING (dispenser failures),
-and ERROR. To see everything:
+Messages use INFO (pool refills, chosen profile), WARNING (dispenser failures,
+naming the device profile), and ERROR. To see everything:
 
 ```python
 import logging
@@ -842,6 +883,8 @@ behaviours changed:
 | Package names | Sent to Google as given | `InvalidPackageError` (a `ValueError`) if there is no dot or a bad character | Call `api.validate_package()` at your input boundary |
 | Unknown `arch` | Used in cache file names | `InvalidArchError` (a `ValueError`) | Check against `profiles.VALID_ARCHS` |
 | Cache directory | Always `~/.config/goopdl` | `auth.get_config_dir()`: `$GOOPDL_CONFIG_DIR`, `$XDG_CONFIG_HOME/goopdl`, `~/.config/goopdl` | `export GOOPDL_CONFIG_DIR=~/.config/goopdl` keeps old tokens |
+| `download_app` with a busy token pool | `PlayAPIError` | `PoolBusyError` (a `TimeoutError`, not a `PlayAPIError`) | `except PoolBusyError`, or end with `except GoopdlError` |
+| `typer` dependency | `typer>=0.9` | `typer>=0.16` | Raise your pin if it is lower |
 | CDN failures | `IntegrityError("download failed …")` | `DownloadError`, a subclass of `IntegrityError` | `except DownloadError` before `except IntegrityError` |
 | Transport failures in `api` | Raw httpx exceptions (`httpx.ConnectError`, …) | `NetworkError`, still an `httpx.TransportError` | `except NetworkError`; handlers for specific httpx subclasses no longer match |
 | `purchase` on HTTP 429 | Returned `""` | Raises `RateLimitedError` (401 already raised `AuthExpiredError`) | Handle it like any other 429 |
@@ -852,7 +895,7 @@ behaviours changed:
 
 New and backwards compatible: the `GoopdlError` base, `raise_on_error` on the
 token functions, `download_files`, and `RateLimitedError` from `download_app`
-where 1.4.x raised a plain `PlayAPIError`.
+and `fetch_app_item` where 1.4.x raised a plain `PlayAPIError`.
 
 ## Troubleshooting
 
