@@ -153,8 +153,10 @@ Details:
 - `download` raises `RuntimeError` inside a running event loop: await
   `adownload` there.
 - Failures raise the same `GoopdlError` subclasses as the functions; no method
-  returns `None` on failure. Token errors are translated like in
-  `download_app`: a dispenser 429 is a `RateLimitedError` with its
+  returns `None` on failure. Valid pool tokens keep serving calls while the
+  dispenser answers HTTP 429. Token errors are translated like in
+  `download_app`: a dispenser 429 with no valid pool token left is a
+  `RateLimitedError` with its
   `retry_after` (the `DispenserRateLimitedError` is the `__cause__`), a
   dispenser outage or failed sign-in a `PlayAPIError`. A busy pool raises
   `PoolBusyError`, except in `item`, which follows `fetch_app_item`.
@@ -349,8 +351,9 @@ and sanitized `httpx` errors on HTTP or transport failures.
 
 `pick_pool_token` keeps a pool of anonymous tokens per architecture, country,
 and pinned profile, and hands them out round-robin. It requests only the
-missing tokens, and a full pool makes no network calls. Tokens are dropped
-after 50 minutes. The pool is explained in
+missing tokens, and a full pool makes no network calls. If the dispenser
+can't top it up (HTTP 429 or an outage), the valid tokens left still serve
+the call. Tokens are dropped after 50 minutes. The pool is explained in
 [how it works](how-it-works.md#token-pool).
 
 The cache directory is resolved on every call by `auth.get_config_dir()`:
@@ -485,7 +488,8 @@ print(item.get("title"), item.get("version"))
 ```
 
 It doesn't let dispenser errors through. If the dispenser answers HTTP 429
-while replacing an expired token, you get `RateLimitedError` with the same
+while replacing an expired token and no other valid pool token is left, you
+get `RateLimitedError` with the same
 `retry_after`, and its `__cause__` is the `DispenserRateLimitedError`. Any
 other failure to get a token, a busy pool included, is a plain `PlayAPIError`.
 
@@ -495,7 +499,7 @@ from goopdl.errors import RateLimitedError
 try:
     item = api.fetch_app_item("com.whatsapp")
 except RateLimitedError as exc:
-    # Play's 429, or the dispenser's while replacing an expired token.
+    # Play's 429, or the dispenser's with no valid pool token left.
     print("rate limited, retry after", exc.retry_after)
 ```
 
@@ -651,7 +655,9 @@ after 5 seconds on transport/5xx failures, unless `cooldown_retry=False`.
 `pick_pool_token(arch="arm64", country=None, proxy=None, dispenser_url=None, profile=None, size=5, raise_on_error=False) -> dict | None`
 
 Fills the pool up to `size` valid tokens, then returns the next one
-round-robin. Used in the [quick start](#step-by-step). It can return `None`
+round-robin. If the dispenser stops issuing tokens (HTTP 429 included), it
+uses the valid ones it has; `raise_on_error=True` raises only when none is
+left. Used in the [quick start](#step-by-step). It can return `None`
 even with `raise_on_error=True` (unknown profile, unusable cache directory), so
 check the result.
 
@@ -660,7 +666,9 @@ check the result.
 `ensure_pool(arch="arm64", country=None, proxy=None, dispenser_url=None, profile=None, size=5, raise_on_error=False) -> list[dict]`
 
 Warms the pool without picking a token, for example at worker start-up. It may
-return fewer than `size` tokens if the dispenser stops issuing them.
+return fewer than `size` tokens if the dispenser stops issuing them (HTTP 429
+included). With `raise_on_error=True` it raises only when no valid token is
+left.
 
 ```python
 tokens = auth.ensure_pool(arch="arm64", size=5, raise_on_error=True)
@@ -674,8 +682,9 @@ print(len(tokens))
 Call it after `AuthExpiredError`, with the same `arch`, `country`, and
 `profile` you picked the token with. It removes the dead token and returns a
 fresh one. If the replacement fails it returns a surviving pool member (or
-`None`). HTTP 429 from the dispenser always raises `DispenserRateLimitedError`,
-even without `raise_on_error`.
+`None`). On a dispenser HTTP 429 it returns a surviving member too, even with
+`raise_on_error=True`. Only when no valid token is left does it raise
+`DispenserRateLimitedError`, even without `raise_on_error`.
 
 ```python
 from goopdl.errors import AuthExpiredError
@@ -952,14 +961,14 @@ below.
 | `DirectAuthConfigurationError` | Every token function, `Credentials`, `Credentials.from_env` | Account mode half-configured | No, fix the environment or the values |
 | `NetworkError` | Google Play calls in `api` | Timeout, DNS, refused or dropped connection | Yes, with backoff |
 | `AuthExpiredError` | `get_details*`, `search_apps`, `list_splits`, `purchase`, `get_delivery` | HTTP 401 | Once, after `replace_pool_token` |
-| `RateLimitedError` | Same, plus `fetch_app_item` and `download_app` | HTTP 429 from Play (`get_delivery` already retried twice). In `download_app`, also a dispenser or account-mode 429; in `fetch_app_item`, a dispenser 429 while replacing an expired token. For the dispenser's, `__cause__` is the `DispenserRateLimitedError` | Only after `retry_after`; stop if it is `None` |
+| `RateLimitedError` | Same, plus `fetch_app_item` and `download_app` | HTTP 429 from Play (`get_delivery` already retried twice). In `download_app`, also a dispenser or account-mode 429; in `fetch_app_item`, a dispenser 429 while replacing an expired token with no valid pool token left. For the dispenser's, `__cause__` is the `DispenserRateLimitedError` | Only after `retry_after`; stop if it is `None` |
 | `AppNotAvailableError` | `get_details`, `get_details_raw`, `fetch_app_item` | HTTP 404, or no document for this device | Not with the same profile and country |
 | `VersionUnavailableError` | `get_delivery` | HTTP 404, or no download URL | No |
 | `AppNotSupportedError` | `get_delivery` | The profile can't receive this version | With another profile or arch |
 | `AppNotPurchasedError` | `get_delivery` | Paid app, or not offered in the region | No |
 | `MalformedResponseError` | `api` parsers | Undecodable protobuf | Not with another token |
 | `PlayAPIError` | All of `api` | Any other HTTP status (`.status_code`); no token in `fetch_app_item` / `download_app` | 5xx later, others no |
-| `DispenserRateLimitedError` | Token functions with `raise_on_error=True`; `replace_pool_token` always. `fetch_app_item` and `download_app` wrap it in `RateLimitedError` | Dispenser HTTP 429 | Only after `retry_after` |
+| `DispenserRateLimitedError` | Token functions with `raise_on_error=True`; `replace_pool_token` even without it. Pool functions raise it only when no valid pool token is left. `fetch_app_item` and `download_app` wrap it in `RateLimitedError` | Dispenser HTTP 429 | Only after `retry_after` |
 | `DispenserUnavailableError` | Token functions with `raise_on_error=True` | `.reason`: `transport`, `server` (5xx), or `profile_rejected` | `transport`/`server` later; `profile_rejected` with another profile |
 | `DirectAuthError` | Token functions in account mode with `raise_on_error=True` | Sign-in failed at `.stage` (`checkin`, `device config upload`, `token exchange`) with `.status`. A 429 on the optional `toc` call is not an error: the token comes without `dfeCookie` and a warning is logged | 429 after `.retry_after`; transport/5xx later; not 400/401/403 |
 | `PoolBusyError` | Pool functions with `raise_on_error=True`; `download_app` always | Pool lock not acquired in 180 s | Later |

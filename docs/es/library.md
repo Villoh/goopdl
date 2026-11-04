@@ -154,8 +154,10 @@ Detalles:
 - `download` lanza `RuntimeError` dentro de un event loop en marcha: ahí haz
   `await` de `adownload`.
 - Los fallos lanzan las mismas subclases de `GoopdlError` que las funciones;
-  ningún método devuelve `None` por un fallo. Los errores de token se traducen
-  como en `download_app`: un 429 del dispensador es un `RateLimitedError` con
+  ningún método devuelve `None` por un fallo. Los tokens válidos del pool
+  siguen sirviendo las llamadas mientras el dispensador responde HTTP 429. Los
+  errores de token se traducen como en `download_app`: un 429 del dispensador
+  sin ningún token válido en el pool es un `RateLimitedError` con
   su `retry_after` (el `DispenserRateLimitedError` queda como `__cause__`), y
   una caída del dispensador o un inicio de sesión fallido, un `PlayAPIError`.
   Un pool ocupado lanza `PoolBusyError`, salvo en `item`, que se comporta como
@@ -355,8 +357,10 @@ credenciales, y errores de `httpx` saneados ante fallos HTTP o de transporte.
 
 `pick_pool_token` mantiene un pool de tokens anónimos por arquitectura, país y
 perfil fijado, y los reparte por turnos (round-robin). Solo pide los tokens que
-faltan, y con el pool lleno no hace ninguna llamada de red. Los tokens se
-descartan a los 50 minutos. El pool se explica en
+faltan, y con el pool lleno no hace ninguna llamada de red. Si el dispensador
+no puede completarlo (HTTP 429 o una caída), los tokens válidos que quedan
+siguen sirviendo la llamada. Los tokens se descartan a los 50 minutos. El pool
+se explica en
 [cómo funciona](how-it-works.md#pool-de-tokens).
 
 `auth.get_config_dir()` resuelve el directorio de caché en cada llamada:
@@ -497,7 +501,8 @@ print(item.get("title"), item.get("version"))
 ```
 
 No deja pasar los errores del dispensador. Si el dispensador responde con un
-HTTP 429 al sustituir un token caducado, recibes un `RateLimitedError` con el
+HTTP 429 al sustituir un token caducado y no queda ningún otro token válido en
+el pool, recibes un `RateLimitedError` con el
 mismo `retry_after`, y su `__cause__` es el `DispenserRateLimitedError`.
 Cualquier otro fallo al conseguir un token, incluido un pool ocupado, es un
 `PlayAPIError` normal.
@@ -508,7 +513,7 @@ from goopdl.errors import RateLimitedError
 try:
     item = api.fetch_app_item("com.whatsapp")
 except RateLimitedError as exc:
-    # El 429 de Play, o el del dispensador al sustituir un token caducado.
+    # El 429 de Play, o el del dispensador sin tokens válidos en el pool.
     print("rate limited, retry after", exc.retry_after)
 ```
 
@@ -670,6 +675,8 @@ tras 5 segundos ante fallos de transporte o 5xx, salvo con
 `pick_pool_token(arch="arm64", country=None, proxy=None, dispenser_url=None, profile=None, size=5, raise_on_error=False) -> dict | None`
 
 Llena el pool hasta `size` tokens válidos y devuelve el siguiente por turno.
+Si el dispensador deja de emitir tokens (HTTP 429 incluido), usa los válidos
+que tiene; con `raise_on_error=True` solo lanza el error si no queda ninguno.
 Se usa en el [inicio rápido](#paso-a-paso). Puede devolver `None` incluso con
 `raise_on_error=True` (perfil desconocido, directorio de caché inutilizable),
 así que comprueba el resultado.
@@ -679,7 +686,9 @@ así que comprueba el resultado.
 `ensure_pool(arch="arm64", country=None, proxy=None, dispenser_url=None, profile=None, size=5, raise_on_error=False) -> list[dict]`
 
 Calienta el pool sin coger ningún token, por ejemplo al arrancar un worker.
-Puede devolver menos de `size` tokens si el dispensador deja de emitirlos.
+Puede devolver menos de `size` tokens si el dispensador deja de emitirlos
+(HTTP 429 incluido). Con `raise_on_error=True` solo lanza el error si no queda
+ningún token válido.
 
 ```python
 tokens = auth.ensure_pool(arch="arm64", size=5, raise_on_error=True)
@@ -693,8 +702,9 @@ print(len(tokens))
 Llámala tras un `AuthExpiredError`, con los mismos `arch`, `country` y
 `profile` con los que cogiste el token. Quita el token muerto y devuelve uno
 nuevo. Si no consigue sustituirlo, devuelve otro token que siga en el pool (o
-`None`). Un HTTP 429 del dispensador siempre lanza
-`DispenserRateLimitedError`, incluso sin `raise_on_error`.
+`None`). Ante un HTTP 429 del dispensador también devuelve un token que siga en
+el pool, incluso con `raise_on_error=True`. Solo si no queda ninguno válido
+lanza `DispenserRateLimitedError`, incluso sin `raise_on_error`.
 
 ```python
 from goopdl.errors import AuthExpiredError
@@ -976,14 +986,14 @@ traducen algunos, mira abajo.
 | `DirectAuthConfigurationError` | Todas las funciones de tokens, `Credentials`, `Credentials.from_env` | Modo cuenta configurado a medias | No, arregla el entorno o los valores |
 | `NetworkError` | Llamadas a Google Play de `api` | Timeout, DNS, conexión rechazada o cortada | Sí, con espera creciente |
 | `AuthExpiredError` | `get_details*`, `search_apps`, `list_splits`, `purchase`, `get_delivery` | HTTP 401 | Una vez, tras `replace_pool_token` |
-| `RateLimitedError` | Las mismas, más `fetch_app_item` y `download_app` | HTTP 429 de Play (`get_delivery` ya reintentó dos veces). En `download_app`, también un 429 del dispensador o del modo cuenta; en `fetch_app_item`, un 429 del dispensador al sustituir un token caducado. Si viene del dispensador, `__cause__` es el `DispenserRateLimitedError` | Solo tras `retry_after`; para si es `None` |
+| `RateLimitedError` | Las mismas, más `fetch_app_item` y `download_app` | HTTP 429 de Play (`get_delivery` ya reintentó dos veces). En `download_app`, también un 429 del dispensador o del modo cuenta; en `fetch_app_item`, un 429 del dispensador al sustituir un token caducado sin ningún otro token válido en el pool. Si viene del dispensador, `__cause__` es el `DispenserRateLimitedError` | Solo tras `retry_after`; para si es `None` |
 | `AppNotAvailableError` | `get_details`, `get_details_raw`, `fetch_app_item` | HTTP 404, o no hay documento para este dispositivo | No con el mismo perfil y país |
 | `VersionUnavailableError` | `get_delivery` | HTTP 404, o no hay URL de descarga | No |
 | `AppNotSupportedError` | `get_delivery` | El perfil no puede recibir esta versión | Con otro perfil o arch |
 | `AppNotPurchasedError` | `get_delivery` | App de pago, o no disponible en la región | No |
 | `MalformedResponseError` | Parsers de `api` | Protobuf que no se puede decodificar | No con otro token |
 | `PlayAPIError` | Todo `api` | Cualquier otro estado HTTP (`.status_code`); sin token en `fetch_app_item` / `download_app` | 5xx más tarde; el resto no |
-| `DispenserRateLimitedError` | Funciones de tokens con `raise_on_error=True`; `replace_pool_token` siempre. `fetch_app_item` y `download_app` lo envuelven en `RateLimitedError` | HTTP 429 del dispensador | Solo tras `retry_after` |
+| `DispenserRateLimitedError` | Funciones de tokens con `raise_on_error=True`; `replace_pool_token` incluso sin él. Las funciones del pool solo lo lanzan si no queda ningún token válido. `fetch_app_item` y `download_app` lo envuelven en `RateLimitedError` | HTTP 429 del dispensador | Solo tras `retry_after` |
 | `DispenserUnavailableError` | Funciones de tokens con `raise_on_error=True` | `.reason`: `transport`, `server` (5xx) o `profile_rejected` | `transport`/`server` más tarde; `profile_rejected` con otro perfil |
 | `DirectAuthError` | Funciones de tokens en modo cuenta con `raise_on_error=True` | El inicio de sesión falló en `.stage` (`checkin`, `device config upload`, `token exchange`) con `.status`. Un 429 en la llamada opcional `toc` no es un error: el token llega sin `dfeCookie` y se registra un aviso | 429 tras `.retry_after`; transporte/5xx más tarde; 400/401/403 no |
 | `PoolBusyError` | Funciones del pool con `raise_on_error=True`; `download_app` siempre | No se obtuvo el bloqueo del pool en 180 s | Más tarde |
