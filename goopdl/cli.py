@@ -52,6 +52,7 @@ from goopdl.auth import (
     DirectAuthError,
     DispenserRateLimitedError,
     DispenserUnavailableError,
+    PoolBusyError,
     clear_auth,
     direct_auth_enabled,
     ensure_pool,
@@ -456,6 +457,8 @@ def latest(
             profile=profile_key,
             raise_on_error=True,
         )
+    except PoolBusyError:
+        _exit_pool_busy(1)
     except DispenserUnavailableError as exc:
         if exc.reason != "profile_rejected":
             _exit_token_error(exc)
@@ -490,6 +493,8 @@ def latest(
                     profile=profile_key,
                     raise_on_error=True,
                 )
+            except PoolBusyError:
+                new_token = None  # another process owns the pool; skip this probe
             except DirectAuthError as exc:
                 if exc.status == 429:
                     _exit_token_error(exc)
@@ -1071,6 +1076,8 @@ def _download_arch(
             profile=profile,
             raise_on_error=True,
         )
+    except PoolBusyError:
+        _exit_pool_busy(AUTH_UNAVAILABLE_EXIT_CODE)
     except DirectAuthError as exc:
         _exit_token_error(exc)
     if not auth_data:
@@ -1325,6 +1332,8 @@ def fast_download(
     except (IntegrityError, DownloadError) as exc:
         err.print(str(exc), style="red", markup=False)
         raise typer.Exit(code=1) from None
+    except PoolBusyError:
+        _exit_pool_busy(1)
     except RateLimitedError as exc:
         if isinstance(exc.__cause__, DispenserRateLimitedError):
             _exit_token_error(exc.__cause__)
@@ -1355,6 +1364,14 @@ def _exit_transient_play_error(exc: PlayAPIError) -> NoReturn:
         raise typer.Exit(code=RATE_LIMIT_EXIT_CODE) from None
     err.print(f"[red]{exc}[/red]")
     raise typer.Exit(code=1) from None
+
+
+def _exit_pool_busy(code: int) -> NoReturn:
+    err.print(
+        "[red]Token pool is busy (another goopdl process holds the lock); "
+        "retry later.[/red]"
+    )
+    raise typer.Exit(code=code) from None
 
 
 def _exit_token_error(exc: DirectAuthError) -> NoReturn:
