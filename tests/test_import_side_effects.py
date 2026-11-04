@@ -10,9 +10,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from _envutil import isolated_env
 from goopdl import auth
 
 ROOT = Path(__file__).resolve().parent.parent
+# Absolute on every OS ("/g" is not absolute on Windows).
+BASE = Path(tempfile.gettempdir()).resolve()
+G, X, H = (str(BASE / name) for name in ("g", "x", "h"))
 
 
 def run_isolated(code: str) -> subprocess.CompletedProcess:
@@ -20,6 +24,7 @@ def run_isolated(code: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True,
         timeout=60,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p)},
     )
 
 
@@ -84,26 +89,26 @@ class LazyProfilesTest(unittest.TestCase):
 
 class ConfigDirTest(unittest.TestCase):
     def test_resolution_order(self):
-        with patch.dict(os.environ, {"GOOPDL_CONFIG_DIR": "/g",
-                                     "XDG_CONFIG_HOME": "/x"}):
-            self.assertEqual(Path("/g"), auth.get_config_dir())
+        with patch.dict(os.environ, {"GOOPDL_CONFIG_DIR": G,
+                                     "XDG_CONFIG_HOME": X}):
+            self.assertEqual(Path(G), auth.get_config_dir())
         with patch.dict(os.environ, {"GOOPDL_CONFIG_DIR": "",
-                                     "XDG_CONFIG_HOME": "/x"}):
-            self.assertEqual(Path("/x/goopdl"), auth.get_config_dir())
-            self.assertEqual(Path("/x/goopdl"), auth._CONFIG_DIR)
+                                     "XDG_CONFIG_HOME": X}):
+            self.assertEqual(Path(X, "goopdl"), auth.get_config_dir())
+            self.assertEqual(Path(X, "goopdl"), auth._CONFIG_DIR)
         with (patch.dict(os.environ, {"GOOPDL_CONFIG_DIR": "",
                                       "XDG_CONFIG_HOME": "relative"}),
-              patch.object(Path, "home", return_value=Path("/h"))):
-            self.assertEqual(Path("/h/.config/goopdl"), auth.get_config_dir())
+              patch.object(Path, "home", return_value=Path(H))):
+            self.assertEqual(Path(H, ".config", "goopdl"), auth.get_config_dir())
 
     def test_goopdl_config_dir_expands_user_and_ignores_relative(self):
-        with patch.dict(os.environ, {"HOME": "/h", "GOOPDL_CONFIG_DIR": "~/g",
-                                     "XDG_CONFIG_HOME": "/x"}, clear=True):
-            self.assertEqual(Path("/h/g"), auth.get_config_dir())
-        with (patch.dict(os.environ, {"GOOPDL_CONFIG_DIR": "rel/g",
-                                      "XDG_CONFIG_HOME": "/x"}, clear=True),
+        # Windows expands "~" from USERPROFILE, POSIX from HOME.
+        with isolated_env({"HOME": H, "USERPROFILE": H, "GOOPDL_CONFIG_DIR": "~/g",
+                           "XDG_CONFIG_HOME": X}):
+            self.assertEqual(Path(H, "g"), auth.get_config_dir())
+        with (isolated_env({"GOOPDL_CONFIG_DIR": "rel/g", "XDG_CONFIG_HOME": X}),
               self.assertLogs("goopdl.auth", "WARNING") as logs):
-            self.assertEqual(Path("/x/goopdl"), auth.get_config_dir())
+            self.assertEqual(Path(X, "goopdl"), auth.get_config_dir())
         self.assertIn("rel/g", logs.output[0])
 
     @unittest.skipIf(os.name == "nt", "POSIX permission bits")
