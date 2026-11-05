@@ -21,7 +21,10 @@ from goopdl.download import IntegrityError
 
 class AuthExitCodeTest(unittest.TestCase):
     def setUp(self):
-        environment = isolated_env()
+        # An empty config dir: no account.json from `goopdl auth login`.
+        config = tempfile.TemporaryDirectory(dir=tempfile.gettempdir())
+        self.addCleanup(config.cleanup)
+        environment = isolated_env({"GOOPDL_CONFIG_DIR": config.name})
         environment.start()
         self.addCleanup(environment.stop)
 
