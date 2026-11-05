@@ -51,12 +51,19 @@ jobs:
       - run: uv run python -m unittest discover -s tests
       - run: uv run python -m compileall -q goopdl tests
 
-  # Same build and smoke test as the release binaries in publish.yml.
+  # The release binaries of publish.yml (same runners, Python and scripts), so
+  # a tag never meets a target that was not built before. Keep both in step.
   binary-smoke:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - {os: ubuntu-22.04, ext: ""}
+          - {os: ubuntu-22.04-arm, ext: ""}
+          - {os: macos-latest, ext: ""}
+          - {os: macos-15-intel, ext: ""}
+          - {os: windows-latest, ext: ".exe"}
+          - {os: windows-11-arm, ext: ".exe"}
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -67,10 +74,10 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
-          python-version: "3.13"
+          python-version: "3.12"
       - run: bash scripts/build_binary.sh
       - env:
-          EXT: ${{ runner.os == 'Windows' && '.exe' || '' }}
+          EXT: ${{ matrix.ext }}
         run: bash scripts/smoke_binary.sh "dist/goopdl${EXT}"
 
   nix:

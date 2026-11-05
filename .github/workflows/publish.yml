@@ -27,16 +27,20 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Set version from tag
+      # The version lives in the code. Publishing a tag that disagrees with it
+      # would put the old version on PyPI under the new tag.
+      - name: Check the tag matches the version in the code
         id: set_version
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
           VERSION="${INPUT_VERSION:-${GITHUB_REF_NAME#v}}"
-          sed -i "s/version = \"0.0.0\"/version = \"$VERSION\"/" pyproject.toml
-          sed -i \
-            "s/__version__ = \"0.0.0\"/__version__ = \"$VERSION\"/" \
-            goopdl/__init__.py
+          check() {  # check FILE VARIABLE
+            grep -qxF "$2 = \"$VERSION\"" "$1" ||
+              { echo "::error::$1 does not say version $VERSION"; exit 1; }
+          }
+          check pyproject.toml version
+          check goopdl/__init__.py __version__
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Install build tools
@@ -91,15 +95,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Set version from tag
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-        run: |
-          VERSION="${INPUT_VERSION:-${GITHUB_REF_NAME#v}}"
-          sed -i.bak \
-            "s/__version__ = \"0.0.0\"/__version__ = \"$VERSION\"/" \
-            goopdl/__init__.py
-
       - name: Build binary
         env:
           EXT: ${{ matrix.ext }}
@@ -121,7 +116,8 @@ jobs:
           path: goopdl-${{ matrix.target }}${{ matrix.ext }}
 
   publish:
-    needs: build
+    # PyPI never takes a version back: publish only once every binary is built.
+    needs: [build, binaries]
     runs-on: ubuntu-latest
     environment:
       name: pypi
