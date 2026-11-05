@@ -405,7 +405,7 @@ class Client:
                     max_concurrent)
 
     def clear_cache(self) -> None:
-        """Delete what this Client cached in its config_dir, like ``auth --clear``.
+        """Delete what this Client cached in its config_dir, like ``goopdl auth clear-cache``.
 
         Removes the anonymous token files and, in account mode, only this
         account's device record and in-memory session; without credentials,
