@@ -365,7 +365,8 @@ def _run_aastoken(email: str | None, password: str | None, oauth: bool, browser:
         err.print("[red]Invalid Google account credentials.[/red]")
         raise typer.Exit(code=1) from None
 
-    console.print("AASToken:", token)
+    # Plain echo: Rich would wrap the long token at the console width.
+    typer.echo(f"AASToken: {token}")
 
 
 # ── profiles ────────────────────────────────────────────────────────────────

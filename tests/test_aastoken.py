@@ -18,6 +18,7 @@ from goopdl.browser_oauth import (
     _profile_email,
     _wait_for_oauth_credentials,
 )
+from goopdl import cli
 from goopdl.cli import app
 
 
@@ -66,6 +67,16 @@ class AASTokenTest(unittest.TestCase):
         self.assertEqual(0, result.exit_code)
         self.assertIn("AASToken: aas-token", result.output)
         fetch.assert_called_once_with("user@example.com", "secret")
+
+    def test_long_token_stays_on_one_line_at_80_columns(self) -> None:
+        token = "aas_et/" + "A" * 300
+        with patch("goopdl.cli.fetch_aas_token", return_value=token), patch.object(
+            cli.console, "_width", 80
+        ):
+            result = CliRunner().invoke(app, ["aastoken", "user@example.com", "secret"])
+
+        self.assertEqual(0, result.exit_code)
+        self.assertEqual(f"AASToken: {token}\n", result.stdout)
 
     @patch("goopdl.cli.fetch_aas_token", side_effect=AASTokenError("BadAuthentication"))
     def test_bad_authentication_explains_app_password(self, fetch: Mock) -> None:
