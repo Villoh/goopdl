@@ -52,7 +52,7 @@ permissions `0700` and token files are written `0600`.
 | `auth-{arch}[-{country}][-profile-{key}].json` | Token from the last `auth token` run |
 | `token-pool-{arch}[-{country}][-profile-{key}].json` | Pool of up to 5 tokens used by `download`, `latest`, and `fast-download` |
 | `direct-device-{account}-{arch}[-{country}]-profile-{key}.json` | [Google account](#what-account-mode-saves) mode only: the registered device, no token |
-| `account.json` | The [saved Google account](#where-the-account-is-saved): email and AAS token |
+| `account.json` | The [saved Google account](#where-the-account-is-saved): email, and the AAS token unless it is in the system keyring |
 
 The `-profile-{key}` part appears when you pin a device with `--profile`, so
 each profile keeps its own tokens. `goopdl auth logout` deletes all of these
@@ -99,23 +99,56 @@ goopdl download com.whatsapp
   to disk. Each process signs in once per account, architecture, country, and
   device profile, and reuses the token until it expires (Google's expiry minus
   5 minutes, or 50 minutes) or Google rejects it.
-- Besides `account.json`, goopdl writes only the device registration to disk,
-  see below.
-- Only the CLI reads `account.json`. From Python, a
+- Besides the saved account, goopdl writes only the device registration to
+  disk, see below.
+- Only the CLI reads `account.json` and the keyring. From Python, a
   [`Client`](library.md#credentials) takes the account as `Credentials` and
   ignores both the variables and the file.
 
 > [!WARNING]
 > An AAS token is a long-lived credential with full Play Store access to the
 > account. Use a throwaway Google account, never your main one.
-> `goopdl auth login` saves the token on disk; use `--print` if you'd rather
-> keep it in a secret manager. Changing the account password revokes the
-> token.
+> `goopdl auth login` saves the token in the system keyring, or on disk if
+> there is none; use `--print` if you'd rather keep it in a secret manager.
+> Changing the account password revokes the token.
 
 ### Where the account is saved
 
-`goopdl auth login` writes `account.json` in the
-[config directory](#where-tokens-live): the email and the AAS token, as JSON.
+`goopdl auth login` keeps the AAS token in the system keyring:
+
+| System | Keyring |
+| ------ | ------- |
+| macOS | Keychain |
+| Windows | Credential Manager |
+| Linux | Secret Service over D-Bus (GNOME Keyring, KWallet) |
+
+The entry has the service name `goopdl` and the email as user name.
+`account.json`, in the [config directory](#where-tokens-live), then holds only
+the email and `"storage": "keyring"`.
+
+goopdl reads the token back right after saving it. If there is no keyring, or
+it fails or returns nothing, goopdl warns and writes the token to
+`account.json` instead. Expect that on servers, in containers, and over SSH
+without a desktop session. `--insecure-storage` skips the keyring and always
+uses the file:
+
+```bash
+goopdl auth login                     # keyring, or account.json if there is none
+goopdl auth login --insecure-storage  # always account.json
+```
+
+`goopdl auth status` shows where the token is: `Storage : system keyring`
+with the backend's name, or `Storage : file`. If `account.json` points to the
+keyring but the token isn't there, or the keyring can't be opened, commands
+exit with code `2`. Run `goopdl auth login` again, or use the variables.
+
+> [!NOTE]
+> The keyring keeps the token out of backups, synced folders, and copies of
+> your disk. It doesn't protect it from other programs running as you: on
+> Linux and Windows any of them can read it without asking. A token in
+> `account.json` has neither protection.
+
+About `account.json`, with or without the token:
 
 - The file is written atomically with permissions `0600`, in the `0700`
   directory.
@@ -125,8 +158,9 @@ goopdl download com.whatsapp
   profile's.
 - A malformed file is an error too. Run `goopdl auth login` again, or
   `goopdl auth logout`.
-- `goopdl auth logout` deletes it, together with every cached token.
-  `auth.clear_auth()` and `Client.clear_cache()` don't touch it.
+- `goopdl auth logout` deletes the keyring entry, the file, and every cached
+  token. `auth.clear_auth()` and `Client.clear_cache()` touch neither the
+  file nor the keyring.
 
 ### What account mode saves
 

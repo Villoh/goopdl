@@ -266,11 +266,14 @@ Manages credentials. Run `goopdl auth` alone for the list of subcommands.
 Signs in to a Google account in a browser and saves it for
 [Google account mode](authentication.md#google-account). Later commands use it
 until you run `auth logout`. `GOOPDL_ACCOUNT_EMAIL` and `GOOPDL_AAS_TOKEN`
-take precedence over it.
+take precedence over it. The AAS token goes to the
+[system keyring](authentication.md#where-the-account-is-saved), or to
+`account.json` if there is none. The last line says which.
 
 ```bash
 goopdl auth login                     # isolated browser window, recommended
 goopdl auth login --manual            # your usual browser, paste the oauth_token
+goopdl auth login --insecure-storage  # keep the token in account.json
 TOKEN=$(goopdl auth login --print)    # print the AAS token, save nothing
 ```
 
@@ -278,6 +281,7 @@ TOKEN=$(goopdl auth login --print)    # print the AAS token, save nothing
 | ---- | ------- | ----------- |
 | `--print` | off | Print only the AAS token on stdout instead of saving the account. Messages go to stderr |
 | `--manual` | off | Open Google EmbeddedSetup in your usual browser and ask for the email and the `oauth_token` cookie |
+| `--insecure-storage` | off | Save the token in `account.json` without trying the system keyring |
 
 [Getting an AAS token](authentication.md#getting-an-aas-token) walks through
 both modes. `goopdl aastoken` still works as a hidden, deprecated alias of
@@ -286,8 +290,10 @@ both modes. `goopdl aastoken` still works as a hidden, deprecated alias of
 
 ### `auth logout`
 
-Deletes the saved account, every cached token, and the
+Deletes the saved account, its token in the system keyring, every cached
+token, and the
 [account-mode device records](authentication.md#what-account-mode-saves). If
+the keyring entry can't be removed, it warns and deletes the rest anyway. If
 `GOOPDL_ACCOUNT_EMAIL` or `GOOPDL_AAS_TOKEN` is still set, it warns that
 goopdl keeps using them.
 
@@ -298,8 +304,11 @@ goopdl auth logout
 ### `auth status`
 
 Shows the active mode (`environment`, `saved account`, or `anonymous`), the
-account email, and a summary of the cache. It never prints a token. An
-unusable saved account is reported on stderr. Exits `2` if only one of the
+account email, where the saved token is (`system keyring` and its backend, or
+`file`), and a summary of the cache. It never prints a token. For a token in
+the keyring it checks that the token is there; if not, the mode reads
+`saved account (unusable)` and the reason goes to stderr. With the account
+variables set it doesn't open the keyring. Exits `2` if only one of the
 account variables is set.
 
 ```bash

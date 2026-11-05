@@ -53,7 +53,7 @@ crea con permisos `0700` y los archivos de tokens se escriben con `0600`.
 | `auth-{arch}[-{country}][-profile-{key}].json` | Token de la última ejecución de `auth token` |
 | `token-pool-{arch}[-{country}][-profile-{key}].json` | Pool de hasta 5 tokens que usan `download`, `latest` y `fast-download` |
 | `direct-device-{account}-{arch}[-{country}]-profile-{key}.json` | Solo en el modo [cuenta de Google](#qué-guarda-el-modo-cuenta): el dispositivo registrado, sin token |
-| `account.json` | La [cuenta de Google guardada](#dónde-se-guarda-la-cuenta): email y token AAS |
+| `account.json` | La [cuenta de Google guardada](#dónde-se-guarda-la-cuenta): email, y el token AAS si no está en el almacén de claves del sistema |
 
 La parte `-profile-{key}` aparece cuando fijas un dispositivo con `--profile`,
 así cada perfil tiene sus propios tokens. `goopdl auth logout` borra todos
@@ -102,24 +102,58 @@ goopdl download com.whatsapp
   arquitectura, país y perfil de dispositivo, y reutiliza el token hasta que
   caduca (la caducidad que indica Google menos 5 minutos, o 50 minutos) o
   Google lo rechaza.
-- Aparte de `account.json`, en disco goopdl solo escribe el registro del
+- Aparte de la cuenta guardada, en disco goopdl solo escribe el registro del
   dispositivo, ver abajo.
-- Solo la CLI lee `account.json`. Desde Python, un
+- Solo la CLI lee `account.json` y el almacén de claves. Desde Python, un
   [`Client`](library.md#credentials) recibe la cuenta como `Credentials` e
   ignora tanto las variables como el archivo.
 
 > [!WARNING]
 > Un token AAS es una credencial de larga duración con acceso completo a Play
 > Store en esa cuenta. Usa una cuenta de Google desechable, nunca la principal.
-> `goopdl auth login` guarda el token en disco; usa `--print` si prefieres
-> tenerlo en un gestor de secretos. Cambiar la contraseña de la cuenta revoca
-> el token.
+> `goopdl auth login` guarda el token en el almacén de claves del sistema, o
+> en disco si no hay; usa `--print` si prefieres tenerlo en un gestor de
+> secretos. Cambiar la contraseña de la cuenta revoca el token.
 
 ### Dónde se guarda la cuenta
 
-`goopdl auth login` escribe `account.json` en el
-[directorio de configuración](#dónde-se-guardan-los-tokens): el email y el
-token AAS, en JSON.
+`goopdl auth login` guarda el token AAS en el almacén de claves del sistema:
+
+| Sistema | Almacén |
+| ------- | ------- |
+| macOS | Llavero (Keychain) |
+| Windows | Administrador de credenciales |
+| Linux | Secret Service por D-Bus (GNOME Keyring, KWallet) |
+
+La entrada tiene el servicio `goopdl` y el email como nombre de usuario.
+`account.json`, en el
+[directorio de configuración](#dónde-se-guardan-los-tokens), guarda entonces
+solo el email y `"storage": "keyring"`.
+
+goopdl relee el token justo después de guardarlo. Si no hay almacén, o falla o
+no devuelve nada, goopdl avisa y escribe el token en `account.json`. Es lo
+normal en servidores, contenedores y por SSH sin sesión de escritorio.
+`--insecure-storage` se salta el almacén y usa siempre el archivo:
+
+```bash
+goopdl auth login                     # almacén, o account.json si no hay
+goopdl auth login --insecure-storage  # siempre account.json
+```
+
+`goopdl auth status` muestra dónde está el token: `Storage : system keyring`
+con el nombre del backend, o `Storage : file`. Si `account.json` apunta al
+almacén pero el token no está, o no se puede abrir el almacén, los comandos
+terminan con código `2`. Vuelve a ejecutar `goopdl auth login`, o usa las
+variables.
+
+> [!NOTE]
+> El almacén deja el token fuera de copias de seguridad, carpetas
+> sincronizadas y copias de tu disco. No lo protege de otros programas que se
+> ejecutan con tu usuario: en Linux y Windows cualquiera puede leerlo sin
+> preguntar. Un token en `account.json` no tiene ninguna de las dos
+> protecciones.
+
+Sobre `account.json`, con o sin token:
 
 - El archivo se escribe de forma atómica con permisos `0600`, dentro del
   directorio `0700`.
@@ -129,8 +163,9 @@ token AAS, en JSON.
   depende de los de tu perfil de usuario.
 - Un archivo mal formado también da error. Vuelve a ejecutar
   `goopdl auth login`, o `goopdl auth logout`.
-- `goopdl auth logout` lo borra, junto con todos los tokens en caché.
-  `auth.clear_auth()` y `Client.clear_cache()` no lo tocan.
+- `goopdl auth logout` borra la entrada del almacén, el archivo y todos los
+  tokens en caché. `auth.clear_auth()` y `Client.clear_cache()` no tocan ni
+  el archivo ni el almacén.
 
 ### Qué guarda el modo cuenta
 

@@ -12,21 +12,25 @@ interno y puede cambiar sin aviso.
 ## Requisitos
 
 - Python 3.10 o posterior.
-- `pip install goopdl` instala cuatro dependencias, todas obligatorias hoy:
-  `httpx>=0.27`, `typer>=0.16`, `rich>=13` y `websocket-client>=1.8`. El
+- `pip install goopdl` instala cinco dependencias, todas obligatorias hoy:
+  `httpx>=0.27`, `typer>=0.16`, `rich>=13`, `websocket-client>=1.8` y
+  `keyring>=25`. Solo la CLI usa `keyring`, para guardar el token de
+  `goopdl auth login` en el almacén de claves del sistema. El
   mínimo de `typer` ha subido desde 0.9: si fijas tú la versión de `typer`,
   que sea 0.16 o posterior. Para fijar versiones, mira
   [instalación](installation.md#como-librería).
 
 Importar `goopdl`, `goopdl.client`, `goopdl.api`, `goopdl.auth`,
-`goopdl.download` o `goopdl.errors` no importa `rich`, `typer` ni `websocket-client`, no imprime
-nada y no toca ningún archivo. Solo los cargan estos:
+`goopdl.download` o `goopdl.errors` no importa `rich`, `typer`,
+`websocket-client` ni `keyring`, no imprime nada y no toca ningún archivo.
+Solo los cargan estos:
 
 | Módulo o llamada | Carga |
 | ---------------- | ----- |
 | `goopdl.cli` | `typer`, `rich` |
 | `download.download_batch()` y `api.download_app()` (barras de progreso) | `rich` |
 | `goopdl.browser_oauth` | `websocket-client` |
+| Comandos de la CLI que leen o guardan una cuenta de Google en el almacén de claves | `keyring` |
 
 ## Client
 
@@ -115,8 +119,8 @@ Lanza `DirectAuthConfigurationError` si solo está definida una de las dos.
 `None`.
 
 La librería nunca lee la cuenta guardada por `goopdl auth login`
-(`account.json`), ni en un `Client` ni en las funciones del módulo. Solo la
-lee la CLI.
+(`account.json` y el almacén de claves del sistema), ni en un `Client` ni en
+las funciones del módulo. Solo la lee la CLI.
 
 ### Métodos
 
@@ -176,7 +180,8 @@ cuenta y su sesión en memoria. Las demás cuentas que compartan el directorio
 conservan los suyos. Sin credenciales equivale a `auth.clear_auth()` en ese
 directorio, que borra también los registros de dispositivo de todas las
 cuentas. Los archivos de bloqueo se quedan, y también la cuenta guardada por
-`goopdl auth login`: solo la borra `goopdl auth logout`.
+`goopdl auth login`, archivo y entrada del almacén: solo la borra
+`goopdl auth logout`.
 
 ```python
 account.clear_cache()  # la siguiente llamada registra un dispositivo nuevo y vuelve a iniciar sesión

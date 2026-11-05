@@ -271,11 +271,14 @@ subcomandos. Los dos modos de autenticación se explican en
 Inicia sesión en una cuenta de Google desde un navegador y la guarda para el
 [modo cuenta de Google](authentication.md#cuenta-de-google). Los comandos
 siguientes la usan hasta que ejecutes `auth logout`. `GOOPDL_ACCOUNT_EMAIL` y
-`GOOPDL_AAS_TOKEN` tienen prioridad sobre ella.
+`GOOPDL_AAS_TOKEN` tienen prioridad sobre ella. El token AAS va al
+[almacén de claves del sistema](authentication.md#dónde-se-guarda-la-cuenta),
+o a `account.json` si no hay. La última línea dice dónde.
 
 ```bash
 goopdl auth login                     # ventana de navegador aislada, recomendado
 goopdl auth login --manual            # tu navegador habitual, pegas el oauth_token
+goopdl auth login --insecure-storage  # deja el token en account.json
 TOKEN=$(goopdl auth login --print)    # imprime el token AAS, no guarda nada
 ```
 
@@ -283,6 +286,7 @@ TOKEN=$(goopdl auth login --print)    # imprime el token AAS, no guarda nada
 | ------ | ----------- | ----------- |
 | `--print` | no | Imprime solo el token AAS por stdout en lugar de guardar la cuenta. Los mensajes van a stderr |
 | `--manual` | no | Abre Google EmbeddedSetup en tu navegador habitual y pide el email y la cookie `oauth_token` |
+| `--insecure-storage` | no | Guarda el token en `account.json` sin probar el almacén de claves del sistema |
 
 En [conseguir un token AAS](authentication.md#conseguir-un-token-aas) se
 explican los dos modos paso a paso. `goopdl aastoken` sigue funcionando como
@@ -291,8 +295,10 @@ alias oculto y obsoleto de `auth login --print`; solo acepta `--browser` y
 
 ### `auth logout`
 
-Borra la cuenta guardada, todos los tokens en caché y los
+Borra la cuenta guardada, su token en el almacén de claves del sistema, todos
+los tokens en caché y los
 [registros de dispositivo del modo cuenta](authentication.md#qué-guarda-el-modo-cuenta).
+Si no puede quitar la entrada del almacén, avisa y borra el resto igualmente.
 Si `GOOPDL_ACCOUNT_EMAIL` o `GOOPDL_AAS_TOKEN` siguen definidas, avisa de que
 goopdl las sigue usando.
 
@@ -303,9 +309,12 @@ goopdl auth logout
 ### `auth status`
 
 Muestra el modo activo (`environment`, `saved account` o `anonymous`), el
-email de la cuenta y un resumen de la caché. Nunca imprime un token. Si la
-cuenta guardada no se puede usar, lo avisa por stderr. Termina con `2` si solo
-está definida una de las variables de la cuenta.
+email de la cuenta, dónde está el token guardado (`system keyring` y su
+backend, o `file`) y un resumen de la caché. Nunca imprime un token. Si el
+token está en el almacén, comprueba que siga ahí; si no, el modo pasa a
+`saved account (unusable)` y el motivo va a stderr. Con las variables de la
+cuenta definidas no abre el almacén. Termina con `2` si solo está definida una
+de las variables de la cuenta.
 
 ```bash
 goopdl auth status
