@@ -68,7 +68,7 @@ class DispenserRejectionMessageTest(unittest.TestCase):
 
     def _auth(self, **post):
         with patch("goopdl._http.post", **post):
-            return CliRunner().invoke(app, ["auth"])
+            return CliRunner().invoke(app, ["auth", "token"])
 
     def test_answering_dispenser_is_not_reported_as_down(self, _sleep) -> None:
         for response, last in (

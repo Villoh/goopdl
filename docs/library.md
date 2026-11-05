@@ -12,20 +12,24 @@ without notice.
 ## Requirements
 
 - Python 3.10 or newer.
-- `pip install goopdl` installs four dependencies, all required today:
-  `httpx>=0.27`, `typer>=0.16`, `rich>=13`, and `websocket-client>=1.8`.
+- `pip install goopdl` installs five dependencies, all required today:
+  `httpx>=0.27`, `typer>=0.16`, `rich>=13`, `websocket-client>=1.8`, and
+  `keyring>=25`. Only the CLI uses `keyring`, to keep the token of
+  `goopdl auth login` in the system keyring.
   The `typer` minimum went up from 0.9: if you pin `typer` yourself, pin 0.16
   or newer. See [installation](installation.md#as-a-library) for pinning.
 
 Importing `goopdl`, `goopdl.client`, `goopdl.api`, `goopdl.auth`,
-`goopdl.download`, or `goopdl.errors` does not import `rich`, `typer`, or `websocket-client`, prints
-nothing, and touches no files. Only these load them:
+`goopdl.download`, or `goopdl.errors` does not import `rich`, `typer`,
+`websocket-client`, or `keyring`, prints nothing, and touches no files. Only
+these load them:
 
 | Module or call | Loads |
 | -------------- | ----- |
 | `goopdl.cli` | `typer`, `rich` |
 | `download.download_batch()` and `api.download_app()` (progress bars) | `rich` |
 | `goopdl.browser_oauth` | `websocket-client` |
+| CLI commands that read or save a Google account in the keyring | `keyring` |
 
 ## Client
 
@@ -113,6 +117,10 @@ It raises `DirectAuthConfigurationError` if only one of the two is set.
 `GOOPDL_CONFIG_DIR` and `XDG_CONFIG_HOME` still apply when `config_dir` is
 `None`.
 
+The library never reads the account saved by `goopdl auth login`
+(`account.json` and the system keyring), neither in a `Client` nor in the
+module functions. Only the CLI does.
+
 ### Methods
 
 | Method | Returns | Does |
@@ -163,12 +171,14 @@ Details:
 
 ### Clearing the cache
 
-`clear_cache()` deletes what the client cached in its `config_dir`, like
-`goopdl auth --clear` there: the anonymous token files and, in account mode,
-this account's [device record](authentication.md#what-account-mode-saves) and
-its signed-in token in memory. Other accounts sharing the directory keep
-theirs. Without credentials it is `auth.clear_auth()` for that directory, which
-also deletes every account's device record. Lock files stay.
+`clear_cache()` deletes what the client cached in its `config_dir`: the
+anonymous token files and, in account mode, this account's
+[device record](authentication.md#what-account-mode-saves) and its signed-in
+token in memory. Other accounts sharing the directory keep theirs. Without
+credentials it is `auth.clear_auth()` for that directory, which also deletes
+every account's device record. Lock files stay, and so does the account saved
+by `goopdl auth login`, file and keyring entry: only `goopdl auth logout`
+deletes it.
 
 ```python
 account.clear_cache()  # the next call registers a new device and signs in again
@@ -343,8 +353,10 @@ email, oauth_token = capture_oauth_credentials(timeout=300)  # opens Chrome/Edge
 aas_token = fetch_aas_token(email, oauth_token)              # "aas_et/..."
 ```
 
-`fetch_aas_token` raises `AASTokenError` when Google rejects the credentials,
-and sanitized `httpx` errors on HTTP or transport failures.
+`fetch_aas_token` takes only the one-time `oauth2_4/` token: anything else,
+a password included, raises `ValueError` before any request. It raises
+`AASTokenError` when Google rejects the token, and sanitized `httpx` errors on
+HTTP or transport failures.
 `capture_oauth_credentials` raises `BrowserOAuthError`.
 
 ### Token pool and cache

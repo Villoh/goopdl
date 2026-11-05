@@ -21,19 +21,22 @@ from goopdl.download import IntegrityError
 
 class AuthExitCodeTest(unittest.TestCase):
     def setUp(self):
-        environment = isolated_env()
+        # An empty config dir: no account.json from `goopdl auth login`.
+        config = tempfile.TemporaryDirectory(dir=tempfile.gettempdir())
+        self.addCleanup(config.cleanup)
+        environment = isolated_env({"GOOPDL_CONFIG_DIR": config.name})
         environment.start()
         self.addCleanup(environment.stop)
 
     def test_unavailable_auth_has_dedicated_exit_code(self) -> None:
         with patch("goopdl.cli.fetch_token", return_value=None):
-            result = CliRunner().invoke(app, ["auth", "--arch", "arm64"])
+            result = CliRunner().invoke(app, ["auth", "token", "--arch", "arm64"])
         self.assertEqual(AUTH_UNAVAILABLE_EXIT_CODE, result.exit_code)
 
     def test_library_log_messages_are_shown_by_the_cli(self) -> None:
         with patch.dict(os.environ, {"GOOPDL_ACCOUNT_EMAIL": "", "GOOPDL_AAS_TOKEN": ""}):
             result = CliRunner().invoke(
-                app, ["auth", "--profile", "no-such-profile-xyz"]
+                app, ["auth", "token", "--profile", "no-such-profile-xyz"]
             )
         self.assertEqual(AUTH_UNAVAILABLE_EXIT_CODE, result.exit_code)
         self.assertIn("Profile not found: no-such-profile-xyz", result.output)

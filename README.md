@@ -83,7 +83,7 @@ After a split download, goopdl prints the exact `adb install-multiple`
 command to install it on a connected device.
 
 goopdl fetches an anonymous token on first use. You don't need to run
-`goopdl auth`.
+`goopdl auth token`.
 
 More examples:
 

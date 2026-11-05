@@ -481,7 +481,7 @@ def _fetch_app_item(
         profile=profile,
     )
     if not auth:
-        raise PlayAPIError("Could not obtain auth token — run: goopdl auth")
+        raise PlayAPIError("Could not obtain auth token — run: goopdl auth token")
     try:
         raw = get_details_raw(package, auth, country=country, proxy=proxy)
     except AuthExpiredError:

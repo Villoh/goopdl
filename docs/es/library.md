@@ -12,21 +12,25 @@ interno y puede cambiar sin aviso.
 ## Requisitos
 
 - Python 3.10 o posterior.
-- `pip install goopdl` instala cuatro dependencias, todas obligatorias hoy:
-  `httpx>=0.27`, `typer>=0.16`, `rich>=13` y `websocket-client>=1.8`. El
+- `pip install goopdl` instala cinco dependencias, todas obligatorias hoy:
+  `httpx>=0.27`, `typer>=0.16`, `rich>=13`, `websocket-client>=1.8` y
+  `keyring>=25`. Solo la CLI usa `keyring`, para guardar el token de
+  `goopdl auth login` en el almacén de claves del sistema. El
   mínimo de `typer` ha subido desde 0.9: si fijas tú la versión de `typer`,
   que sea 0.16 o posterior. Para fijar versiones, mira
   [instalación](installation.md#como-librería).
 
 Importar `goopdl`, `goopdl.client`, `goopdl.api`, `goopdl.auth`,
-`goopdl.download` o `goopdl.errors` no importa `rich`, `typer` ni `websocket-client`, no imprime
-nada y no toca ningún archivo. Solo los cargan estos:
+`goopdl.download` o `goopdl.errors` no importa `rich`, `typer`,
+`websocket-client` ni `keyring`, no imprime nada y no toca ningún archivo.
+Solo los cargan estos:
 
 | Módulo o llamada | Carga |
 | ---------------- | ----- |
 | `goopdl.cli` | `typer`, `rich` |
 | `download.download_batch()` y `api.download_app()` (barras de progreso) | `rich` |
 | `goopdl.browser_oauth` | `websocket-client` |
+| Comandos de la CLI que leen o guardan una cuenta de Google en el almacén de claves | `keyring` |
 
 ## Client
 
@@ -114,6 +118,10 @@ Lanza `DirectAuthConfigurationError` si solo está definida una de las dos.
 `GOOPDL_CONFIG_DIR` y `XDG_CONFIG_HOME` siguen contando cuando `config_dir` es
 `None`.
 
+La librería nunca lee la cuenta guardada por `goopdl auth login`
+(`account.json` y el almacén de claves del sistema), ni en un `Client` ni en
+las funciones del módulo. Solo la lee la CLI.
+
 ### Métodos
 
 | Método | Devuelve | Hace |
@@ -165,13 +173,15 @@ Detalles:
 
 ### Borrar la caché
 
-`clear_cache()` borra lo que el cliente guardó en su `config_dir`, como
-`goopdl auth --clear` en ese directorio: los archivos de tokens anónimos y, en
-modo cuenta, el [registro de dispositivo](authentication.md#qué-guarda-el-modo-cuenta)
-de esta cuenta y su sesión en memoria. Las demás cuentas que compartan el
-directorio conservan los suyos. Sin credenciales equivale a
-`auth.clear_auth()` en ese directorio, que borra también los registros de
-dispositivo de todas las cuentas. Los archivos de bloqueo se quedan.
+`clear_cache()` borra lo que el cliente guardó en su `config_dir`: los
+archivos de tokens anónimos y, en modo cuenta, el
+[registro de dispositivo](authentication.md#qué-guarda-el-modo-cuenta) de esta
+cuenta y su sesión en memoria. Las demás cuentas que compartan el directorio
+conservan los suyos. Sin credenciales equivale a `auth.clear_auth()` en ese
+directorio, que borra también los registros de dispositivo de todas las
+cuentas. Los archivos de bloqueo se quedan, y también la cuenta guardada por
+`goopdl auth login`, archivo y entrada del almacén: solo la borra
+`goopdl auth logout`.
 
 ```python
 account.clear_cache()  # la siguiente llamada registra un dispositivo nuevo y vuelve a iniciar sesión
@@ -349,8 +359,10 @@ email, oauth_token = capture_oauth_credentials(timeout=300)  # abre Chrome/Edge/
 aas_token = fetch_aas_token(email, oauth_token)              # "aas_et/..."
 ```
 
-`fetch_aas_token` lanza `AASTokenError` cuando Google rechaza las
-credenciales, y errores de `httpx` saneados ante fallos HTTP o de transporte.
+`fetch_aas_token` solo acepta el token `oauth2_4/` de un solo uso: cualquier
+otro valor, incluida una contraseña, lanza `ValueError` antes de hacer ninguna
+petición. Lanza `AASTokenError` cuando Google rechaza el token, y errores de
+`httpx` saneados ante fallos HTTP o de transporte.
 `capture_oauth_credentials` lanza `BrowserOAuthError`.
 
 ### Pool de tokens y caché

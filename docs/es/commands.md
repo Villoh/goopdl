@@ -14,8 +14,10 @@
 | [`search`](#search) | Busca en Google Play |
 | [`list-splits`](#list-splits) | Lista los split APKs de una app |
 | [`profiles`](#profiles) | Lista los perfiles de dispositivo incluidos |
-| [`auth`](#auth) | Consigue y guarda un token anónimo |
-| [`aastoken`](#aastoken) | Imprime un token AAS de una cuenta de Google |
+| [`auth login`](#auth-login) | Inicia sesión con una cuenta de Google y la guarda |
+| [`auth logout`](#auth-logout) | Borra la cuenta guardada y todos los tokens en caché |
+| [`auth status`](#auth-status) | Muestra qué credenciales usa goopdl |
+| [`auth token`](#auth-token) | Consigue y guarda un token anónimo |
 
 ## Opciones comunes
 
@@ -260,45 +262,81 @@ goopdl profiles --arch arm64 # una arquitectura
 
 ## `auth`
 
-Consigue un token anónimo del dispensador y lo guarda en caché. Los dos modos
-de autenticación se explican en [autenticación](authentication.md).
+Gestiona las credenciales. `goopdl auth` sin más muestra la lista de
+subcomandos. Los dos modos de autenticación se explican en
+[autenticación](authentication.md).
+
+### `auth login`
+
+Inicia sesión en una cuenta de Google desde un navegador y la guarda para el
+[modo cuenta de Google](authentication.md#cuenta-de-google). Los comandos
+siguientes la usan hasta que ejecutes `auth logout`. `GOOPDL_ACCOUNT_EMAIL` y
+`GOOPDL_AAS_TOKEN` tienen prioridad sobre ella. El token AAS va al
+[almacén de claves del sistema](authentication.md#dónde-se-guarda-la-cuenta),
+o a `account.json` si no hay. La última línea dice dónde.
 
 ```bash
-goopdl auth
-goopdl auth --arch armv7
-goopdl auth --country IN
-goopdl auth --profile "Galaxy S25 Ultra"
-goopdl auth --clear
+goopdl auth login                     # ventana de navegador aislada, recomendado
+goopdl auth login --manual            # tu navegador habitual, pegas el oauth_token
+goopdl auth login --insecure-storage  # deja el token en account.json
+TOKEN=$(goopdl auth login --print)    # imprime el token AAS, no guarda nada
+```
+
+| Opción | Por defecto | Descripción |
+| ------ | ----------- | ----------- |
+| `--print` | no | Imprime solo el token AAS por stdout en lugar de guardar la cuenta. Los mensajes van a stderr |
+| `--manual` | no | Abre Google EmbeddedSetup en tu navegador habitual y pide el email y la cookie `oauth_token` |
+| `--insecure-storage` | no | Guarda el token en `account.json` sin probar el almacén de claves del sistema |
+
+En [conseguir un token AAS](authentication.md#conseguir-un-token-aas) se
+explican los dos modos paso a paso. `goopdl aastoken` sigue funcionando como
+alias oculto y obsoleto de `auth login --print`; solo acepta `--browser` y
+`--oauth` (igual que `--manual`).
+
+### `auth logout`
+
+Borra la cuenta guardada, su token en el almacén de claves del sistema, todos
+los tokens en caché y los
+[registros de dispositivo del modo cuenta](authentication.md#qué-guarda-el-modo-cuenta).
+Si no puede quitar la entrada del almacén, avisa y borra el resto igualmente.
+Si `GOOPDL_ACCOUNT_EMAIL` o `GOOPDL_AAS_TOKEN` siguen definidas, avisa de que
+goopdl las sigue usando.
+
+```bash
+goopdl auth logout
+```
+
+### `auth status`
+
+Muestra el modo activo (`environment`, `saved account` o `anonymous`), el
+email de la cuenta, dónde está el token guardado (`system keyring` y su
+backend, o `file`) y un resumen de la caché. Nunca imprime un token. Si el
+token está en el almacén, comprueba que siga ahí; si no, el modo pasa a
+`saved account (unusable)` y el motivo va a stderr. Con las variables de la
+cuenta definidas no abre el almacén. Termina con `2` si solo está definida una
+de las variables de la cuenta.
+
+```bash
+goopdl auth status
+```
+
+### `auth token`
+
+Consigue un token anónimo del dispensador y lo guarda en caché. Con una cuenta
+de Google inicia sesión en Google y solo guarda el registro del dispositivo.
+
+```bash
+goopdl auth token
+goopdl auth token --arch armv7
+goopdl auth token --country IN
+goopdl auth token --profile "Galaxy S25 Ultra"
 ```
 
 | Opción | Corta | Por defecto | Descripción |
 | ------ | ----- | ----------- | ----------- |
-| `--clear` | | no | Borra todos los tokens en caché y los [registros de dispositivo del modo cuenta](authentication.md#qué-guarda-el-modo-cuenta) |
 | `--country` | `-c` | — | Registra el dispositivo con el MCC/MNC de ese país, para que las llamadas posteriores con el mismo `--country` vean su catálogo sin proxy |
 
 También acepta las [opciones comunes](#opciones-comunes).
-
----
-
-## `aastoken`
-
-Imprime un token AAS de una cuenta de Google para el
-[modo cuenta de Google](authentication.md#cuenta-de-google). No guarda
-credenciales ni tokens.
-
-```bash
-goopdl aastoken --browser                 # recomendado
-goopdl aastoken --oauth                   # pegas tú el oauth_token
-goopdl aastoken [EMAIL] [PASSWORD]        # modo contraseña, suele fallar
-```
-
-| Opción | Descripción |
-| ------ | ----------- |
-| `--browser` | Abre una ventana de navegador aislada y captura el inicio de sesión automáticamente |
-| `--oauth` | Pide un `oauth_token` de un solo uso en lugar de una contraseña |
-
-En [conseguir un token AAS](authentication.md#conseguir-un-token-aas) se
-explica cada modo paso a paso.
 
 ---
 
@@ -308,7 +346,7 @@ explica cada modo paso a paso.
 | ------ | ----------- |
 | `0` | Éxito |
 | `1` | Otro error |
-| `2` | Entrada o configuración no válida, como definir solo una de las variables de la cuenta de Google |
+| `2` | Entrada o configuración no válida, como definir solo una de las variables de la cuenta de Google o una cuenta guardada inutilizable |
 | `3` | Falló la autenticación: el dispensador rechazó todos los perfiles de dispositivo, está caído o no responde, o falló el inicio de sesión con la cuenta de Google. `download` también termina con `3` cuando el pool de tokens está ocupado |
 | `4` | Versión no disponible (HTTP 404 o confirmada como no disponible) |
 | `5` | Límite de peticiones (HTTP 429): de Google Play tras los reintentos en `download`, `fast-download`, `latest` e `inspect-delivery`, o del dispensador de tokens cuando no queda ningún token válido en el pool (tras un 429 del dispensador, las siguientes peticiones de tokens del mismo comando fallan al momento, [sin volver a preguntarle](how-it-works.md#pool-de-tokens)), o del inicio de sesión con la cuenta de Google |

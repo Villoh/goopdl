@@ -97,7 +97,7 @@ class TransientRecoveryTest(unittest.TestCase):
 
     def test_auth_recovers_on_next_profile_like_gold(self):
         self.failures = [httpx.Response(503)]
-        result = CliRunner().invoke(cli.app, ["auth"])
+        result = CliRunner().invoke(cli.app, ["auth", "token"])
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(self.calls["POST"], 2)
         self.assertEqual(self.calls["GET"], 0)

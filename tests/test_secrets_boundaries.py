@@ -12,9 +12,12 @@ from unittest.mock import MagicMock, Mock, patch
 
 import httpx
 import typer
+from typer.testing import CliRunner
 
 from _envutil import isolated_env
-from goopdl import _http, aastoken, api, auth, browser_oauth, cli, download
+from _fakekeyring import LockedKeyring, MemoryKeyring, NoKeyring
+from _fakekeyring import use as use_keyring
+from goopdl import _account, _http, aastoken, api, auth, browser_oauth, cli, download
 
 
 EMAIL = "EMAIL_SENTINEL@example.test"
@@ -84,19 +87,20 @@ class AccountBoundariesTest(BoundaryCase):
                 self.assertEqual(post.call_count, 1)
                 self.assert_sanitized(error)
 
-    def test_aas_transport_status_and_password_errors_are_sanitized(self):
-        for mode in ("transport", "status", "password"):
+    def test_aas_transport_status_and_non_oauth_errors_are_sanitized(self):
+        for mode in ("transport", "status", "not-oauth"):
             with self.subTest(mode=mode):
                 def post(*args, mode=mode, **kwargs):
                     request = httpx.Request("POST", aastoken.AUTH_URL, data=kwargs["data"])
                     if mode == "transport":
                         raise httpx.ConnectError(OAUTH, request=request)
                     return httpx.Response(503, text=OAUTH, request=request)
-                with patch.object(httpx, "post", side_effect=post):
+                with patch.object(httpx, "post", side_effect=post) as sent:
                     error = caught(lambda mode=mode: aastoken.fetch_aas_token(
-                        EMAIL, "p" * 200 if mode == "password" else OAUTH
+                        EMAIL, "PASS_SENTINEL" if mode == "not-oauth" else OAUTH
                     ))
-                self.assertIsInstance(error, ValueError if mode == "password" else httpx.HTTPError)
+                self.assertEqual(sent.call_count, mode != "not-oauth")
+                self.assertIsInstance(error, ValueError if mode == "not-oauth" else httpx.HTTPError)
                 if mode == "transport":
                     self.assertIsInstance(error, httpx.ConnectError)
                 if mode == "status":
@@ -110,8 +114,9 @@ class AccountBoundariesTest(BoundaryCase):
                       httpx.ConnectError(OAUTH), ValueError("invalid credentials")):
             with self.subTest(error=type(error)), patch.object(
                 cli, "fetch_aas_token", side_effect=error
-            ), patch.object(cli.err, "print") as output:
-                failure = caught(lambda: cli.aastoken(EMAIL, OAUTH, oauth=False, browser=False))
+            ), patch.object(cli, "capture_oauth_credentials", return_value=(EMAIL, OAUTH)), \
+                    patch.object(cli.err, "print") as output:
+                failure = caught(lambda: cli.login(print_token=True, manual=False))
                 self.assertIsInstance(failure, typer.Exit)
                 self.assertEqual(failure.exit_code, 1)
                 self.assertNotIn("OAUTH_SENTINEL", repr(output.call_args_list))
@@ -121,16 +126,25 @@ class AccountBoundariesTest(BoundaryCase):
         with patch.object(cli, "capture_oauth_credentials", side_effect=(
             browser_oauth.BrowserOAuthError(OAUTH)
         )), patch.object(cli.err, "print") as output, patch.object(cli.console, "print"):
-            error = caught(lambda: cli.aastoken(EMAIL, None, oauth=False, browser=True))
+            error = caught(lambda: cli.login(print_token=True, manual=False))
         self.assertEqual(error.exit_code, 1)
         self.assertNotIn("OAUTH_SENTINEL", repr(output.call_args_list))
         self.assert_sanitized(error)
 
-    def test_cli_validation_clears_captured_credentials(self):
-        with patch.object(cli, "capture_oauth_credentials", return_value=(EMAIL, OAUTH)), \
-                patch.object(cli.err, "print"), patch.object(cli.console, "print"):
-            error = caught(lambda: cli.aastoken("other@example.test", None, oauth=False, browser=True))
+    def test_cli_manual_validation_clears_the_pasted_secret(self):
+        with patch.object(cli.typer, "prompt", return_value="PASS_SENTINEL"), \
+                patch.object(cli.err, "input", return_value=EMAIL), \
+                patch.object(cli.webbrowser, "open"), patch.object(cli.err, "print") as output:
+            error = caught(lambda: cli.login(print_token=True, manual=True))
         self.assertEqual(error.exit_code, 2)
+        self.assertNotIn("PASS_SENTINEL", repr(output.call_args_list))
+        self.assert_sanitized(error)
+
+    def test_cli_aastoken_rejects_positional_secrets_unchained(self):
+        with patch.object(cli.err, "print") as output:
+            error = caught(lambda: cli.aastoken([EMAIL, "PASS_SENTINEL"], oauth=False, browser=False))
+        self.assertEqual(error.exit_code, 2)
+        self.assertNotIn("PASS_SENTINEL", repr(output.call_args_list))
         self.assert_sanitized(error)
 
     def test_browser_cdp_error_after_cookie_capture(self):
@@ -184,6 +198,115 @@ class AccountBoundariesTest(BoundaryCase):
             ))
         self.assertIsInstance(error, api.NetworkError)
         self.assert_sanitized(error)
+
+
+class SavedAccountBoundariesTest(BoundaryCase):
+    AAS = "aas_et/PASS_SENTINEL"
+
+    def setUp(self):
+        super().setUp()
+        directory = tempfile.TemporaryDirectory(dir=tempfile.gettempdir())
+        self.addCleanup(directory.cleanup)
+        self.path = Path(directory.name) / "account.json"
+        self.env.stop()
+        self.env = isolated_env({"GOOPDL_CONFIG_DIR": directory.name})
+        self.env.start()
+        self.keyring = MemoryKeyring()
+        backend = use_keyring(self.keyring)
+        backend.start()
+        self.addCleanup(backend.stop)
+
+    def write(self, text, mode=0o600):
+        self.path.write_text(text)
+        self.path.chmod(mode)
+
+    def test_unusable_files_fail_without_secrets(self):
+        valid = json.dumps({"v": 1, "email": EMAIL, "aas_token": self.AAS})
+        cases = [
+            (json.dumps({"v": 1, "email": EMAIL, "aas_token": OAUTH}), 0o600),
+            (valid[:-2], 0o600),
+            (json.dumps({"v": 2, "email": EMAIL, "aas_token": self.AAS}), 0o600),
+        ]
+        if os.name != "nt":
+            cases.append((valid, 0o644))
+        for text, mode in cases:
+            with self.subTest(text=text[-20:], mode=oct(mode)):
+                self.write(text, mode)
+                error = caught(_account.load)
+                self.assertIsInstance(error, _account.AccountError)
+                self.assert_sanitized(error)
+                ctx = Mock()
+                with patch.object(cli.err, "print") as output:
+                    failure = caught(lambda ctx=ctx: cli._use_credentials(ctx))
+                self.assertEqual(failure.exit_code, 2)
+                self.assert_sanitized(failure)
+                for needle in NEEDLES:
+                    self.assertNotIn(needle, repr(output.call_args_list))
+                ctx.with_resource.assert_not_called()
+
+    def login(self, **patches):
+        """Return (the exception or None, everything printed)."""
+        error = None
+        with patch.object(cli, "capture_oauth_credentials", return_value=(EMAIL, OAUTH)), \
+                patch.object(cli, "fetch_aas_token", return_value=self.AAS), \
+                patch.multiple(_account, FILE=_account.FILE, **patches), \
+                patch.object(cli.err, "print") as output, \
+                patch.object(cli.console, "print") as printed:
+            try:
+                cli.login(print_token=False, manual=False, insecure_storage=False)
+            except BaseException as exc:
+                error = exc
+        return error, repr(output.call_args_list) + repr(printed.call_args_list)
+
+    def test_login_save_failure_is_sanitized(self):
+        for patches in ({"save": Mock(side_effect=PermissionError(13, "denied"))},
+                        {"_atomic_pool_json": Mock(side_effect=PermissionError(13, "denied"))}):
+            with self.subTest(patches=list(patches)):
+                error, output = self.login(**patches)
+                self.assertEqual(error.exit_code, 1)
+                self.assertNotIn("PASS_SENTINEL", output)
+                self.assert_sanitized(error)
+        self.assertEqual({}, self.keyring.items)  # no orphan left behind
+
+    def test_keyring_failures_are_sanitized(self):
+        # The fakes put their arguments, token included, in the exception message.
+        for backend in (NoKeyring(), LockedKeyring()):
+            with self.subTest(backend=backend.name), use_keyring(backend):
+                error, output = self.login()
+                self.assertIsNone(error)
+                self.assertIn("NoKeyringError" if isinstance(backend, NoKeyring)
+                              else "RuntimeError", output)
+                self.assertIn("PASS_SENTINEL", self.path.read_text())  # the fallback
+                for needle in NEEDLES[1:]:
+                    self.assertNotIn(needle, output)
+                self.path.write_text(json.dumps(
+                    {"v": 1, "email": EMAIL, "storage": "keyring"}))
+                error = caught(_account.load)
+                self.assertIsInstance(error, _account.AccountError)
+                self.assert_sanitized(error)
+                ctx = Mock()
+                with patch.object(cli.err, "print") as printed:
+                    failure = caught(lambda ctx=ctx: cli._use_credentials(ctx))
+                self.assertEqual(2, failure.exit_code)
+                self.assert_sanitized(failure)
+                for needle in NEEDLES:
+                    self.assertNotIn(needle, repr(printed.call_args_list))
+                result = CliRunner().invoke(cli.app, ["auth", "logout"])
+                self.assertEqual(0, result.exit_code, result.output)
+                for needle in NEEDLES[1:]:
+                    self.assertNotIn(needle, result.output)
+
+    def test_status_and_logout_print_no_token(self):
+        self.keyring.set_password(_account.SERVICE, "user@example.test", self.AAS)
+        for record in ({"aas_token": self.AAS}, {"storage": "keyring"}):
+            self.write(json.dumps({"v": 1, "email": "user@example.test", **record}))
+            for command in (["auth", "status"], ["auth", "logout"]):
+                with self.subTest(record=list(record), command=command[1]):
+                    result = CliRunner().invoke(cli.app, command)
+                    self.assertEqual(result.exit_code, 0, result.output)
+                    self.assertNotIn("PASS_SENTINEL", result.output)
+            self.assertFalse(self.path.exists())
+        self.assertEqual({}, self.keyring.items)
 
 
 class LockBoundariesTest(BoundaryCase):

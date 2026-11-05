@@ -105,13 +105,14 @@ jobs:
           EXT: ${{ matrix.ext }}
           TARGET: ${{ matrix.target }}
         run: |
-          pip install pyinstaller .
-          pyinstaller --onefile --name goopdl \
-            --collect-data goopdl goopdl/__main__.py
+          bash scripts/build_binary.sh
           mv "dist/goopdl${EXT}" "goopdl-${TARGET}${EXT}"
 
       - name: Smoke test
-        run: ./goopdl-${{ matrix.target }}${{ matrix.ext }} --version
+        env:
+          EXT: ${{ matrix.ext }}
+          TARGET: ${{ matrix.target }}
+        run: bash scripts/smoke_binary.sh "./goopdl-${TARGET}${EXT}"
 
       # v7
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

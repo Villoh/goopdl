@@ -258,7 +258,7 @@ class BackoffTest(unittest.TestCase):
         self.fail_next(limited("120"))
         auth.fetch_token()
         for command in (["download", PKG, "-o", str(self.root / "out")],
-                        ["latest", PKG], ["auth"]):
+                        ["latest", PKG], ["auth", "token"]):
             with self.subTest(command=command[0]):
                 result = CliRunner().invoke(cli.app, command)
                 self.assertEqual(cli.RATE_LIMIT_EXIT_CODE, result.exit_code, result.output)
@@ -278,7 +278,7 @@ class BackoffTest(unittest.TestCase):
 
     def test_clear_auth_and_clear_cache_forget_the_window(self):
         for clear in (auth.clear_auth, Client(config_dir=self.cache).clear_cache,
-                      lambda: CliRunner().invoke(cli.app, ["auth", "--clear"])):
+                      lambda: CliRunner().invoke(cli.app, ["auth", "logout"])):
             self.fail_next(limited("120"))
             self.assertIsNone(auth.fetch_token())
             clear()

@@ -303,6 +303,6 @@ class ArchValidationTest(unittest.TestCase):
             isolated_env(),
             patch("goopdl.cli.fetch_token") as fetch,
         ):
-            result = CliRunner().invoke(cli.app, ["auth", "--arch", "../x"])
+            result = CliRunner().invoke(cli.app, ["auth", "token", "--arch", "../x"])
         self.assertEqual(result.exit_code, 2, result.output)
         fetch.assert_not_called()

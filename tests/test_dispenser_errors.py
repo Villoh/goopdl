@@ -133,7 +133,7 @@ class CliDispenserMessageTest(unittest.TestCase):
         with patch(
             "goopdl.cli.fetch_token", side_effect=DispenserRateLimitedError(None)
         ):
-            result = CliRunner().invoke(app, ["auth"])
+            result = CliRunner().invoke(app, ["auth", "token"])
         self.assertEqual(RATE_LIMIT_EXIT_CODE, result.exit_code)
 
 

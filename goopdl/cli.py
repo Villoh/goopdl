@@ -9,6 +9,7 @@ import re
 import shlex
 import sys
 import time
+import webbrowser
 from pathlib import Path
 from typing import NoReturn
 
@@ -20,7 +21,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from goopdl import __version__
+from goopdl import __version__, _account
 from goopdl.aastoken import AASTokenError, _AUTH_ERROR_CODES, fetch_aas_token
 from goopdl.api import (
     AppNotAvailableError,
@@ -54,15 +55,24 @@ from goopdl.auth import (
     DispenserRateLimitedError,
     DispenserUnavailableError,
     PoolBusyError,
+    _checked_credentials,
+    _env_credentials,
+    _Scope,
+    _use_scope,
     clear_auth,
     direct_auth_enabled,
     ensure_pool,
     fetch_token,
+    get_config_dir,
     pick_pool_token,
     replace_pool_token,
     save_auth,
 )
-from goopdl.browser_oauth import BrowserOAuthError, capture_oauth_credentials
+from goopdl.browser_oauth import (
+    EMBEDDED_SETUP_URL,
+    BrowserOAuthError,
+    capture_oauth_credentials,
+)
 from goopdl.download import (
     DownloadError,
     DownloadSpec,
@@ -172,7 +182,6 @@ def main(
     _tolerate_unencodable_output()
     _setup_logging()
     if ctx.invoked_subcommand in {
-        "auth",
         "latest",
         "info",
         "search",
@@ -181,18 +190,166 @@ def main(
         "fast-download",
         "inspect-delivery",
     }:
-        try:
-            direct_auth_enabled()
-        except DirectAuthConfigurationError as exc:
-            err.print(f"[red]{escape(str(exc))}[/red]")
-            raise typer.Exit(code=2) from None
+        _use_credentials(ctx)
+
+
+def _use_credentials(ctx: typer.Context) -> None:
+    """Validate GOOPDL_*; without them, apply the account saved by auth login."""
+    credentials = message = None
+    try:
+        if direct_auth_enabled():
+            return
+        credentials = _account.load()
+    except (DirectAuthConfigurationError, _account.AccountError) as exc:
+        message = str(exc)
+    if message is not None:
+        err.print(f"[red]{escape(message)}[/red]")
+        raise typer.Exit(code=2)
+    if credentials is not None:
+        # Until the command ends, like a Client's credentials.
+        ctx.with_resource(
+            _use_scope(_Scope(credentials=credentials, explicit_credentials=True))
+        )
 
 
 # ── auth ────────────────────────────────────────────────────────────────────
 
+auth_app = typer.Typer(no_args_is_help=True)
+app.add_typer(auth_app, name="auth")
 
-@app.command()
-def auth(
+
+@auth_app.callback()
+def auth_main(ctx: typer.Context) -> None:
+    """Sign in with a Google account, sign out, check status or fetch a token."""
+    if ctx.invoked_subcommand == "token":
+        _use_credentials(ctx)
+
+
+@auth_app.command()
+def login(
+    print_token: bool = typer.Option(
+        False, "--print", help="Print the AAS token to stdout instead of saving it."
+    ),
+    manual: bool = typer.Option(
+        False,
+        "--manual",
+        help="Use your usual browser and paste the oauth_token cookie yourself.",
+    ),
+    insecure_storage: bool = typer.Option(
+        False,
+        "--insecure-storage",
+        help="Save the token in account.json instead of the system keyring.",
+    ),
+) -> None:
+    """Sign in to a Google account in the browser and save it for goopdl."""
+    failure = None
+    try:
+        return _run_login(print_token, manual, insecure_storage)
+    except BaseException as exc:
+        failure = exc.with_traceback(None)
+        failure.__cause__ = failure.__context__ = None
+    # Click must not retain the original authentication exception or its frames.
+    raise failure from None
+
+
+@auth_app.command()
+def logout() -> None:
+    """Remove the saved Google account and every cached token."""
+    path = _account.path()
+    try:
+        record = _account.read()
+    except _account.AccountError:
+        record = None
+    if record is not None and record[1] is None:
+        failure = _account.forget(record[0])
+        if failure is None:
+            rprint("Removed the token from the system keyring.")
+        else:
+            err.print(
+                f"[yellow]Could not remove the token from the system keyring "
+                f"({escape(failure)}).[/yellow]"
+            )
+    record = None
+    try:
+        path.unlink()
+        rprint(f"Removed the saved account {escape(str(path))}")
+    except FileNotFoundError:
+        rprint("No saved account.")
+    except OSError as exc:
+        err.print(
+            f"[red]Could not remove {escape(str(path))}: "
+            f"{escape(exc.strerror or type(exc).__name__)}[/red]"
+        )
+        raise typer.Exit(code=1) from None
+    clear_auth()
+    rprint("[green]All cached tokens removed.[/green]")
+    if _account_env_set():
+        err.print(
+            "[yellow]GOOPDL_ACCOUNT_EMAIL/GOOPDL_AAS_TOKEN are still set, so goopdl "
+            "keeps using that account. Unset them to sign out.[/yellow]"
+        )
+
+
+@auth_app.command()
+def status() -> None:
+    """Show which credentials goopdl uses. Never prints tokens."""
+    try:
+        environment = _env_credentials()
+    except DirectAuthConfigurationError as exc:
+        err.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=2) from None
+    def show(text: str) -> None:
+        # Paths must not wrap: the output is read by people and scripts.
+        console.print(text, soft_wrap=True)
+
+    path = _account.path()
+    env_set = _account_env_set()
+    record = problem = None
+    try:
+        record = _account.read()
+        # The environment wins, so then the keyring is not even read.
+        if record is not None and record[1] is None and not env_set:
+            _account.keyring_token(record[0])
+    except _account.AccountError as exc:
+        problem = str(exc)
+    storage = None
+    if record is not None:
+        storage = "file" if record[1] is not None else "system keyring"
+    email = (environment or record or (None,))[0]
+    environment = record = None  # drop the tokens
+
+    if env_set:
+        mode = "environment (GOOPDL_ACCOUNT_EMAIL, GOOPDL_AAS_TOKEN)"
+    elif problem is not None:
+        mode = "saved account (unusable)"
+    elif email is not None:
+        mode = "saved account"
+    else:
+        mode = "anonymous (token dispenser)"
+    show(f"Mode    : {mode}")
+    if email is not None:
+        show(f"Account : {escape(email)}")
+    if storage == "system keyring" and not env_set:
+        storage += f" ({_account.backend_name()})"
+    if storage is not None:
+        show(f"Storage : {escape(storage)}")
+    if path.exists() or problem is not None:
+        note = " (ignored: the environment takes precedence)" if _account_env_set() else ""
+        show(f"File    : {escape(str(path))}{note}")
+    directory = get_config_dir()
+    tokens = sum(1 for pattern in ("auth-*.json", "token-pool-*.json")
+                 for _ in directory.glob(pattern))
+    devices = sum(1 for _ in directory.glob("direct-device-*.json"))
+    show(
+        f"Cache   : {escape(str(directory))} ({tokens} token file(s), "
+        f"{devices} device registration(s))"
+    )
+    if problem is not None:
+        err.print(f"[yellow]{escape(problem)}[/yellow]")
+
+
+@auth_app.command()
+def token(
     arch: str = typer.Option(
         "arm64",
         help="Device type: arm64, armv7, x86, x86_64 or tv.",
@@ -201,7 +358,6 @@ def auth(
     dispenser: str | None = typer.Option(
         None, "--dispenser", "-d", help="Custom dispenser URL."
     ),
-    clear: bool = typer.Option(False, "--clear", help="Remove all cached tokens."),
     country: str | None = typer.Option(
         None,
         "--country",
@@ -219,16 +375,10 @@ def auth(
 ) -> None:
     """Acquire a Google Play auth token.
 
-    Without direct-auth environment variables, use --country to register the
-    device with a specific region's MCC/MNC, so subsequent info/download calls
-    with the same --country get that
-    region's catalog without needing a proxy.
+    Without a Google account, use --country to register the device with a
+    specific region's MCC/MNC, so subsequent info/download calls with the
+    same --country get that region's catalog without needing a proxy.
     """
-    if clear:
-        clear_auth()
-        rprint("[green]All cached tokens removed.[/green]")
-        raise typer.Exit()
-
     direct = direct_auth_enabled()
     if not direct:
         rprint(f"[dim]Dispenser:[/dim] {dispenser or 'https://auroraoss.com/api/auth'}")
@@ -280,82 +430,47 @@ def auth(
     )
 
 
-@app.command()
+@app.command(hidden=True)
 def aastoken(
-    email: str | None = typer.Argument(None, help="Google account email."),
-    password: str | None = typer.Argument(
-        None, help="App password or oauth2_4 token. Omit for hidden input."
-    ),
-    oauth: bool = typer.Option(
-        False,
-        "--oauth",
-        help="Prompt for a one-time EmbeddedSetup oauth_token instead of a password.",
-    ),
-    browser: bool = typer.Option(
-        False,
-        "--browser",
-        help="Open an isolated Chrome/Edge window and capture the email and oauth_token automatically.",
-    ),
+    args: list[str] | None = typer.Argument(None, hidden=True),
+    oauth: bool = typer.Option(False, "--oauth", help="Same as auth login --manual."),
+    browser: bool = typer.Option(False, "--browser", help="Same as auth login."),
 ) -> None:
-    """Print a Google account AAS token without saving credentials or token files."""
-    failure = None
-    try:
-        return _run_aastoken(email, password, oauth, browser)
-    except BaseException as exc:
-        failure = exc.with_traceback(None)
-        failure.__cause__ = failure.__context__ = None
-    finally:
-        email = password = None
-    # Click must not retain the original authentication exception or its frames.
-    raise failure from None
+    """Deprecated: use goopdl auth login --print."""
+    err.print("[yellow]goopdl aastoken is deprecated, use `goopdl auth login --print`.[/yellow]")
+    if args or (oauth and browser):
+        args = None  # may hold a password
+        err.print("[red]Use only --browser or --oauth; passwords are not supported.[/red]")
+        raise typer.Exit(code=2)
+    login(print_token=True, manual=oauth, insecure_storage=False)
 
 
-def _run_aastoken(email: str | None, password: str | None, oauth: bool, browser: bool) -> None:
-    if oauth and browser:
-        err.print("[red]Use either --oauth or --browser, not both.[/red]")
-        raise typer.Exit(code=2) from None
-    if (oauth or browser) and password is not None:
-        err.print("[red]Do not pass PASSWORD with --oauth or --browser.[/red]")
-        raise typer.Exit(code=2) from None
-    if browser:
-        console.print(
+def _run_login(print_token: bool, manual: bool, insecure: bool) -> None:
+    if manual:
+        email, oauth_token = _prompt_oauth_credentials()
+    else:
+        err.print(
             "Sign in to Google in the new browser window and select [bold]I agree[/bold]."
         )
         try:
-            captured_email, password = capture_oauth_credentials()
+            email, oauth_token = capture_oauth_credentials()
         except BrowserOAuthError:
-            err.print("[red]Browser OAuth capture failed.[/red]")
-            raise typer.Exit(code=1) from None
-        if email is not None and email.casefold() != captured_email.casefold():
             err.print(
-                f"[red]Browser signed in as {escape(captured_email)}, "
-                f"not {escape(email)}.[/red]"
+                "[red]Browser sign-in failed.[/red] Set GOOPDL_BROWSER to a Chrome, "
+                "Edge, Chromium or Brave executable, or run "
+                "[bold]goopdl auth login --manual[/bold]."
             )
-            raise typer.Exit(code=2) from None
-        email = captured_email
-    else:
-        if email is None:
-            email = typer.prompt("Email")
-    if oauth:
-        password = typer.prompt("OAuth token", hide_input=True)
-        assert password is not None
-        if not password.startswith("oauth2_4/"):
-            err.print("[red]OAuth token must start with oauth2_4/.[/red]")
-            raise typer.Exit(code=2) from None
-    elif password is None:
-        password = typer.prompt("Password", hide_input=True)
-    assert email is not None and password is not None
+            raise typer.Exit(code=1) from None
 
     try:
-        token = fetch_aas_token(email, password)
+        aas_token = fetch_aas_token(email, oauth_token)
     except AASTokenError as exc:
         reason = str(exc) if str(exc) in _AUTH_ERROR_CODES else "unknown error"
         err.print(f"[red]Google account authentication failed:[/red] {reason}")
         if str(exc) == "BadAuthentication":
             err.print(
-                "[yellow]Google rejected password authentication. Use "
-                "[bold]goopdl aastoken --oauth[/bold] with an EmbeddedSetup "
-                "oauth_token.[/yellow]"
+                "[yellow]The oauth_token works once and expires quickly. "
+                "Run [bold]goopdl auth login[/bold] again.[/yellow]"
             )
         raise typer.Exit(code=1) from None
     except httpx.HTTPError:
@@ -364,8 +479,96 @@ def _run_aastoken(email: str | None, password: str | None, oauth: bool, browser:
     except ValueError:
         err.print("[red]Invalid Google account credentials.[/red]")
         raise typer.Exit(code=1) from None
+    finally:
+        oauth_token = None
 
-    console.print("AASToken:", token)
+    if print_token:
+        # Plain echo: Rich would wrap the long token at the console width.
+        typer.echo(aas_token)
+        return
+    message = failure = None
+    in_keyring = False
+    try:
+        _checked_credentials(email, aas_token)
+        in_keyring, failure = _account.save(email, aas_token, insecure)
+    except DirectAuthConfigurationError:
+        message = "Google returned an unexpected token; nothing was saved."
+    except OSError as exc:
+        message = f"Could not save the account: {exc.strerror or type(exc).__name__}"
+    finally:
+        aas_token = None
+    if message is not None:
+        err.print(f"[red]{escape(message)}[/red]")
+        raise typer.Exit(code=1)
+    path = _account.path()
+    if failure is not None:
+        err.print(
+            f"[yellow]Could not use the system keyring ({escape(failure)}); "
+            f"saving the token in {escape(str(path))} instead.[/yellow]"
+        )
+    where = (
+        f"the system keyring ({_account.backend_name()})" if in_keyring else str(path)
+    )
+    console.print(f"Logged in as [bold]{escape(email)}[/bold].", soft_wrap=True)
+    console.print(f"Token saved in {escape(where)}.", soft_wrap=True)
+    console.print(
+        "goopdl commands now use this account. See [bold]goopdl auth status[/bold]; "
+        "sign out with [bold]goopdl auth logout[/bold]."
+    )
+    if _account_env_set():
+        err.print(
+            "[yellow]GOOPDL_ACCOUNT_EMAIL/GOOPDL_AAS_TOKEN are set and take "
+            "precedence over the saved account.[/yellow]"
+        )
+
+
+def _prompt_oauth_credentials() -> tuple[str, str]:
+    err.print(
+        "1. Sign in to Google in the page that opens and select [bold]I agree[/bold].\n"
+        f"   If no browser opens, visit {EMBEDDED_SETUP_URL}\n"
+        "2. Open developer tools ([bold]F12[/bold]) → Application → Cookies → "
+        "https://accounts.google.com\n"
+        "3. Copy the [bold]oauth_token[/bold] cookie (it starts with oauth2_4/) "
+        "and paste it below. It works once and expires quickly."
+    )
+    _open_browser(EMBEDDED_SETUP_URL)
+    # Prompts stay off stdout: click's visible prompt writes its last character there.
+    email = err.input("Email: ").strip()
+    oauth_token = typer.prompt("oauth_token", hide_input=True, err=True).strip()
+    if not oauth_token.startswith("oauth2_4/"):
+        oauth_token = None
+        err.print("[red]The oauth_token must start with oauth2_4/.[/red]")
+        raise typer.Exit(code=2)
+    return email, oauth_token
+
+
+def _open_browser(url: str) -> None:
+    """webbrowser.open with stdout pointed at stderr.
+
+    A browser started here inherits stdout; in TOKEN=$(goopdl ...) it would
+    print into the token and keep the shell waiting until it exits.
+    """
+    try:
+        sys.stdout.flush()
+        saved = os.dup(1)
+    except (OSError, ValueError):
+        webbrowser.open(url)
+        return
+    try:
+        os.dup2(2, 1)
+        webbrowser.open(url)
+    except OSError:
+        webbrowser.open(url)
+    finally:
+        os.dup2(saved, 1)
+        os.close(saved)
+
+
+def _account_env_set() -> bool:
+    return any(
+        os.environ.get(name, "").strip()
+        for name in ("GOOPDL_ACCOUNT_EMAIL", "GOOPDL_AAS_TOKEN")
+    )
 
 
 # ── profiles ────────────────────────────────────────────────────────────────
@@ -1442,7 +1645,7 @@ def _require_auth(
     if not data:
         err.print(
             "[red]Could not obtain an auth token. "
-            "Try running [bold]goopdl auth[/bold] first.[/red]"
+            "Try running [bold]goopdl auth token[/bold] first.[/red]"
         )
         raise typer.Exit(code=1) from None
     return data

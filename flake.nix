@@ -36,6 +36,7 @@
                   rich
                   httpx
                   websocket-client
+                  keyring
                 ];
                 # Rich decides the sandbox is a terminal; the tests compare plain text.
                 checkPhase = "TTY_COMPATIBLE=0 python -m unittest discover -s tests";

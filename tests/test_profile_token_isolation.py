@@ -55,7 +55,7 @@ class ProfileTokenIsolationTest(unittest.TestCase):
         unrelated = self.directory / "preferences.json"
         unrelated.write_text('{"keep": true}')
         locks = {path.name: path.read_bytes() for path in self.directory.glob("*.lock")}
-        result = CliRunner().invoke(app, ["auth", "--clear"])
+        result = CliRunner().invoke(app, ["auth", "logout"])
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(self.snapshot(), {unrelated.name: unrelated.read_bytes()})
         self.assertEqual(
@@ -175,7 +175,7 @@ class ProfileTokenIsolationTest(unittest.TestCase):
         pixel = self.token("pixel")
         with patch("goopdl.cli.fetch_token", return_value=pixel):
             result = CliRunner().invoke(
-                app, ["auth", "--country", "US", "--profile", "Pv"]
+                app, ["auth", "token", "--country", "US", "--profile", "Pv"]
             )
         self.assertEqual(0, result.exit_code, result.output)
         self.assertEqual(legacy, auth.load_cached_auth(country="US"))
