@@ -220,7 +220,7 @@ app.add_typer(auth_app, name="auth")
 
 @auth_app.callback()
 def auth_main(ctx: typer.Context) -> None:
-    """Sign in with a Google account, sign out, check status or fetch a token."""
+    """Sign in with a Google account, sign out, check status, clear the cache or fetch a token."""
     if ctx.invoked_subcommand == "token":
         _use_credentials(ctx)
 
@@ -288,6 +288,14 @@ def logout() -> None:
             "[yellow]GOOPDL_ACCOUNT_EMAIL/GOOPDL_AAS_TOKEN are still set, so goopdl "
             "keeps using that account. Unset them to sign out.[/yellow]"
         )
+
+
+@auth_app.command("clear-cache")
+def clear_cache() -> None:
+    """Remove cached tokens and device registrations; keep the saved account."""
+    clear_auth()
+    rprint("[green]All cached tokens and device registrations removed. "
+           "The saved account is kept.[/green]")
 
 
 @auth_app.command()

@@ -297,6 +297,54 @@ class LogoutTest(AccountCase):
         self.assertEqual({("goopdl", EMAIL): AAS}, self.keyring.items)
 
 
+class ClearCacheTest(AccountCase):
+    CACHED = ("auth-arm64.json", "token-pool-arm64.json", "pool-index-arm64.json",
+              "direct-device-abc-arm64-profile-Pv.json")
+
+    def fill_cache(self) -> None:
+        self.config.mkdir(mode=0o700, exist_ok=True)
+        for name in self.CACHED:
+            (self.config / name).write_text("{}")
+
+    def clear_cache(self):
+        result = self.invoke("auth", "clear-cache")
+        self.assertEqual(0, result.exit_code, result.output)
+        self.assertIn("The saved account is kept", result.stdout)
+        self.assertEqual("", result.stderr)
+        return result
+
+    def test_keeps_a_file_or_keyring_account(self) -> None:
+        for data in (IN_FILE, IN_KEYRING):
+            with self.subTest(storage="keyring" if data is IN_KEYRING else "file"):
+                self.save(data)
+                self.fill_cache()
+                self.store()
+                spy = Mock(wraps=self.keyring,
+                           spec=["get_password", "set_password", "delete_password"])
+                self.use(spy)
+                self.clear_cache()
+                self.assertEqual(["account.json"], [p.name for p in self.config.iterdir()])
+                self.assertEqual(json.loads(self.account.read_text()), data)
+                self.assertEqual([], spy.mock_calls)
+                self.assertEqual({("goopdl", EMAIL): AAS}, self.keyring.items)
+
+    def test_without_a_saved_account(self) -> None:
+        backend = self.untouched_keyring()
+        self.clear_cache()
+        self.assertFalse(self.account.exists())
+        self.assertEqual([], backend.mock_calls)
+
+    def test_with_the_environment_account(self) -> None:
+        self.env(self.config, **ENV)
+        self.save()
+        self.fill_cache()
+        backend = self.untouched_keyring()
+        result = self.clear_cache()
+        self.assertNotIn("env@example.test", result.output)
+        self.assertEqual(["account.json"], [p.name for p in self.config.iterdir()])
+        self.assertEqual([], backend.mock_calls)
+
+
 class StatusTest(AccountCase):
     def test_anonymous(self) -> None:
         result = self.invoke("auth", "status")
@@ -571,6 +619,7 @@ class ImportBoundaryTest(unittest.TestCase):
                 "def run(*args):\n"
                 "    result = CliRunner().invoke(cli.app, list(args))\n"
                 "    assert result.exit_code == 0, result.output\n"
+                "run('auth', 'clear-cache')\n"
                 "run('auth', 'status')\n"
                 "run('auth', 'logout')\n"
                 "run('profiles')\n"
@@ -579,6 +628,7 @@ class ImportBoundaryTest(unittest.TestCase):
                 "with open(path, 'w') as f:\n"
                 f"    json.dump({IN_FILE!r}, f)\n"
                 "os.chmod(path, 0o600)\n"
+                "run('auth', 'clear-cache')\n"
                 "run('auth', 'status')\n"
                 "run('auth', 'logout')\n"
                 "assert 'keyring' not in sys.modules\n"
@@ -589,13 +639,13 @@ class HelpTest(AccountCase):
     def test_auth_without_subcommand_shows_help(self) -> None:
         result = self.invoke("auth")
         self.assertIn("Usage:", result.output)
-        for command in ("login", "logout", "status", "token"):
+        for command in ("login", "logout", "clear-cache", "status", "token"):
             self.assertIn(command, result.output)
 
     def test_auth_help_lists_the_subcommands(self) -> None:
         result = self.invoke("auth", "--help")
         self.assertEqual(0, result.exit_code)
-        for command in ("login", "logout", "status", "token"):
+        for command in ("login", "logout", "clear-cache", "status", "token"):
             self.assertIn(command, result.output)
         self.assertNotIn("--clear", self.invoke("auth", "token", "--help").output)
         self.assertIn("--insecure-storage", self.invoke("auth", "login", "--help").output)
