@@ -7,7 +7,6 @@ import logging
 import os
 import re
 import shlex
-import stat
 import sys
 import time
 import webbrowser
@@ -22,7 +21,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from goopdl import __version__
+from goopdl import __version__, _account
 from goopdl.aastoken import AASTokenError, _AUTH_ERROR_CODES, fetch_aas_token
 from goopdl.api import (
     AppNotAvailableError,
@@ -56,7 +55,6 @@ from goopdl.auth import (
     DispenserRateLimitedError,
     DispenserUnavailableError,
     PoolBusyError,
-    _atomic_pool_json,
     _checked_credentials,
     _env_credentials,
     _Scope,
@@ -201,8 +199,8 @@ def _use_credentials(ctx: typer.Context) -> None:
     try:
         if direct_auth_enabled():
             return
-        credentials = _load_account()
-    except (DirectAuthConfigurationError, _AccountFileError) as exc:
+        credentials = _account.load()
+    except (DirectAuthConfigurationError, _account.AccountError) as exc:
         message = str(exc)
     if message is not None:
         err.print(f"[red]{escape(message)}[/red]")
@@ -237,11 +235,16 @@ def login(
         "--manual",
         help="Use your usual browser and paste the oauth_token cookie yourself.",
     ),
+    insecure_storage: bool = typer.Option(
+        False,
+        "--insecure-storage",
+        help="Save the token in account.json instead of the system keyring.",
+    ),
 ) -> None:
     """Sign in to a Google account in the browser and save it for goopdl."""
     failure = None
     try:
-        return _run_login(print_token, manual)
+        return _run_login(print_token, manual, insecure_storage)
     except BaseException as exc:
         failure = exc.with_traceback(None)
         failure.__cause__ = failure.__context__ = None
@@ -252,7 +255,21 @@ def login(
 @auth_app.command()
 def logout() -> None:
     """Remove the saved Google account and every cached token."""
-    path = _account_path()
+    path = _account.path()
+    try:
+        record = _account.read()
+    except _account.AccountError:
+        record = None
+    if record is not None and record[1] is None:
+        failure = _account.forget(record[0])
+        if failure is None:
+            rprint("Removed the token from the system keyring.")
+        else:
+            err.print(
+                f"[yellow]Could not remove the token from the system keyring "
+                f"({escape(failure)}).[/yellow]"
+            )
+    record = None
     try:
         path.unlink()
         rprint(f"Removed the saved account {escape(str(path))}")
@@ -285,26 +302,37 @@ def status() -> None:
         # Paths must not wrap: the output is read by people and scripts.
         console.print(text, soft_wrap=True)
 
-    path = _account_path()
-    saved = problem = None
+    path = _account.path()
+    env_set = _account_env_set()
+    record = problem = None
     try:
-        saved = _load_account()
-    except _AccountFileError as exc:
+        record = _account.read()
+        # The environment wins, so then the keyring is not even read.
+        if record is not None and record[1] is None and not env_set:
+            _account.keyring_token(record[0])
+    except _account.AccountError as exc:
         problem = str(exc)
-    email = (environment or saved or (None,))[0]
-    environment = saved = None  # drop the tokens
+    storage = None
+    if record is not None:
+        storage = "file" if record[1] is not None else "system keyring"
+    email = (environment or record or (None,))[0]
+    environment = record = None  # drop the tokens
 
-    if _account_env_set():
+    if env_set:
         mode = "environment (GOOPDL_ACCOUNT_EMAIL, GOOPDL_AAS_TOKEN)"
-    elif email is not None:
-        mode = "saved account"
     elif problem is not None:
         mode = "saved account (unusable)"
+    elif email is not None:
+        mode = "saved account"
     else:
         mode = "anonymous (token dispenser)"
     show(f"Mode    : {mode}")
     if email is not None:
         show(f"Account : {escape(email)}")
+    if storage == "system keyring" and not env_set:
+        storage += f" ({_account.backend_name()})"
+    if storage is not None:
+        show(f"Storage : {escape(storage)}")
     if path.exists() or problem is not None:
         note = " (ignored: the environment takes precedence)" if _account_env_set() else ""
         show(f"File    : {escape(str(path))}{note}")
@@ -414,10 +442,10 @@ def aastoken(
         args = None  # may hold a password
         err.print("[red]Use only --browser or --oauth; passwords are not supported.[/red]")
         raise typer.Exit(code=2)
-    login(print_token=True, manual=oauth)
+    login(print_token=True, manual=oauth, insecure_storage=False)
 
 
-def _run_login(print_token: bool, manual: bool) -> None:
+def _run_login(print_token: bool, manual: bool, insecure: bool) -> None:
     if manual:
         email, oauth_token = _prompt_oauth_credentials()
     else:
@@ -458,10 +486,11 @@ def _run_login(print_token: bool, manual: bool) -> None:
         # Plain echo: Rich would wrap the long token at the console width.
         typer.echo(aas_token)
         return
-    message = None
+    message = failure = None
+    in_keyring = False
     try:
         _checked_credentials(email, aas_token)
-        path = _save_account(email, aas_token)
+        in_keyring, failure = _account.save(email, aas_token, insecure)
     except DirectAuthConfigurationError:
         message = "Google returned an unexpected token; nothing was saved."
     except OSError as exc:
@@ -471,7 +500,17 @@ def _run_login(print_token: bool, manual: bool) -> None:
     if message is not None:
         err.print(f"[red]{escape(message)}[/red]")
         raise typer.Exit(code=1)
-    console.print(f"Logged in as [bold]{escape(email)}[/bold] ({escape(str(path))}).")
+    path = _account.path()
+    if failure is not None:
+        err.print(
+            f"[yellow]Could not use the system keyring ({escape(failure)}); "
+            f"saving the token in {escape(str(path))} instead.[/yellow]"
+        )
+    where = (
+        f"the system keyring ({_account.backend_name()})" if in_keyring else str(path)
+    )
+    console.print(f"Logged in as [bold]{escape(email)}[/bold].", soft_wrap=True)
+    console.print(f"Token saved in {escape(where)}.", soft_wrap=True)
     console.print(
         "goopdl commands now use this account. See [bold]goopdl auth status[/bold]; "
         "sign out with [bold]goopdl auth logout[/bold]."
@@ -525,78 +564,11 @@ def _open_browser(url: str) -> None:
         os.close(saved)
 
 
-# Only the CLI reads account.json; the library and Client never do.
-ACCOUNT_FILE = "account.json"
-
-
-class _AccountFileError(Exception):
-    """account.json is unusable; the message names only its path."""
-
-
-def _account_path() -> Path:
-    return get_config_dir() / ACCOUNT_FILE
-
-
 def _account_env_set() -> bool:
     return any(
         os.environ.get(name, "").strip()
         for name in ("GOOPDL_ACCOUNT_EMAIL", "GOOPDL_AAS_TOKEN")
     )
-
-
-def _save_account(email: str, aas_token: str) -> Path:
-    """Write account.json atomically, 0600 in the 0700 config directory."""
-    path = _account_path()
-    _atomic_pool_json(path, {"v": 1, "email": email, "aas_token": aas_token})
-    return path
-
-
-def _load_account() -> tuple[str, str] | None:
-    """Return the saved (email, aas_token); None without a file.
-
-    Raises _AccountFileError for a file that is unreadable, malformed or, on
-    POSIX, not a regular file private to this user.
-    """
-    path = _account_path()
-    private = (
-        f"Refusing to use {path}: it must be a regular file that only you can "
-        f"read. Run: chmod 600 {path}"
-    )
-    try:
-        fd = os.open(
-            path,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
-        )
-    except FileNotFoundError:
-        return None
-    except OSError:
-        raise _AccountFileError(private) from None
-    credentials = data = None
-    try:
-        info = os.fstat(fd)
-        if os.name != "nt" and (
-            not stat.S_ISREG(info.st_mode)
-            or info.st_uid != os.getuid()
-            or info.st_mode & 0o077
-        ):
-            raise _AccountFileError(private)
-        with open(fd, encoding="utf-8", closefd=False) as stream:
-            data = json.load(stream)
-        if isinstance(data, dict) and data.get("v") == 1:
-            email, aas_token = data.get("email"), data.get("aas_token")
-            if isinstance(email, str) and isinstance(aas_token, str):
-                credentials = _checked_credentials(email, aas_token)
-    except (OSError, ValueError):  # JSON, UTF-8 and credential checks
-        pass
-    finally:
-        data = email = aas_token = None
-        os.close(fd)
-    if credentials is None:
-        raise _AccountFileError(
-            f"Saved account {path} is invalid. Run goopdl auth login again, "
-            "or goopdl auth logout to remove it."
-        )
-    return credentials
 
 
 # ── profiles ────────────────────────────────────────────────────────────────

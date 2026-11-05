@@ -143,7 +143,7 @@ class AdbInstallTipTest(unittest.TestCase):
 
                     with (
                         patch("goopdl.cli.direct_auth_enabled", return_value=False),
-                        patch("goopdl.cli._load_account", return_value=None),
+                        patch("goopdl._account.load", return_value=None),
                         patch("goopdl.cli.pick_pool_token", return_value={"authToken": "token"}),
                         patch(
                             "goopdl.cli._acquire_delivery",

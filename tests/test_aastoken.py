@@ -163,7 +163,7 @@ class AASTokenTest(unittest.TestCase):
                 self.assertEqual(0, result.exit_code, result.output)
                 self.assertEqual("aas_et/t\n", result.stdout)
                 self.assertIn("goopdl auth login --print", result.stderr)
-                self.assertEqual(manual, run.call_args.args[-1])
+                self.assertEqual((True, manual, False), run.call_args.args)
 
     def test_aastoken_rejects_email_and_password(self) -> None:
         for args in (["user@example.com", "secret-password"], ["user@example.com", "--browser"],

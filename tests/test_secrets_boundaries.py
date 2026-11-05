@@ -15,7 +15,9 @@ import typer
 from typer.testing import CliRunner
 
 from _envutil import isolated_env
-from goopdl import _http, aastoken, api, auth, browser_oauth, cli, download
+from _fakekeyring import LockedKeyring, MemoryKeyring, NoKeyring
+from _fakekeyring import use as use_keyring
+from goopdl import _account, _http, aastoken, api, auth, browser_oauth, cli, download
 
 
 EMAIL = "EMAIL_SENTINEL@example.test"
@@ -206,9 +208,13 @@ class SavedAccountBoundariesTest(BoundaryCase):
         directory = tempfile.TemporaryDirectory(dir=tempfile.gettempdir())
         self.addCleanup(directory.cleanup)
         self.path = Path(directory.name) / "account.json"
-        account = patch.object(cli, "_account_path", return_value=self.path)
-        account.start()
-        self.addCleanup(account.stop)
+        self.env.stop()
+        self.env = isolated_env({"GOOPDL_CONFIG_DIR": directory.name})
+        self.env.start()
+        self.keyring = MemoryKeyring()
+        backend = use_keyring(self.keyring)
+        backend.start()
+        self.addCleanup(backend.stop)
 
     def write(self, text, mode=0o600):
         self.path.write_text(text)
@@ -226,8 +232,8 @@ class SavedAccountBoundariesTest(BoundaryCase):
         for text, mode in cases:
             with self.subTest(text=text[-20:], mode=oct(mode)):
                 self.write(text, mode)
-                error = caught(cli._load_account)
-                self.assertIsInstance(error, cli._AccountFileError)
+                error = caught(_account.load)
+                self.assertIsInstance(error, _account.AccountError)
                 self.assert_sanitized(error)
                 ctx = Mock()
                 with patch.object(cli.err, "print") as output:
@@ -238,24 +244,69 @@ class SavedAccountBoundariesTest(BoundaryCase):
                     self.assertNotIn(needle, repr(output.call_args_list))
                 ctx.with_resource.assert_not_called()
 
-    def test_login_save_failure_is_sanitized(self):
+    def login(self, **patches):
+        """Return (the exception or None, everything printed)."""
+        error = None
         with patch.object(cli, "capture_oauth_credentials", return_value=(EMAIL, OAUTH)), \
                 patch.object(cli, "fetch_aas_token", return_value=self.AAS), \
-                patch.object(cli, "_save_account", side_effect=PermissionError(13, "denied")), \
-                patch.object(cli.err, "print") as output, patch.object(cli.console, "print"):
-            error = caught(lambda: cli.login(print_token=False, manual=False))
-        self.assertEqual(error.exit_code, 1)
-        self.assertNotIn("PASS_SENTINEL", repr(output.call_args_list))
-        self.assert_sanitized(error)
+                patch.multiple(_account, FILE=_account.FILE, **patches), \
+                patch.object(cli.err, "print") as output, \
+                patch.object(cli.console, "print") as printed:
+            try:
+                cli.login(print_token=False, manual=False, insecure_storage=False)
+            except BaseException as exc:
+                error = exc
+        return error, repr(output.call_args_list) + repr(printed.call_args_list)
+
+    def test_login_save_failure_is_sanitized(self):
+        for patches in ({"save": Mock(side_effect=PermissionError(13, "denied"))},
+                        {"_atomic_pool_json": Mock(side_effect=PermissionError(13, "denied"))}):
+            with self.subTest(patches=list(patches)):
+                error, output = self.login(**patches)
+                self.assertEqual(error.exit_code, 1)
+                self.assertNotIn("PASS_SENTINEL", output)
+                self.assert_sanitized(error)
+        self.assertEqual({}, self.keyring.items)  # no orphan left behind
+
+    def test_keyring_failures_are_sanitized(self):
+        # The fakes put their arguments, token included, in the exception message.
+        for backend in (NoKeyring(), LockedKeyring()):
+            with self.subTest(backend=backend.name), use_keyring(backend):
+                error, output = self.login()
+                self.assertIsNone(error)
+                self.assertIn("NoKeyringError" if isinstance(backend, NoKeyring)
+                              else "RuntimeError", output)
+                self.assertIn("PASS_SENTINEL", self.path.read_text())  # the fallback
+                for needle in NEEDLES[1:]:
+                    self.assertNotIn(needle, output)
+                self.path.write_text(json.dumps(
+                    {"v": 1, "email": EMAIL, "storage": "keyring"}))
+                error = caught(_account.load)
+                self.assertIsInstance(error, _account.AccountError)
+                self.assert_sanitized(error)
+                ctx = Mock()
+                with patch.object(cli.err, "print") as printed:
+                    failure = caught(lambda ctx=ctx: cli._use_credentials(ctx))
+                self.assertEqual(2, failure.exit_code)
+                self.assert_sanitized(failure)
+                for needle in NEEDLES:
+                    self.assertNotIn(needle, repr(printed.call_args_list))
+                result = CliRunner().invoke(cli.app, ["auth", "logout"])
+                self.assertEqual(0, result.exit_code, result.output)
+                for needle in NEEDLES[1:]:
+                    self.assertNotIn(needle, result.output)
 
     def test_status_and_logout_print_no_token(self):
-        self.write(json.dumps({"v": 1, "email": "user@example.test", "aas_token": self.AAS}))
-        for command in (["auth", "status"], ["auth", "logout"]):
-            with self.subTest(command=command[1]):
-                result = CliRunner().invoke(cli.app, command)
-                self.assertEqual(result.exit_code, 0, result.output)
-                self.assertNotIn("PASS_SENTINEL", result.output)
-        self.assertFalse(self.path.exists())
+        self.keyring.set_password(_account.SERVICE, "user@example.test", self.AAS)
+        for record in ({"aas_token": self.AAS}, {"storage": "keyring"}):
+            self.write(json.dumps({"v": 1, "email": "user@example.test", **record}))
+            for command in (["auth", "status"], ["auth", "logout"]):
+                with self.subTest(record=list(record), command=command[1]):
+                    result = CliRunner().invoke(cli.app, command)
+                    self.assertEqual(result.exit_code, 0, result.output)
+                    self.assertNotIn("PASS_SENTINEL", result.output)
+            self.assertFalse(self.path.exists())
+        self.assertEqual({}, self.keyring.items)
 
 
 class LockBoundariesTest(BoundaryCase):
