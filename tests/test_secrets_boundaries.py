@@ -84,19 +84,20 @@ class AccountBoundariesTest(BoundaryCase):
                 self.assertEqual(post.call_count, 1)
                 self.assert_sanitized(error)
 
-    def test_aas_transport_status_and_password_errors_are_sanitized(self):
-        for mode in ("transport", "status", "password"):
+    def test_aas_transport_status_and_non_oauth_errors_are_sanitized(self):
+        for mode in ("transport", "status", "not-oauth"):
             with self.subTest(mode=mode):
                 def post(*args, mode=mode, **kwargs):
                     request = httpx.Request("POST", aastoken.AUTH_URL, data=kwargs["data"])
                     if mode == "transport":
                         raise httpx.ConnectError(OAUTH, request=request)
                     return httpx.Response(503, text=OAUTH, request=request)
-                with patch.object(httpx, "post", side_effect=post):
+                with patch.object(httpx, "post", side_effect=post) as sent:
                     error = caught(lambda mode=mode: aastoken.fetch_aas_token(
-                        EMAIL, "p" * 200 if mode == "password" else OAUTH
+                        EMAIL, "PASS_SENTINEL" if mode == "not-oauth" else OAUTH
                     ))
-                self.assertIsInstance(error, ValueError if mode == "password" else httpx.HTTPError)
+                self.assertEqual(sent.call_count, mode != "not-oauth")
+                self.assertIsInstance(error, ValueError if mode == "not-oauth" else httpx.HTTPError)
                 if mode == "transport":
                     self.assertIsInstance(error, httpx.ConnectError)
                 if mode == "status":
@@ -110,8 +111,9 @@ class AccountBoundariesTest(BoundaryCase):
                       httpx.ConnectError(OAUTH), ValueError("invalid credentials")):
             with self.subTest(error=type(error)), patch.object(
                 cli, "fetch_aas_token", side_effect=error
-            ), patch.object(cli.err, "print") as output:
-                failure = caught(lambda: cli.aastoken(EMAIL, OAUTH, oauth=False, browser=False))
+            ), patch.object(cli, "capture_oauth_credentials", return_value=(EMAIL, OAUTH)), \
+                    patch.object(cli.err, "print") as output:
+                failure = caught(lambda: cli.login(print_token=True, manual=False))
                 self.assertIsInstance(failure, typer.Exit)
                 self.assertEqual(failure.exit_code, 1)
                 self.assertNotIn("OAUTH_SENTINEL", repr(output.call_args_list))
@@ -121,16 +123,25 @@ class AccountBoundariesTest(BoundaryCase):
         with patch.object(cli, "capture_oauth_credentials", side_effect=(
             browser_oauth.BrowserOAuthError(OAUTH)
         )), patch.object(cli.err, "print") as output, patch.object(cli.console, "print"):
-            error = caught(lambda: cli.aastoken(EMAIL, None, oauth=False, browser=True))
+            error = caught(lambda: cli.login(print_token=True, manual=False))
         self.assertEqual(error.exit_code, 1)
         self.assertNotIn("OAUTH_SENTINEL", repr(output.call_args_list))
         self.assert_sanitized(error)
 
-    def test_cli_validation_clears_captured_credentials(self):
-        with patch.object(cli, "capture_oauth_credentials", return_value=(EMAIL, OAUTH)), \
-                patch.object(cli.err, "print"), patch.object(cli.console, "print"):
-            error = caught(lambda: cli.aastoken("other@example.test", None, oauth=False, browser=True))
+    def test_cli_manual_validation_clears_the_pasted_secret(self):
+        with patch.object(cli.typer, "prompt", return_value="PASS_SENTINEL"), \
+                patch.object(cli.err, "input", return_value=EMAIL), \
+                patch.object(cli.webbrowser, "open"), patch.object(cli.err, "print") as output:
+            error = caught(lambda: cli.login(print_token=True, manual=True))
         self.assertEqual(error.exit_code, 2)
+        self.assertNotIn("PASS_SENTINEL", repr(output.call_args_list))
+        self.assert_sanitized(error)
+
+    def test_cli_aastoken_rejects_positional_secrets_unchained(self):
+        with patch.object(cli.err, "print") as output:
+            error = caught(lambda: cli.aastoken([EMAIL, "PASS_SENTINEL"], oauth=False, browser=False))
+        self.assertEqual(error.exit_code, 2)
+        self.assertNotIn("PASS_SENTINEL", repr(output.call_args_list))
         self.assert_sanitized(error)
 
     def test_browser_cdp_error_after_cookie_capture(self):

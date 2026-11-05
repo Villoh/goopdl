@@ -442,7 +442,7 @@ class DirectAuthTest(unittest.TestCase):
             patch("goopdl.cli.fetch_token", return_value=bundle),
             patch("goopdl.cli.save_auth") as save_auth,
         ):
-            result = CliRunner().invoke(app, ["auth"])
+            result = CliRunner().invoke(app, ["auth", "token"])
 
         self.assertEqual(0, result.exit_code)
         self.assertIn("Authenticated", result.output)

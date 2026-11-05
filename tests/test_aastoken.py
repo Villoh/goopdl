@@ -1,16 +1,18 @@
-import base64
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
 from subprocess import TimeoutExpired
 from unittest.mock import Mock, call, patch
 
+import typer
 from typer.testing import CliRunner
 
-from goopdl.aastoken import AASTokenError, encrypt_password, fetch_aas_token
+from _envutil import isolated_env
+from goopdl import cli
+from goopdl.aastoken import AASTokenError, fetch_aas_token
 from goopdl.browser_oauth import (
+    EMBEDDED_SETUP_URL,
     BrowserOAuthError,
     WebSocketException,
     _browser_candidates,
@@ -18,27 +20,17 @@ from goopdl.browser_oauth import (
     _profile_email,
     _wait_for_oauth_credentials,
 )
-from goopdl import cli
 from goopdl.cli import app
 
 
 class AASTokenTest(unittest.TestCase):
-    def test_encrypted_password_has_google_header_and_rsa_payload(self) -> None:
-        encrypted = base64.urlsafe_b64decode(
-            encrypt_password("user@example.com", "secret")
-        )
-        self.assertEqual(133, len(encrypted))
-        self.assertEqual(0, encrypted[0])
-
-    @patch("goopdl.aastoken.httpx.post")
-    def test_fetches_token_without_logging_or_files(self, post: Mock) -> None:
-        post.return_value = Mock(text="SID=ignored\nToken=aas-token\n")
-
-        self.assertEqual("aas-token", fetch_aas_token("user@example.com", "secret"))
-        request = post.call_args.kwargs
-        self.assertEqual("GoogleAuth/1.4", request["headers"]["User-Agent"])
-        self.assertEqual("240913000", request["data"]["google_play_services_version"])
-        self.assertEqual("ac2dm", request["data"]["service"])
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory(dir=tempfile.gettempdir())
+        self.addCleanup(directory.cleanup)
+        self.config = Path(directory.name).resolve()
+        environment = isolated_env({"GOOPDL_CONFIG_DIR": str(self.config)})
+        environment.start()
+        self.addCleanup(environment.stop)
 
     @patch("goopdl.aastoken.httpx.post")
     def test_exchanges_embedded_setup_oauth_token(self, post: Mock) -> None:
@@ -50,86 +42,138 @@ class AASTokenTest(unittest.TestCase):
         request = post.call_args.kwargs
         self.assertEqual("oauth2_4/one-time-token", request["data"]["Token"])
         self.assertEqual("1", request["data"]["ACCESS_TOKEN"])
+        self.assertEqual("ac2dm", request["data"]["service"])
         self.assertEqual("com.google.android.gms", request["headers"]["app"])
         self.assertNotIn("EncryptedPasswd", request["data"])
+
+    @patch("goopdl.aastoken.httpx.post")
+    def test_rejects_anything_but_an_oauth_token_without_a_request(
+        self, post: Mock
+    ) -> None:
+        for value in ("app-password-secret", "aas_et/secret", "", None):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError) as caught:
+                    fetch_aas_token("user@example.com", value)  # type: ignore[arg-type]
+                self.assertEqual("Invalid Google account credentials.", str(caught.exception))
+                self.assertNotIsInstance(caught.exception, AASTokenError)
+        post.assert_not_called()
 
     @patch("goopdl.aastoken.httpx.post")
     def test_reports_google_error_code(self, post: Mock) -> None:
         post.return_value = Mock(text="Error=BadAuthentication\n")
 
         with self.assertRaisesRegex(AASTokenError, "BadAuthentication"):
-            fetch_aas_token("user@example.com", "wrong")
+            fetch_aas_token("user@example.com", "oauth2_4/expired")
 
-    @patch("goopdl.cli.fetch_aas_token", return_value="aas-token")
-    def test_argument_mode(self, fetch: Mock) -> None:
-        result = CliRunner().invoke(app, ["aastoken", "user@example.com", "secret"])
-
-        self.assertEqual(0, result.exit_code)
-        self.assertIn("AASToken: aas-token", result.output)
-        fetch.assert_called_once_with("user@example.com", "secret")
-
-    def test_long_token_stays_on_one_line_at_80_columns(self) -> None:
-        token = "aas_et/" + "A" * 300
-        with patch("goopdl.cli.fetch_aas_token", return_value=token), patch.object(
-            cli.console, "_width", 80
+    def _login(self, *args: str, token: str = "aas_et/token", **capture: object):
+        capture.setdefault("return_value", ("user@example.com", "oauth2_4/one-time-token"))
+        with (
+            patch("goopdl.cli.fetch_aas_token", return_value=token) as fetch,
+            patch("goopdl.cli.capture_oauth_credentials", **capture) as browser,
+            patch("webbrowser.open") as opened,
+            patch.object(cli.console, "_width", 80),
+            patch.object(cli.err, "_width", 80),
         ):
-            result = CliRunner().invoke(app, ["aastoken", "user@example.com", "secret"])
+            result = CliRunner().invoke(app, ["auth", "login", *args])
+        return result, fetch, browser, opened
 
-        self.assertEqual(0, result.exit_code)
-        self.assertEqual(f"AASToken: {token}\n", result.stdout)
+    def test_print_writes_only_the_token_on_one_line(self) -> None:
+        token = "aas_et/" + "A" * 300
+        result, fetch, browser, opened = self._login("--print", token=token)
 
-    @patch("goopdl.cli.fetch_aas_token", side_effect=AASTokenError("BadAuthentication"))
-    def test_bad_authentication_explains_app_password(self, fetch: Mock) -> None:
-        result = CliRunner().invoke(app, ["aastoken", "user@example.com", "wrong"])
-
-        self.assertEqual(1, result.exit_code)
-        self.assertIn("BadAuthentication", result.output)
-        self.assertIn("--oauth", result.output)
-        self.assertNotIn("wrong", result.output)
-
-    @patch("goopdl.cli.fetch_aas_token", return_value="aas-token")
-    def test_oauth_mode_hides_one_time_token(self, fetch: Mock) -> None:
-        result = CliRunner().invoke(
-            app,
-            ["aastoken", "--oauth"],
-            input="user@example.com\noauth2_4/one-time-token\n",
-        )
-
-        self.assertEqual(0, result.exit_code)
-        self.assertIn("AASToken: aas-token", result.output)
+        self.assertEqual(0, result.exit_code, result.output)
+        self.assertEqual(token + "\n", result.stdout)
+        self.assertIn("I agree", result.stderr)
         self.assertNotIn("one-time-token", result.output)
+        browser.assert_called_once_with()
+        opened.assert_not_called()
         fetch.assert_called_once_with("user@example.com", "oauth2_4/one-time-token")
 
-    @patch("goopdl.cli.fetch_aas_token", return_value="aas-token")
+    def test_browser_failure_suggests_manual_mode(self) -> None:
+        result, fetch, _, _ = self._login(
+            "--print", side_effect=BrowserOAuthError("Chrome was not found")
+        )
+
+        self.assertEqual(1, result.exit_code)
+        self.assertEqual("", result.stdout)
+        self.assertIn("goopdl auth login --manual", " ".join(result.stderr.split()))
+        fetch.assert_not_called()
+
+    def test_manual_mode_opens_browser_and_hides_the_oauth_token(self) -> None:
+        # A real hidden prompt writes to the terminal; CliRunner's would hit stdout.
+        with (
+            patch("typer.prompt", return_value=" oauth2_4/one-time-token ") as prompt,
+            patch("goopdl.cli.fetch_aas_token", return_value="aas_et/token") as fetch,
+            patch("goopdl.cli.capture_oauth_credentials") as browser,
+            patch("webbrowser.open") as opened,
+        ):
+            result = CliRunner().invoke(
+                app, ["auth", "login", "--manual", "--print"], input="user@example.com\n"
+            )
+
+        self.assertEqual(0, result.exit_code, result.output)
+        self.assertEqual("aas_et/token\n", result.stdout)
+        self.assertNotIn("one-time-token", result.output)
+        self.assertIn("F12", result.stderr)
+        opened.assert_called_once_with(EMBEDDED_SETUP_URL)
+        browser.assert_not_called()
+        fetch.assert_called_once_with("user@example.com", "oauth2_4/one-time-token")
+        prompt.assert_called_once()
+        self.assertTrue(prompt.call_args.kwargs["hide_input"])
+        self.assertTrue(prompt.call_args.kwargs["err"])
+
+    def test_manual_mode_rejects_a_token_without_prefix(self) -> None:
+        with (
+            patch("typer.prompt", return_value="secret-password"),
+            patch("goopdl.cli.fetch_aas_token") as fetch,
+            patch("webbrowser.open"),
+        ):
+            result = CliRunner().invoke(
+                app, ["auth", "login", "--manual", "--print"], input="user@example.com\n"
+            )
+
+        self.assertEqual(2, result.exit_code)
+        self.assertIn("oauth2_4/", result.stderr)
+        self.assertNotIn("secret-password", result.output)
+        self.assertEqual("", result.stdout)
+        fetch.assert_not_called()
+
+    @patch("goopdl.cli.fetch_aas_token", side_effect=AASTokenError("BadAuthentication"))
     @patch(
         "goopdl.cli.capture_oauth_credentials",
         return_value=("user@example.com", "oauth2_4/one-time-token"),
     )
-    def test_browser_mode_captures_email_and_oauth_token(
+    def test_bad_authentication_suggests_signing_in_again(
         self, capture: Mock, fetch: Mock
     ) -> None:
-        result = CliRunner().invoke(app, ["aastoken", "--browser"])
+        result = CliRunner().invoke(app, ["auth", "login", "--print"])
 
-        self.assertEqual(0, result.exit_code)
-        self.assertIn("AASToken: aas-token", result.output)
+        self.assertEqual(1, result.exit_code)
+        self.assertIn("BadAuthentication", result.stderr)
+        self.assertIn("goopdl auth login", result.stderr)
         self.assertNotIn("one-time-token", result.output)
-        capture.assert_called_once_with()
-        fetch.assert_called_once_with("user@example.com", "oauth2_4/one-time-token")
 
-    @patch("goopdl.cli.fetch_aas_token")
-    @patch(
-        "goopdl.cli.capture_oauth_credentials",
-        return_value=("other@example.com", "oauth2_4/one-time-token"),
-    )
-    def test_browser_mode_rejects_explicit_email_mismatch(
-        self, capture: Mock, fetch: Mock
-    ) -> None:
-        result = CliRunner().invoke(app, ["aastoken", "user@example.com", "--browser"])
+    def test_aastoken_is_hidden_deprecated_and_delegates(self) -> None:
+        self.assertNotIn("aastoken", CliRunner().invoke(app, ["--help"]).output)
+        for args, manual in (([], False), (["--browser"], False), (["--oauth"], True)):
+            with self.subTest(args=args), patch(
+                "goopdl.cli._run_login", side_effect=lambda *_: typer.echo("aas_et/t")
+            ) as run:
+                result = CliRunner().invoke(app, ["aastoken", *args])
+                self.assertEqual(0, result.exit_code, result.output)
+                self.assertEqual("aas_et/t\n", result.stdout)
+                self.assertIn("goopdl auth login --print", result.stderr)
+                self.assertEqual(manual, run.call_args.args[-1])
 
-        self.assertEqual(2, result.exit_code)
-        self.assertIn("other@example.com", result.output)
-        fetch.assert_not_called()
-        capture.assert_called_once_with()
+    def test_aastoken_rejects_email_and_password(self) -> None:
+        for args in (["user@example.com", "secret-password"], ["user@example.com", "--browser"],
+                     ["--oauth", "--browser"]):
+            with self.subTest(args=args), patch("goopdl.cli._run_login") as run:
+                result = CliRunner().invoke(app, ["aastoken", *args])
+                self.assertEqual(2, result.exit_code)
+                self.assertIn("goopdl auth login --print", result.stderr)
+                self.assertNotIn("secret-password", result.output)
+                run.assert_not_called()
 
     @patch("goopdl.browser_oauth.shutil.which")
     def test_browser_candidates_include_brave_executable(self, which: Mock) -> None:
@@ -245,28 +289,6 @@ class AASTokenTest(unittest.TestCase):
         }
 
         self.assertEqual("user@example.com", _profile_email(response))
-
-    @patch("goopdl.cli.fetch_aas_token", return_value="aas-token")
-    def test_interactive_mode_hides_password_and_creates_no_files(
-        self, fetch: Mock
-    ) -> None:
-        runner = CliRunner()
-        original_cwd = Path.cwd()
-        with tempfile.TemporaryDirectory() as tmp:
-            try:
-                os.chdir(tmp)
-                result = runner.invoke(
-                    app, ["aastoken"], input="user@example.com\nsecret\n"
-                )
-
-                self.assertEqual(0, result.exit_code)
-                self.assertNotIn("secret", result.output)
-                self.assertIn("AASToken: aas-token", result.output)
-                self.assertFalse(Path("credentials.txt").exists())
-                self.assertFalse(Path("token.txt").exists())
-            finally:
-                os.chdir(original_cwd)
-        fetch.assert_called_once_with("user@example.com", "secret")
 
 
 if __name__ == "__main__":
