@@ -14,8 +14,10 @@ Run `goopdl COMMAND --help` for the same information in your terminal.
 | [`search`](#search) | Search Google Play |
 | [`list-splits`](#list-splits) | List an app's split APKs |
 | [`profiles`](#profiles) | List bundled device profiles |
-| [`auth`](#auth) | Get and cache an anonymous token |
-| [`aastoken`](#aastoken) | Print a Google account AAS token |
+| [`auth login`](#auth-login) | Sign in with a Google account and save it |
+| [`auth logout`](#auth-logout) | Remove the saved account and every cached token |
+| [`auth status`](#auth-status) | Show which credentials goopdl uses |
+| [`auth token`](#auth-token) | Get and cache an anonymous token |
 
 ## Common flags
 
@@ -256,45 +258,72 @@ goopdl profiles --arch arm64 # one architecture
 
 ## `auth`
 
-Gets an anonymous token from the dispenser and caches it. See
-[authentication](authentication.md) for both auth modes.
+Manages credentials. Run `goopdl auth` alone for the list of subcommands.
+[Authentication](authentication.md) explains both auth modes.
+
+### `auth login`
+
+Signs in to a Google account in a browser and saves it for
+[Google account mode](authentication.md#google-account). Later commands use it
+until you run `auth logout`. `GOOPDL_ACCOUNT_EMAIL` and `GOOPDL_AAS_TOKEN`
+take precedence over it.
 
 ```bash
-goopdl auth
-goopdl auth --arch armv7
-goopdl auth --country IN
-goopdl auth --profile "Galaxy S25 Ultra"
-goopdl auth --clear
+goopdl auth login                     # isolated browser window, recommended
+goopdl auth login --manual            # your usual browser, paste the oauth_token
+TOKEN=$(goopdl auth login --print)    # print the AAS token, save nothing
+```
+
+| Flag | Default | Description |
+| ---- | ------- | ----------- |
+| `--print` | off | Print only the AAS token on stdout instead of saving the account. Messages go to stderr |
+| `--manual` | off | Open Google EmbeddedSetup in your usual browser and ask for the email and the `oauth_token` cookie |
+
+[Getting an AAS token](authentication.md#getting-an-aas-token) walks through
+both modes. `goopdl aastoken` still works as a hidden, deprecated alias of
+`auth login --print`; it accepts only `--browser` and `--oauth` (same as
+`--manual`).
+
+### `auth logout`
+
+Deletes the saved account, every cached token, and the
+[account-mode device records](authentication.md#what-account-mode-saves). If
+`GOOPDL_ACCOUNT_EMAIL` or `GOOPDL_AAS_TOKEN` is still set, it warns that
+goopdl keeps using them.
+
+```bash
+goopdl auth logout
+```
+
+### `auth status`
+
+Shows the active mode (`environment`, `saved account`, or `anonymous`), the
+account email, and a summary of the cache. It never prints a token. An
+unusable saved account is reported on stderr. Exits `2` if only one of the
+account variables is set.
+
+```bash
+goopdl auth status
+```
+
+### `auth token`
+
+Gets an anonymous token from the dispenser and caches it. With a Google
+account it signs in to Google instead and caches nothing but the device
+registration.
+
+```bash
+goopdl auth token
+goopdl auth token --arch armv7
+goopdl auth token --country IN
+goopdl auth token --profile "Galaxy S25 Ultra"
 ```
 
 | Flag | Short | Default | Description |
 | ---- | ----- | ------- | ----------- |
-| `--clear` | | off | Delete every cached token and [account-mode device record](authentication.md#what-account-mode-saves) |
 | `--country` | `-c` | — | Register the device with that country's MCC/MNC, so later calls with the same `--country` see its catalog without a proxy |
 
 Also accepts the [common flags](#common-flags).
-
----
-
-## `aastoken`
-
-Prints a Google account AAS token for
-[Google account mode](authentication.md#google-account). It saves no
-credentials or tokens.
-
-```bash
-goopdl aastoken --browser                 # recommended
-goopdl aastoken --oauth                   # paste an oauth_token yourself
-goopdl aastoken [EMAIL] [PASSWORD]        # password mode, usually rejected
-```
-
-| Flag | Description |
-| ---- | ----------- |
-| `--browser` | Open an isolated browser window and capture the login automatically |
-| `--oauth` | Prompt for a one-time `oauth_token` instead of a password |
-
-[Getting an AAS token](authentication.md#getting-an-aas-token) walks through
-each mode.
 
 ---
 
@@ -304,7 +333,7 @@ each mode.
 | ---- | ------- |
 | `0` | Success |
 | `1` | Other error |
-| `2` | Invalid input or configuration, such as only one Google account variable set |
+| `2` | Invalid input or configuration, such as only one Google account variable set or an unusable saved account |
 | `3` | Authentication failed: the dispenser rejected every device profile, is down or unreachable, or Google account sign-in failed. `download` also exits `3` when the token pool is busy |
 | `4` | Version unavailable (HTTP 404 or confirmed unavailable) |
 | `5` | Rate limited (HTTP 429): by Google Play after retries in `download`, `fast-download`, `latest`, and `inspect-delivery`, or by the token dispenser when no valid pool token is left (after a dispenser 429, later token requests in the same command fail at once, [without asking it again](how-it-works.md#token-pool)), or by Google account sign-in |

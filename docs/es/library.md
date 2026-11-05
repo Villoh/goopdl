@@ -114,6 +114,10 @@ Lanza `DirectAuthConfigurationError` si solo está definida una de las dos.
 `GOOPDL_CONFIG_DIR` y `XDG_CONFIG_HOME` siguen contando cuando `config_dir` es
 `None`.
 
+La librería nunca lee la cuenta guardada por `goopdl auth login`
+(`account.json`), ni en un `Client` ni en las funciones del módulo. Solo la
+lee la CLI.
+
 ### Métodos
 
 | Método | Devuelve | Hace |
@@ -165,13 +169,14 @@ Detalles:
 
 ### Borrar la caché
 
-`clear_cache()` borra lo que el cliente guardó en su `config_dir`, como
-`goopdl auth --clear` en ese directorio: los archivos de tokens anónimos y, en
-modo cuenta, el [registro de dispositivo](authentication.md#qué-guarda-el-modo-cuenta)
-de esta cuenta y su sesión en memoria. Las demás cuentas que compartan el
-directorio conservan los suyos. Sin credenciales equivale a
-`auth.clear_auth()` en ese directorio, que borra también los registros de
-dispositivo de todas las cuentas. Los archivos de bloqueo se quedan.
+`clear_cache()` borra lo que el cliente guardó en su `config_dir`: los
+archivos de tokens anónimos y, en modo cuenta, el
+[registro de dispositivo](authentication.md#qué-guarda-el-modo-cuenta) de esta
+cuenta y su sesión en memoria. Las demás cuentas que compartan el directorio
+conservan los suyos. Sin credenciales equivale a `auth.clear_auth()` en ese
+directorio, que borra también los registros de dispositivo de todas las
+cuentas. Los archivos de bloqueo se quedan, y también la cuenta guardada por
+`goopdl auth login`: solo la borra `goopdl auth logout`.
 
 ```python
 account.clear_cache()  # la siguiente llamada registra un dispositivo nuevo y vuelve a iniciar sesión
@@ -349,8 +354,10 @@ email, oauth_token = capture_oauth_credentials(timeout=300)  # abre Chrome/Edge/
 aas_token = fetch_aas_token(email, oauth_token)              # "aas_et/..."
 ```
 
-`fetch_aas_token` lanza `AASTokenError` cuando Google rechaza las
-credenciales, y errores de `httpx` saneados ante fallos HTTP o de transporte.
+`fetch_aas_token` solo acepta el token `oauth2_4/` de un solo uso: cualquier
+otro valor, incluida una contraseña, lanza `ValueError` antes de hacer ninguna
+petición. Lanza `AASTokenError` cuando Google rechaza el token, y errores de
+`httpx` saneados ante fallos HTTP o de transporte.
 `capture_oauth_credentials` lanza `BrowserOAuthError`.
 
 ### Pool de tokens y caché

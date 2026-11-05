@@ -113,6 +113,10 @@ It raises `DirectAuthConfigurationError` if only one of the two is set.
 `GOOPDL_CONFIG_DIR` and `XDG_CONFIG_HOME` still apply when `config_dir` is
 `None`.
 
+The library never reads the account saved by `goopdl auth login`
+(`account.json`), neither in a `Client` nor in the module functions. Only the
+CLI does.
+
 ### Methods
 
 | Method | Returns | Does |
@@ -163,12 +167,13 @@ Details:
 
 ### Clearing the cache
 
-`clear_cache()` deletes what the client cached in its `config_dir`, like
-`goopdl auth --clear` there: the anonymous token files and, in account mode,
-this account's [device record](authentication.md#what-account-mode-saves) and
-its signed-in token in memory. Other accounts sharing the directory keep
-theirs. Without credentials it is `auth.clear_auth()` for that directory, which
-also deletes every account's device record. Lock files stay.
+`clear_cache()` deletes what the client cached in its `config_dir`: the
+anonymous token files and, in account mode, this account's
+[device record](authentication.md#what-account-mode-saves) and its signed-in
+token in memory. Other accounts sharing the directory keep theirs. Without
+credentials it is `auth.clear_auth()` for that directory, which also deletes
+every account's device record. Lock files stay, and so does the account saved
+by `goopdl auth login`: only `goopdl auth logout` deletes it.
 
 ```python
 account.clear_cache()  # the next call registers a new device and signs in again
@@ -343,8 +348,10 @@ email, oauth_token = capture_oauth_credentials(timeout=300)  # opens Chrome/Edge
 aas_token = fetch_aas_token(email, oauth_token)              # "aas_et/..."
 ```
 
-`fetch_aas_token` raises `AASTokenError` when Google rejects the credentials,
-and sanitized `httpx` errors on HTTP or transport failures.
+`fetch_aas_token` takes only the one-time `oauth2_4/` token: anything else,
+a password included, raises `ValueError` before any request. It raises
+`AASTokenError` when Google rejects the token, and sanitized `httpx` errors on
+HTTP or transport failures.
 `capture_oauth_credentials` raises `BrowserOAuthError`.
 
 ### Token pool and cache

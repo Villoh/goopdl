@@ -83,7 +83,7 @@ Tras descargar una app con splits, goopdl muestra el comando
 `adb install-multiple` exacto para instalarla en un dispositivo conectado.
 
 goopdl consigue un token anónimo la primera vez que lo necesita. No hace falta
-ejecutar `goopdl auth`.
+ejecutar `goopdl auth token`.
 
 Más ejemplos:
 
