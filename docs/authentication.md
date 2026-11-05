@@ -22,7 +22,7 @@ need a Google account.
 goopdl auth token                    # arm64 token
 goopdl auth token --arch armv7       # token for older 32-bit devices
 goopdl auth token --country IN       # register the device with India's MCC/MNC
-goopdl auth logout                   # delete every cached token and device record
+goopdl auth clear-cache              # delete every cached token and device record
 ```
 
 You don't have to run `auth token` first. Other commands fetch a token when
@@ -56,7 +56,8 @@ permissions `0700` and token files are written `0600`.
 
 The `-profile-{key}` part appears when you pin a device with `--profile`, so
 each profile keeps its own tokens. `goopdl auth logout` deletes all of these
-files. `goopdl auth token` prints the path it saved the token to, and
+files. `goopdl auth clear-cache` deletes all but `account.json`.
+`goopdl auth token` prints the path it saved the token to, and
 `goopdl auth status` shows the directory and how many files it holds.
 
 Tokens expire after 50 minutes. [How it works](how-it-works.md#token-pool)
@@ -159,8 +160,8 @@ About `account.json`, with or without the token:
 - A malformed file is an error too. Run `goopdl auth login` again, or
   `goopdl auth logout`.
 - `goopdl auth logout` deletes the keyring entry, the file, and every cached
-  token. `auth.clear_auth()` and `Client.clear_cache()` touch neither the
-  file nor the keyring.
+  token. `goopdl auth clear-cache`, `auth.clear_auth()`, and
+  `Client.clear_cache()` touch neither the file nor the keyring.
 
 ### What account mode saves
 
@@ -182,8 +183,11 @@ in later runs and in other processes:
   registers a new one.
 - If the directory isn't writable, goopdl keeps the registration in memory
   for the current process and logs a warning.
-- `goopdl auth logout` deletes these files. From Python, use
-  `auth.clear_auth()` or [`Client.clear_cache()`](library.md#clearing-the-cache).
+- `goopdl auth clear-cache` deletes these files and keeps the saved account,
+  so the next command registers a new device without signing in again.
+  `goopdl auth logout` deletes them too, along with the account. From Python,
+  use `auth.clear_auth()` or
+  [`Client.clear_cache()`](library.md#clearing-the-cache).
 - `latest`, `download --version`, and the retries with other device profiles
   still sign in on a new device for each probe: they need different GSF IDs.
 

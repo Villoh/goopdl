@@ -22,7 +22,7 @@ necesitas cuenta de Google.
 goopdl auth token                    # token arm64
 goopdl auth token --arch armv7       # token para dispositivos antiguos de 32 bits
 goopdl auth token --country IN       # registra el dispositivo con el MCC/MNC de India
-goopdl auth logout                   # borra todos los tokens y registros de dispositivo en caché
+goopdl auth clear-cache              # borra todos los tokens y registros de dispositivo en caché
 ```
 
 No hace falta ejecutar `auth token` primero: el resto de comandos consiguen un
@@ -57,7 +57,8 @@ crea con permisos `0700` y los archivos de tokens se escriben con `0600`.
 
 La parte `-profile-{key}` aparece cuando fijas un dispositivo con `--profile`,
 así cada perfil tiene sus propios tokens. `goopdl auth logout` borra todos
-estos archivos. `goopdl auth token` muestra la ruta donde ha guardado el token,
+estos archivos. `goopdl auth clear-cache` los borra todos menos
+`account.json`. `goopdl auth token` muestra la ruta donde ha guardado el token,
 y `goopdl auth status` muestra el directorio y cuántos archivos tiene.
 
 Los tokens caducan a los 50 minutos. En [cómo funciona](how-it-works.md#pool-de-tokens)
@@ -164,8 +165,8 @@ Sobre `account.json`, con o sin token:
 - Un archivo mal formado también da error. Vuelve a ejecutar
   `goopdl auth login`, o `goopdl auth logout`.
 - `goopdl auth logout` borra la entrada del almacén, el archivo y todos los
-  tokens en caché. `auth.clear_auth()` y `Client.clear_cache()` no tocan ni
-  el archivo ni el almacén.
+  tokens en caché. `goopdl auth clear-cache`, `auth.clear_auth()` y
+  `Client.clear_cache()` no tocan ni el archivo ni el almacén.
 
 ### Qué guarda el modo cuenta
 
@@ -186,8 +187,11 @@ en las ejecuciones siguientes y en otros procesos:
   registra otro.
 - Si no se puede escribir en el directorio, goopdl guarda el registro en
   memoria para el proceso actual y registra un aviso.
-- `goopdl auth logout` borra estos archivos. Desde Python, usa
-  `auth.clear_auth()` o [`Client.clear_cache()`](library.md#borrar-la-caché).
+- `goopdl auth clear-cache` borra estos archivos y conserva la cuenta
+  guardada, así que el siguiente comando registra un dispositivo nuevo sin
+  volver a iniciar sesión. `goopdl auth logout` también los borra, junto con
+  la cuenta. Desde Python, usa `auth.clear_auth()` o
+  [`Client.clear_cache()`](library.md#borrar-la-caché).
 - `latest`, `download --version` y los reintentos con otros perfiles de
   dispositivo siguen iniciando sesión con un dispositivo nuevo en cada sondeo:
   necesitan GSF IDs distintos.

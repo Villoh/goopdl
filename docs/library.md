@@ -176,9 +176,9 @@ anonymous token files and, in account mode, this account's
 [device record](authentication.md#what-account-mode-saves) and its signed-in
 token in memory. Other accounts sharing the directory keep theirs. Without
 credentials it is `auth.clear_auth()` for that directory, which also deletes
-every account's device record. Lock files stay, and so does the account saved
-by `goopdl auth login`, file and keyring entry: only `goopdl auth logout`
-deletes it.
+every account's device record, like `goopdl auth clear-cache`. Lock files
+stay, and so does the account saved by `goopdl auth login`, file and keyring
+entry: only `goopdl auth logout` deletes it.
 
 ```python
 account.clear_cache()  # the next call registers a new device and signs in again
