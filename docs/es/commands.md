@@ -16,6 +16,7 @@
 | [`profiles`](#profiles) | Lista los perfiles de dispositivo incluidos |
 | [`auth login`](#auth-login) | Inicia sesión con una cuenta de Google y la guarda |
 | [`auth logout`](#auth-logout) | Borra la cuenta guardada y todos los tokens en caché |
+| [`auth clear-cache`](#auth-clear-cache) | Borra los tokens en caché y los registros de dispositivo, conserva la cuenta guardada |
 | [`auth status`](#auth-status) | Muestra qué credenciales usa goopdl |
 | [`auth token`](#auth-token) | Consigue y guarda un token anónimo |
 
@@ -300,10 +301,24 @@ los tokens en caché y los
 [registros de dispositivo del modo cuenta](authentication.md#qué-guarda-el-modo-cuenta).
 Si no puede quitar la entrada del almacén, avisa y borra el resto igualmente.
 Si `GOOPDL_ACCOUNT_EMAIL` o `GOOPDL_AAS_TOKEN` siguen definidas, avisa de que
-goopdl las sigue usando.
+goopdl las sigue usando. Para conservar la cuenta y borrar solo la caché, usa
+[`auth clear-cache`](#auth-clear-cache).
 
 ```bash
 goopdl auth logout
+```
+
+### `auth clear-cache`
+
+Borra todos los tokens en caché y los
+[registros de dispositivo del modo cuenta](authentication.md#qué-guarda-el-modo-cuenta).
+La cuenta guardada se queda: no toca `account.json` ni el almacén de claves
+del sistema. Úsalo cuando Google deje de aceptar un dispositivo registrado: el
+siguiente comando registra uno nuevo sin volver a iniciar sesión. No tiene
+opciones.
+
+```bash
+goopdl auth clear-cache
 ```
 
 ### `auth status`

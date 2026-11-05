@@ -179,9 +179,9 @@ archivos de tokens anónimos y, en modo cuenta, el
 cuenta y su sesión en memoria. Las demás cuentas que compartan el directorio
 conservan los suyos. Sin credenciales equivale a `auth.clear_auth()` en ese
 directorio, que borra también los registros de dispositivo de todas las
-cuentas. Los archivos de bloqueo se quedan, y también la cuenta guardada por
-`goopdl auth login`, archivo y entrada del almacén: solo la borra
-`goopdl auth logout`.
+cuentas, como `goopdl auth clear-cache`. Los archivos de bloqueo se quedan, y
+también la cuenta guardada por `goopdl auth login`, archivo y entrada del
+almacén: solo la borra `goopdl auth logout`.
 
 ```python
 account.clear_cache()  # la siguiente llamada registra un dispositivo nuevo y vuelve a iniciar sesión

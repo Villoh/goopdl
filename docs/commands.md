@@ -16,6 +16,7 @@ Run `goopdl COMMAND --help` for the same information in your terminal.
 | [`profiles`](#profiles) | List bundled device profiles |
 | [`auth login`](#auth-login) | Sign in with a Google account and save it |
 | [`auth logout`](#auth-logout) | Remove the saved account and every cached token |
+| [`auth clear-cache`](#auth-clear-cache) | Remove cached tokens and device records, keep the saved account |
 | [`auth status`](#auth-status) | Show which credentials goopdl uses |
 | [`auth token`](#auth-token) | Get and cache an anonymous token |
 
@@ -295,10 +296,23 @@ token, and the
 [account-mode device records](authentication.md#what-account-mode-saves). If
 the keyring entry can't be removed, it warns and deletes the rest anyway. If
 `GOOPDL_ACCOUNT_EMAIL` or `GOOPDL_AAS_TOKEN` is still set, it warns that
-goopdl keeps using them.
+goopdl keeps using them. To keep the account and delete only the cache, use
+[`auth clear-cache`](#auth-clear-cache).
 
 ```bash
 goopdl auth logout
+```
+
+### `auth clear-cache`
+
+Deletes every cached token and the
+[account-mode device records](authentication.md#what-account-mode-saves).
+The saved account stays: it doesn't touch `account.json` or the system
+keyring. Use it when Google stops accepting a registered device: the next
+command registers a new one without signing in again. It has no flags.
+
+```bash
+goopdl auth clear-cache
 ```
 
 ### `auth status`
