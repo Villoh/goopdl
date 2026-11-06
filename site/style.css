@@ -344,6 +344,8 @@ html:not(.js) .tabs { display: none; }
 /* ── pipeline (dark) ───────────────────────────────── */
 .dark { background: var(--surface); color: var(--t-text); max-width: none; border-radius: 40px; margin: 0 clamp(8px, 1.5vw, 20px); }
 .dark > * { max-width: 1328px; margin-left: auto; margin-right: auto; }
+/* phones: the dark panel lines up with the cards above (same page gutter) instead of bleeding past it */
+@media (max-width: 720px) { .dark { margin-inline: clamp(20px, 4vw, 56px); padding-inline: 24px; } }
 .pipeline { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; position: relative; }
 .pipeline::before { content: ""; position: absolute; top: 26px; left: 26px; right: 26px; height: 2px; background: var(--t-line); }
 .pipeline::after { content: ""; position: absolute; top: 26px; left: 26px; right: 26px; height: 2px; background: var(--orange); transform-origin: left; transform: scaleX(0); transition: transform 1.8s var(--out) .2s; }
