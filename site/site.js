@@ -9,6 +9,15 @@
   };
 
   addEventListener("scroll", () => document.querySelector(".nav").classList.toggle("scrolled", scrollY > 10), { passive: true });
+  // ── mobile menu: burger toggles .nav.open; closes on link, Esc, outside tap, or growing past the breakpoint
+  const nav = document.querySelector(".nav");
+  const burger = nav.querySelector(".burger");
+  const setMenu = (open) => { nav.classList.toggle("open", open); burger.setAttribute("aria-expanded", open); };
+  burger.addEventListener("click", () => setMenu(!nav.classList.contains("open")));
+  nav.querySelector("nav").addEventListener("click", (e) => e.target.closest("a") && setMenu(false));
+  addEventListener("keydown", (e) => e.key === "Escape" && setMenu(false));
+  addEventListener("click", (e) => nav.contains(e.target) || setMenu(false));
+  matchMedia("(min-width: 721px)").addEventListener("change", () => setMenu(false));
   addEventListener("load", () => root.classList.add("loaded")); // enables smooth scrolling, see style.css
 
   // ── theme: the <head> script already applied it before paint ────────────

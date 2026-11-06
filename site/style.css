@@ -87,14 +87,38 @@ h3 { font-size: 24px; letter-spacing: -.02em; font-weight: 600; }
 }
 .nav.scrolled { border-color: var(--line); }
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 700; font-size: 22px; letter-spacing: -.04em; }
-.nav nav { display: flex; align-items: center; gap: 28px; font-size: 15px; }
+.nav nav { display: flex; align-items: center; gap: 28px; font-size: 15px; margin-left: auto; }
+.nav nav { margin-right: 28px; }
 .nav nav a { text-decoration: none; }
 .nav nav > a:hover { color: var(--orange); }
 .btn { display: inline-block; padding: 10px 20px; border-radius: 999px; text-decoration: none; font-weight: 600; transition: transform .2s var(--spring), background .2s; }
 .btn:hover { transform: translateY(-2px); }
 .btn-ghost { border: 2px solid var(--ink); padding: 14px 26px; }
 .btn-ghost:hover { background: var(--ink); color: var(--paper); }
-@media (max-width: 720px) { .nav nav > a { display: none; } .nav nav { gap: 12px; } }
+/* phones: the links fold into a dropdown under the bar, opened by the burger (site.js toggles .nav.open) */
+.nav .burger, .nav .nav-gh { display: none; }
+.burger svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.burger path { transform-origin: 12px 12px; transition: transform .4s var(--spring); }
+.nav.open .burger path:first-child { transform: translateY(4px) rotate(45deg); }
+.nav.open .burger path:last-child { transform: translateY(-4px) rotate(-45deg); }
+@media (max-width: 720px) {
+  .nav .burger { display: grid; }
+  .nav .nav-gh { display: block; }
+  .nav-tools { gap: 6px; }
+  .nav-tools .gh { display: none; }
+  .nav.open { background: var(--paper); border-color: var(--line); }
+  .nav nav {
+    position: absolute; top: 100%; left: 0; right: 0; margin: 0; padding: 8px 16px 16px;
+    flex-direction: column; align-items: stretch; gap: 0; font-size: 18px;
+    background: var(--paper); border-bottom: 1px solid var(--line);
+    opacity: 0; visibility: hidden; translate: 0 -8px;
+    transition: opacity .25s, translate .35s var(--out), visibility 0s .35s;
+  }
+  .nav.open nav { opacity: 1; visibility: visible; translate: 0; transition-delay: 0s; }
+  .nav nav > a { display: block; padding: 14px 4px; border-top: 1px solid var(--line); }
+  .nav nav > a:first-child { border-top: 0; }
+}
+@media (max-width: 520px) { .nav .lang a { padding: 0 10px; } }
 
 /* language picker: segmented EN | ES with a sliding thumb */
 .lang { position: relative; display: flex; padding: 3px; border-radius: 999px; box-shadow: inset 0 0 0 1.5px var(--line); }
