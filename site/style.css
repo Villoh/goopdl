@@ -48,7 +48,7 @@
 
 * { box-sizing: border-box; }
 /* clip on html, not body: phones scroll the viewport, and body's overflow doesn't stop that */
-html { overflow-x: clip; scroll-padding-top: var(--nav-h); }
+html { overflow-x: clip; scroll-padding-top: var(--nav-h); -webkit-tap-highlight-color: transparent; } /* no blue flash on tap; keyboard focus rings stay */
 /* smooth only after load (site.js): a smooth jump to a #fragment on load ends off target once the web fonts reflow the text */
 html.loaded { scroll-behavior: smooth; }
 body {
