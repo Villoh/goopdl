@@ -359,7 +359,7 @@ html:not(.js) .tabs { display: none; }
 .more { margin-top: 32px; font-weight: 600; }
 
 /* ── final ─────────────────────────────────────────── */
-.final { text-align: center; display: grid; justify-items: center; gap: 28px; }
+.final { text-align: center; display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; gap: 28px; }
 .final-mark { transition: transform .6s var(--spring); }
 .final.in .final-mark { animation: wobble 1.4s var(--spring) .2s; }
 @keyframes wobble { 0% { transform: translateY(-80px) scale(.8, 1.2); opacity: 0; } 40% { transform: scale(1.15, .85); opacity: 1; } 70% { transform: scale(.96, 1.04); } }
@@ -371,7 +371,7 @@ html:not(.js) .tabs { display: none; }
   background: var(--surface); color: var(--t-text); transition: transform .25s var(--spring);
 }
 .pill { white-space: nowrap; max-width: 100%; }
-@media (max-width: 520px) { .pill { font-size: 13px; gap: 8px; padding: 12px 12px 12px 18px; } }
+@media (max-width: 520px) { .pill { font-size: 13px; gap: 8px; padding: 12px 12px 12px 18px; white-space: normal; overflow-wrap: anywhere; text-align: left; border-radius: 22px; } }
 .pill .muted { color: var(--t-muted); }
 .pill:hover { transform: translateY(-2px); }
 .pill:active { transform: scale(.97); }
@@ -467,7 +467,7 @@ html:not(.js) .tabs { display: none; }
 @keyframes flash { 0% { color: var(--orange); } }
 .md a { color: var(--orange); text-underline-offset: 3px; }
 .md hr { border: 0; height: 1px; background: var(--line); margin: 64px 0 0; }
-.md :not(pre) > code { background: color-mix(in srgb, var(--ink) 8%, transparent); padding: .12em .4em; border-radius: 6px; font-size: .86em; }
+.md :not(pre) > code { background: color-mix(in srgb, var(--ink) 8%, transparent); padding: .12em .4em; border-radius: 6px; font-size: .86em; overflow-wrap: anywhere; }
 .md :is(h1, h2, h3, h4) code { background: none; padding: 0; }
 .md ul, .md ol { padding-left: 1.4em; }
 .md li { margin: 6px 0; }
