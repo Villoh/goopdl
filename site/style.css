@@ -135,12 +135,12 @@ h3 { font-size: 24px; letter-spacing: -.02em; font-weight: 600; }
 
 /* ── hero ──────────────────────────────────────────── */
 .hero {
-  display: grid; grid-template-columns: 1fr 1.05fr; gap: clamp(32px, 5vw, 80px); align-items: center;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: clamp(32px, 5vw, 80px); align-items: center;
   min-height: calc(100vh - 70px);
   padding: 40px clamp(20px, 4vw, 56px) 80px;
   max-width: 1440px; margin: 0 auto;
 }
-@media (max-width: 1000px) { .hero { grid-template-columns: 1fr; } }
+@media (max-width: 1000px) { .hero { grid-template-columns: minmax(0, 1fr); } }
 .hero h1 { font-size: clamp(38px, 4.4vw, 64px); font-weight: 700; margin: 36px 0 24px; }
 .cta { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 32px 0 24px; }
 
@@ -176,7 +176,8 @@ html:not(.js) .tabs { display: none; }
 @media (max-width: 520px) { .cmdline code { font-size: 12px; } .tabs button { padding: 6px 9px; font-size: 12px; } .tabs .sep { margin: 0 2px; } }
 
 /* Lockup: the drop falls into the square, squashes, the chevron draws, letters rise. */
-.lockup { display: flex; align-items: center; gap: 22px; }
+.lockup { display: flex; align-items: center; gap: min(22px, 4vw); }
+.mark { width: min(88px, 20vw); height: auto; flex: none; }
 .mark { overflow: visible; }
 .mark-sq { fill: var(--mark); }
 .mark-chev { stroke: var(--mark); }
@@ -184,7 +185,7 @@ html:not(.js) .tabs { display: none; }
 .mark-sq { transform-origin: 120px 120px; animation: pop .7s var(--spring) .1s both; }
 .mark-drop { transform-origin: 120px 206px; animation: fall 1s .35s both; }
 .mark-chev { stroke-dasharray: 74; animation: draw .5s var(--out) 1s both; }
-.word { font-weight: 700; font-size: 72px; letter-spacing: -.06em; line-height: 1; display: flex; }
+.word { font-weight: 700; font-size: min(72px, 16vw); letter-spacing: -.06em; line-height: 1; display: flex; }
 .word i { font-style: normal; display: inline-block; animation: rise .7s var(--spring) both; }
 .word i:nth-child(1) { animation-delay: .82s; } .word i:nth-child(2) { animation-delay: .87s; }
 .word i:nth-child(3) { animation-delay: .92s; } .word i:nth-child(4) { animation-delay: .97s; }
@@ -248,7 +249,7 @@ html:not(.js) .tabs { display: none; }
 .split, .section, .final { max-width: 1440px; margin: 0 auto; padding: clamp(80px, 12vw, 160px) clamp(20px, 4vw, 56px); }
 .split { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: center; }
 .split h2 { margin-bottom: 28px; }
-@media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .split { grid-template-columns: minmax(0, 1fr); } }
 .stage { position: relative; height: 580px; display: grid; place-items: center; }
 
 /* account: the sign-in card gets struck out and drops, a token pops in */
