@@ -167,6 +167,7 @@ h3 { font-size: 24px; letter-spacing: -.02em; font-weight: 600; }
 @media (max-width: 1000px) { .hero { grid-template-columns: minmax(0, 1fr); } }
 .hero h1 { font-size: clamp(38px, 4.4vw, 64px); font-weight: 700; margin: 36px 0 24px; }
 .cta { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 32px 0 24px; }
+@media (max-width: 520px) { .cta .btn { flex: 1 1 100%; text-align: center; } }
 
 /* Install box: one tab per OS / package manager; each panel is one copyable command. */
 .install { background: var(--surface); color: var(--t-text); border-radius: 22px; padding: 14px; display: grid; gap: 12px; margin: 32px 0 0; max-width: 640px; }
