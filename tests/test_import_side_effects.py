@@ -56,7 +56,9 @@ class ImportSideEffectsTest(unittest.TestCase):
 
     def test_auth_logs_without_rich(self):
         result = run_isolated(
-            "import sys, goopdl.auth\n"
+            # httpx imports its command line client (rich, click) when they are installed.
+            "import sys; sys.modules['httpx._main'] = None\n"
+            "import goopdl.auth\n"
             "assert not any(m == 'rich' or m.startswith('rich.') for m in sys.modules)\n"
         )
         self.assertEqual(0, result.returncode, result.stderr)

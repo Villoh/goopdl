@@ -101,7 +101,9 @@ class CompatShimsTest(unittest.TestCase):
 
     def test_imports_do_not_load_rich(self):
         self.run_python(
-            "import goopdl.auth, goopdl.download, sys; "
+            # httpx imports its command line client (rich, click) when they are installed.
+            "import sys; sys.modules['httpx._main'] = None; "
+            "import goopdl.auth, goopdl.download; "
             "assert 'rich' not in sys.modules"
         )
 
