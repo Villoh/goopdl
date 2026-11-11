@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from goopdl import errors as _errors
 from goopdl.errors import GoopdlError
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 
 # Library default: stay silent unless the host application configures logging.
 logging.getLogger(__name__).addHandler(logging.NullHandler())
