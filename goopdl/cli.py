@@ -82,6 +82,8 @@ from goopdl.download import (
 )
 from goopdl.profiles import (
     VALID_ARCHS,
+    abi_mismatch,
+    delivered_abis,
     find_profile,
     get_compat_profiles,
     get_discovery_profiles,
@@ -1191,11 +1193,17 @@ def inspect_delivery_cmd(
         if details.version_code == version_code
         else None
     )
+    split_names = [split.name for split in delivery.splits]
+    abis = delivered_abis(split_names)
     payload = {
         "package": package,
+        # Kept for compatibility: this is the *requested* arch, not the delivery's.
         "architecture": arch,
+        "requested_architecture": arch,
+        "delivered_abis": abis,
+        "architecture_mismatch": abi_mismatch(arch, abis),
         "version": {"name": version_name, "code": version_code},
-        "splits": ["base", *(split.name for split in delivery.splits)],
+        "splits": ["base", *split_names],
     }
     encoded = json.dumps(payload, sort_keys=True)
     if output is not None:
@@ -1208,6 +1216,11 @@ def inspect_delivery_cmd(
             f"[bold]{package}[/bold] {escape(version_name or 'version name unknown')} "
             f"({version_code}) \\[{arch}]"
         )
+        if payload["architecture_mismatch"]:
+            err.print(
+                f"[yellow]Requested {arch} but Google Play delivered "
+                f"{escape(', '.join(abis))}.[/yellow]"
+            )
         for split in payload["splits"]:
             rprint(f"- {escape(split)}")
 

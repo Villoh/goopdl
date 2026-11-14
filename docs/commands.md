@@ -177,11 +177,19 @@ goopdl inspect-delivery com.whatsapp --version 231205015 -o delivery.json
 ```json
 {
   "architecture": "armv7",
+  "architecture_mismatch": false,
+  "delivered_abis": ["armeabi-v7a"],
   "package": "com.whatsapp",
+  "requested_architecture": "armv7",
   "splits": ["base", "config.armeabi_v7a", "config.en"],
   "version": {"code": 231205015, "name": "2.23.26.15"}
 }
 ```
+
+`requested_architecture` (and the older `architecture`) echoes `--arch`.
+`delivered_abis` is inferred from the `config.<abi>` splits Google Play returned,
+and `architecture_mismatch` is `true` when ABI splits came back but none fit the
+requested `--arch`. A delivery with no ABI split gives `[]` and `false`.
 
 | Flag | Short | Default | Description |
 | ---- | ----- | ------- | ----------- |

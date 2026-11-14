@@ -171,7 +171,29 @@ ABI_TOKENS = {
     "x86_64": "x86_64",
 }
 VALID_ARCHS = tuple(ABI_TOKENS) + ("tv",)
+_TV_ABIS = (ABI_TOKENS["arm64"], ABI_TOKENS["armv7"])
+# Split names use underscores (config.arm64_v8a); ABI tokens use dashes.
+_SPLIT_ABIS = {
+    token.replace("-", "_"): token for token in (*ABI_TOKENS.values(), "armeabi")
+}
 _TV_FEATURES = ("android.hardware.type.television", "android.software.leanback")
+
+
+def delivered_abis(split_names) -> list[str]:
+    """ABIs named by ``config.<abi>`` splits, sorted."""
+    return sorted(
+        {
+            _SPLIT_ABIS[suffix]
+            for suffix in (name.removeprefix("config.") for name in split_names)
+            if suffix in _SPLIT_ABIS
+        }
+    )
+
+
+def abi_mismatch(arch: str, abis) -> bool:
+    """True when ABI splits were delivered but none fit the requested arch."""
+    wanted = _TV_ABIS if arch == "tv" else (ABI_TOKENS[arch],)
+    return bool(abis) and not set(wanted) & set(abis)
 
 
 def is_tv_profile(profile: dict) -> bool:
