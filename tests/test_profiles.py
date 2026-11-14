@@ -33,6 +33,19 @@ class ProfileSelectionTest(unittest.TestCase):
         self.assertEqual(len(keys), len(set(keys)))
         self.assertTrue(any(is_tv_profile(profile) for _, profile in discovery))
 
+    def test_armv7_pools_exclude_arm64_capable_profiles(self):
+        # Issue #70: dual-ABI devices make Play serve config.arm64_v8a splits.
+        for getter in (get_priority_profiles, get_compat_profiles):
+            profiles = getter("armv7")
+            self.assertTrue(profiles)
+            for key, profile in profiles:
+                self.assertNotIn("arm64-v8a", profile["Platforms"], key)
+
+    def test_armv7_priority_prefers_modern_gj_and_compat_reaches_it(self):
+        self.assertEqual(get_priority_profiles("armv7")[0][0], "Gj")
+        # min_api 32 apps (Duolingo): compat fallback must reach an SDK>=32 profile.
+        self.assertIn("Gj", [key for key, _ in get_compat_profiles("armv7")[:6]])
+
     def test_parses_multiple_architectures_and_rejects_unknown_values(self):
         self.assertEqual(_parse_archs("arm64,armv7,arm64"), ["arm64", "armv7"])
         with self.assertRaisesRegex(Exception, "Unknown architecture"):

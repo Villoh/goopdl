@@ -160,7 +160,7 @@ def patch_profile_country(profile: dict, country: str) -> dict:
 # Tested priority order — profiles that work best with Aurora dispenser and
 # restricted apps (banking apps like Chase). Pixel 9a first for arm64.
 _PRIORITY_ARM64 = ["Pv", "D2", "eV", "iq", "Fj", "HE", "VP", "Hb", "p6", "B1"]
-_PRIORITY_ARMV7 = ["XK", "Gj", "IV", "Gb"]
+_PRIORITY_ARMV7 = ["Gj", "XK", "IV", "Gb"]
 _PRIORITY_X86 = ["x8", "7M"]
 _PRIORITY_TV = ["Gb"]
 
@@ -254,9 +254,11 @@ def _pool_for_arch(arch: str) -> list[tuple[str, dict]]:
         return _get("TV_PROFILES")
     abi = ABI_TOKENS.get(arch, ABI_TOKENS["arm64"])
     if abi == ABI_TOKENS["arm64"]:
-        # Same set as arm64-v8a support. ARMV7_PROFILES excludes arm64 devices
-        # that also run v7, so armv7 pools still filter _ALL.
         return _get("ARM64_PROFILES")
+    if arch == "armv7":
+        # 32-bit only: arm64 devices also list armeabi-v7a, but Play would
+        # serve them 64-bit splits.
+        return _get("ARMV7_PROFILES")
     return _profiles_supporting(abi)
 
 
