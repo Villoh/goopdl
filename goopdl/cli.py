@@ -1042,6 +1042,27 @@ def _parse_locales(value: str | None) -> list[str] | None:
     )
 
 
+# Split suffix Play accepts for each requested arch (32-bit runs on 64-bit).
+_COMPATIBLE_ABI_SPLITS = {
+    "arm64": {"arm64_v8a", "armeabi_v7a"},
+    "armv7": {"armeabi_v7a"},
+    "x86": {"x86"},
+    "x86_64": {"x86_64", "x86"},
+}
+_ALL_ABI_SPLITS = {"arm64_v8a", "armeabi_v7a", "x86", "x86_64"}
+
+
+def _warn_abi_mismatch(delivery, arch: str) -> None:
+    """Warn when Play returned ABI splits that do not fit the requested arch."""
+    ok = _COMPATIBLE_ABI_SPLITS.get(arch)
+    got = {s.name.removeprefix("config.") for s in delivery.splits} & _ALL_ABI_SPLITS
+    if ok and got and not got & ok:
+        err.print(
+            f"[yellow]Warning: requested --arch {arch} but Google Play returned "
+            f"{', '.join(sorted(got))} splits; the APKs may not match.[/yellow]"
+        )
+
+
 def _acquire_delivery(
     package: str,
     version_code: int | None,
@@ -1068,6 +1089,7 @@ def _acquire_delivery(
             delivery_token=delivery_token,
             locales=locales,
         )
+        _warn_abi_mismatch(delivery, arch)
         return details, vc, delivery
 
     def retry_with(profiles):
