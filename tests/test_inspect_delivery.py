@@ -56,6 +56,9 @@ class InspectDeliveryTest(unittest.TestCase):
                 json.loads(output.read_text(encoding="utf-8")),
                 {
                     "architecture": "armv7",
+                    "architecture_mismatch": False,
+                    "delivered_abis": ["armeabi-v7a"],
+                    "requested_architecture": "armv7",
                     "package": "com.google.android.youtube",
                     "splits": ["base", "config.armeabi_v7a", "config.en"],
                     "version": {"code": 1561052632, "name": "21.04.223"},
@@ -128,6 +131,64 @@ class InspectDeliveryTest(unittest.TestCase):
                         self.assertEqual(
                             payload["splits"], ["base", "config.arm64_v8a"]
                         )
+
+    def _inspect(self, arch: str, split_names: list[str]) -> dict:
+        with (
+            patch("goopdl.cli._require_auth", return_value={}),
+            patch(
+                "goopdl.cli._acquire_delivery",
+                return_value=(
+                    AppDetails("com.duolingo", version_code=2492),
+                    2492,
+                    SimpleNamespace(
+                        splits=[SimpleNamespace(name=n) for n in split_names]
+                    ),
+                ),
+            ),
+        ):
+            result = CliRunner().invoke(
+                cli.app,
+                ["inspect-delivery", "com.duolingo", "--arch", arch,
+                 "--version", "2492", "--json"],
+            )
+        self.assertEqual(result.exit_code, 0, result.output)
+        return json.loads(result.stdout)
+
+    def test_reports_delivered_abis_and_flags_mismatch(self) -> None:
+        # Issue #69: armv7 requested, Play returned an arm64 split.
+        payload = self._inspect(
+            "armv7", ["config.arm64_v8a", "config.xhdpi"]
+        )
+        self.assertEqual(payload["architecture"], "armv7")
+        self.assertEqual(payload["requested_architecture"], "armv7")
+        self.assertEqual(payload["delivered_abis"], ["arm64-v8a"])
+        self.assertTrue(payload["architecture_mismatch"])
+
+    def test_mismatch_matrix(self) -> None:
+        for arch, splits, abis, mismatch in (
+            ("armv7", ["config.armeabi_v7a", "config.en"], ["armeabi-v7a"], False),
+            ("arm64", ["config.arm64_v8a", "config.armeabi_v7a"],
+             ["arm64-v8a", "armeabi-v7a"], False),
+            ("x86_64", ["config.x86_64"], ["x86_64"], False),
+            ("x86", ["config.x86_64"], ["x86_64"], False),  # x86 profiles are x86_64
+            ("x86", ["config.arm64_v8a"], ["arm64-v8a"], True),
+            ("x86_64", ["config.x86"], ["x86"], False),  # 32-bit runs on 64-bit
+            ("arm64", ["config.armeabi_v7a"], ["armeabi-v7a"], False),
+            ("tv", ["config.armeabi_v7a"], ["armeabi-v7a"], False),
+            ("tv", ["config.x86"], ["x86"], True),
+            ("arm64", ["config.en", "config.xhdpi"], [], False),
+        ):
+            with self.subTest(arch=arch, splits=splits):
+                payload = self._inspect(arch, splits)
+                self.assertEqual(payload["delivered_abis"], abis)
+                self.assertEqual(payload["architecture_mismatch"], mismatch)
+                # The stderr warning and the JSON flag share one rule.
+                delivery = SimpleNamespace(
+                    splits=[SimpleNamespace(name=n) for n in splits]
+                )
+                with patch("goopdl.cli.err") as err:
+                    cli._warn_abi_mismatch(delivery, arch)
+                self.assertEqual(err.print.called, mismatch)
 
     def test_rate_limit_uses_dedicated_exit_code(self) -> None:
         with (
