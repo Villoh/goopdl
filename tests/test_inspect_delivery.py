@@ -172,7 +172,8 @@ class InspectDeliveryTest(unittest.TestCase):
             ("x86_64", ["config.x86_64"], ["x86_64"], False),
             ("x86", ["config.x86_64"], ["x86_64"], False),  # x86 profiles are x86_64
             ("x86", ["config.arm64_v8a"], ["arm64-v8a"], True),
-            ("x86_64", ["config.x86"], ["x86"], True),
+            ("x86_64", ["config.x86"], ["x86"], False),  # 32-bit runs on 64-bit
+            ("arm64", ["config.armeabi_v7a"], ["armeabi-v7a"], False),
             ("tv", ["config.armeabi_v7a"], ["armeabi-v7a"], False),
             ("tv", ["config.x86"], ["x86"], True),
             ("arm64", ["config.en", "config.xhdpi"], [], False),
@@ -181,6 +182,13 @@ class InspectDeliveryTest(unittest.TestCase):
                 payload = self._inspect(arch, splits)
                 self.assertEqual(payload["delivered_abis"], abis)
                 self.assertEqual(payload["architecture_mismatch"], mismatch)
+                # The stderr warning and the JSON flag share one rule.
+                delivery = SimpleNamespace(
+                    splits=[SimpleNamespace(name=n) for n in splits]
+                )
+                with patch("goopdl.cli.err") as err:
+                    cli._warn_abi_mismatch(delivery, arch)
+                self.assertEqual(err.print.called, mismatch)
 
     def test_rate_limit_uses_dedicated_exit_code(self) -> None:
         with (

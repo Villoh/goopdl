@@ -171,10 +171,16 @@ ABI_TOKENS = {
     "x86_64": "x86_64",
 }
 VALID_ARCHS = tuple(ABI_TOKENS) + ("tv",)
-_TV_ABIS = (ABI_TOKENS["arm64"], ABI_TOKENS["armv7"])
 # Split names use underscores (config.arm64_v8a); ABI tokens use dashes.
-_SPLIT_ABIS = {
-    token.replace("-", "_"): token for token in (*ABI_TOKENS.values(), "armeabi")
+_SPLIT_ABIS = {token.replace("-", "_"): token for token in ABI_TOKENS.values()}
+# ABIs Play may deliver for each requested arch. 32-bit runs on 64-bit, and every
+# x86 profile is also x86_64, so Play always delivers x86_64 for --arch x86.
+_COMPATIBLE_ABIS = {
+    "arm64": {"arm64-v8a", "armeabi-v7a"},
+    "armv7": {"armeabi-v7a"},
+    "x86": {"x86", "x86_64"},
+    "x86_64": {"x86_64", "x86"},
+    "tv": {"arm64-v8a", "armeabi-v7a"},
 }
 _TV_FEATURES = ("android.hardware.type.television", "android.software.leanback")
 
@@ -192,11 +198,7 @@ def delivered_abis(split_names) -> list[str]:
 
 def abi_mismatch(arch: str, abis) -> bool:
     """True when ABI splits were delivered but none fit the requested arch."""
-    wanted = _TV_ABIS if arch == "tv" else (ABI_TOKENS[arch],)
-    if arch == "x86":
-        # Every x86 profile is also x86_64, so Play always delivers x86_64.
-        wanted += (ABI_TOKENS["x86_64"],)
-    return bool(abis) and not set(wanted) & set(abis)
+    return bool(abis) and not _COMPATIBLE_ABIS[arch] & set(abis)
 
 
 def is_tv_profile(profile: dict) -> bool:
