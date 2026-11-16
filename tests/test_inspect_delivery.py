@@ -170,7 +170,9 @@ class InspectDeliveryTest(unittest.TestCase):
             ("arm64", ["config.arm64_v8a", "config.armeabi_v7a"],
              ["arm64-v8a", "armeabi-v7a"], False),
             ("x86_64", ["config.x86_64"], ["x86_64"], False),
-            ("x86", ["config.x86_64"], ["x86_64"], True),
+            ("x86", ["config.x86_64"], ["x86_64"], False),  # x86 profiles are x86_64
+            ("x86", ["config.arm64_v8a"], ["arm64-v8a"], True),
+            ("x86_64", ["config.x86"], ["x86"], True),
             ("tv", ["config.armeabi_v7a"], ["armeabi-v7a"], False),
             ("tv", ["config.x86"], ["x86"], True),
             ("arm64", ["config.en", "config.xhdpi"], [], False),

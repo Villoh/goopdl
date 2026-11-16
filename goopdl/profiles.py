@@ -193,6 +193,9 @@ def delivered_abis(split_names) -> list[str]:
 def abi_mismatch(arch: str, abis) -> bool:
     """True when ABI splits were delivered but none fit the requested arch."""
     wanted = _TV_ABIS if arch == "tv" else (ABI_TOKENS[arch],)
+    if arch == "x86":
+        # Every x86 profile is also x86_64, so Play always delivers x86_64.
+        wanted += (ABI_TOKENS["x86_64"],)
     return bool(abis) and not set(wanted) & set(abis)
 
 

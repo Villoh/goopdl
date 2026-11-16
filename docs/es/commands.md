@@ -194,6 +194,7 @@ goopdl inspect-delivery com.whatsapp --version 231205015 -o delivery.json
 `delivered_abis` se infiere de los splits `config.<abi>` que devolvió Google Play,
 y `architecture_mismatch` es `true` cuando llegaron splits de ABI pero ninguno
 encaja con el `--arch` pedido. Una entrega sin splits de ABI da `[]` y `false`.
+`--arch x86` acepta también `x86_64`, porque todos los perfiles x86 son también x86_64.
 
 | Opción | Corta | Por defecto | Descripción |
 | ------ | ----- | ----------- | ----------- |
