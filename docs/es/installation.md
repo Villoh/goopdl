@@ -98,8 +98,16 @@ También funciona como módulo:
 uv run python -m goopdl download com.whatsapp
 ```
 
-Ejecuta los tests:
+Ejecuta los tests unitarios:
 
 ```bash
 uv run python -m unittest discover -s tests
+```
+
+Los tests de integración (procesos lanzados con `spawn`, un servidor HTTP local, timeouts reales)
+están en `tests/integration` y no forman parte de esa ejecución. Importan los helpers de `tests/`,
+así que hay que ponerlo en `PYTHONPATH` (PowerShell: `$env:PYTHONPATH = "tests"`):
+
+```bash
+PYTHONPATH=tests uv run python -m unittest discover -s tests/integration
 ```

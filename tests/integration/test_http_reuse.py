@@ -207,7 +207,7 @@ class HttpReuseTest(unittest.TestCase):
             "httpx.Client.close = traced\n"
             "_http._client(None)\n"
         )
-        root = str(Path(__file__).resolve().parent.parent)
+        root = str(Path(__file__).resolve().parent.parent.parent)
         env = dict(os.environ, PYTHONPATH=os.pathsep.join([root, os.environ.get("PYTHONPATH", "")]))
         result = subprocess.run(
             [sys.executable, "-c", code], capture_output=True, text=True, env=env, timeout=60

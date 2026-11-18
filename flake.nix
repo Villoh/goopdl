@@ -38,6 +38,10 @@
                   websocket-client
                   keyring
                 ];
+                # Only the unit tests, which are fast and deterministic: discover does not enter
+                # tests/integration (no __init__.py). Those spawn processes and servers with
+                # real timeouts, so under load they could break the build of whoever depends on
+                # goopdl; `checks.<system>.tests` runs them instead.
                 # Rich decides the sandbox is a terminal; the tests compare plain text.
                 checkPhase = "TTY_COMPATIBLE=0 python -m unittest discover -s tests";
                 pythonImportsCheck = [ "goopdl" ];
@@ -51,6 +55,18 @@
       packages = forAllSystems (pkgs: rec {
         goopdl = pkgs.python3Packages.toPythonApplication pkgs.python3Packages.goopdl;
         default = goopdl;
+      });
+
+      # Unit and integration tests, for `nix flake check`. Consumers never run an input's checks.
+      checks = forAllSystems (pkgs: {
+        tests = pkgs.python3Packages.goopdl.overridePythonAttrs {
+          checkPhase = ''
+            export TTY_COMPATIBLE=0
+            python -m unittest discover -s tests
+            # The integration tests import the helpers that live in tests/.
+            PYTHONPATH="$PWD/tests:$PYTHONPATH" python -m unittest discover -s tests/integration
+          '';
+        };
       });
     };
 }

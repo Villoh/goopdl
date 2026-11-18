@@ -98,8 +98,16 @@ directly. The module entry point works too:
 uv run python -m goopdl download com.whatsapp
 ```
 
-Run the test suite:
+Run the unit tests:
 
 ```bash
 uv run python -m unittest discover -s tests
+```
+
+The integration tests (spawned processes, a local HTTP server, real timeouts) live in
+`tests/integration` and are not part of that run. They import the helpers in `tests/`, so put
+it on `PYTHONPATH` (PowerShell: `$env:PYTHONPATH = "tests"`):
+
+```bash
+PYTHONPATH=tests uv run python -m unittest discover -s tests/integration
 ```

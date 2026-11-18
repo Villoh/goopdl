@@ -32,6 +32,10 @@ jobs:
       - run: uv lock --check
       - run: uv sync --locked
       - run: uv run python -m unittest discover -s tests
+      # Processes, servers and real timeouts; they import the helpers in tests/.
+      - run: uv run python -m unittest discover -s tests/integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}/tests
       - run: uv run python -m compileall -q goopdl tests
 
   windows-smoke:
@@ -49,6 +53,10 @@ jobs:
       - run: uv lock --check
       - run: uv sync --locked
       - run: uv run python -m unittest discover -s tests
+      # Processes, servers and real timeouts; they import the helpers in tests/.
+      - run: uv run python -m unittest discover -s tests/integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}/tests
       - run: uv run python -m compileall -q goopdl tests
 
   # The release binaries of publish.yml (same runners, Python and scripts), so
