@@ -154,7 +154,7 @@ def patch_profile_country(profile: dict, country: str) -> dict:
     if cc not in COUNTRY_MCC:
         return profile
     mcc, mnc = COUNTRY_MCC[cc]
-    return {**profile, "CellOperator": mcc, "SimOperator": mnc}
+    return {**profile, "CellOperator": mcc + mnc, "SimOperator": mcc + mnc}
 
 
 # Tested priority order — profiles that work best with Aurora dispenser and
