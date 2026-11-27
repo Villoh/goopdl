@@ -36,6 +36,12 @@ Casi todos los comandos que hablan con Google Play aceptan estas:
 del APK de una región, enruta además el tráfico por un proxy de esa región con
 `--proxy`.
 
+`--proxy` cubre las llamadas al dispensador, al inicio de sesión y a la API de
+Google Play. No cubre la descarga final de archivos desde el CDN de Google, que
+sale por la IP de la propia máquina. En modo anónimo el dispensador elige por su
+cuenta el MCC/MNC del dispositivo, así que `--country` solo fija las cabeceras
+de región y da nombre al pool de tokens.
+
 ---
 
 ## `download`
@@ -134,9 +140,9 @@ goopdl fast-download com.whatsapp -o ./apks --splits
 | `--extras` / `--no-extras` | | `--no-extras` | Incluye los archivos OBB y los asset packs |
 | `--profile` | | aleatorio | Perfil de dispositivo. Por defecto, uno al azar entre los dos más recientes |
 
-También acepta `--country`, `--proxy` y `--dispenser`. `--proxy` solo se usa
-en las llamadas a Google Play; las peticiones al dispensador rotan de región
-por su cuenta.
+También acepta `--country`, `--proxy` y `--dispenser`. `--proxy` se usa en las
+llamadas al dispensador y a la API de Google Play, no en la descarga de
+archivos desde el CDN.
 
 ---
 
@@ -361,7 +367,7 @@ goopdl auth token --profile "Galaxy S25 Ultra"
 
 | Opción | Corta | Por defecto | Descripción |
 | ------ | ----- | ----------- | ----------- |
-| `--country` | `-c` | — | Registra el dispositivo con el MCC/MNC de ese país, para que las llamadas posteriores con el mismo `--country` vean su catálogo sin proxy |
+| `--country` | `-c` | — | Da nombre al pool de tokens y fija las cabeceras de región de ese país, para que las llamadas posteriores con el mismo `--country` lo reutilicen. En modo cuenta de Google el dispositivo se registra además con el MCC/MNC del país |
 
 También acepta las [opciones comunes](#opciones-comunes).
 

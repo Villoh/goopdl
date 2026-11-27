@@ -21,7 +21,7 @@ necesitas cuenta de Google.
 ```bash
 goopdl auth token                    # token arm64
 goopdl auth token --arch armv7       # token para dispositivos antiguos de 32 bits
-goopdl auth token --country IN       # registra el dispositivo con el MCC/MNC de India
+goopdl auth token --country IN       # pool de tokens y cabeceras de región de India
 goopdl auth clear-cache              # borra todos los tokens y registros de dispositivo en caché
 ```
 
